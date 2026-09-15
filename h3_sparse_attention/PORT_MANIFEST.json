@@ -1,0 +1,444 @@
+{
+  "sparse_commit": "ca44a1780eba8bfd9d2cbdc4a9ff813bd8c38277",
+  "sol_commit": "fc6554c14ae409dd5f53b4e27d86a367960be555",
+  "sol_source": "Sana-sol-engine/techniques/sparse_backends/sol_attn (working tree used by MiniMax-H3-Sparse, including local patches)",
+  "files": {
+    "h3_sparse_attention/landmark_chunk.py": {
+      "source": "h3_sparse_attention/landmark_chunk.py",
+      "source_sha256": "1170630719651275aa6b55b98b6403dd99a4aeb31111ac548ba83fb2bf0c09a6",
+      "ported_sha256": "dacdd356f793bf525c0f8d3d7eb11dd64591a06042c0d987590a3c4c1b3c2556"
+    },
+    "h3_sparse_attention/landmark_initial_order.py": {
+      "source": "h3_sparse_attention/landmark_initial_order.py",
+      "source_sha256": "d90533f3b9334b0312b455885e7933130e966b55f66d9b9ca43e3015ca7d47f4",
+      "ported_sha256": "9bb6fb7d93071e908c7ecfc3ebf4ffc157274fe69bfd6527ac1d2ed377f8be75"
+    },
+    "h3_sparse_attention/landmark_tree_clustering.py": {
+      "source": "h3_sparse_attention/landmark_tree_clustering.py",
+      "source_sha256": "3ed8aa561f4573cec7113fc91cc6173b162aa2666334118878adabb27097e339",
+      "ported_sha256": "7f669d8da583b9c66c8426c9afbd4c8658c3c242dc1cb210a4c0190322a587b9"
+    },
+    "h3_sparse_attention/landmark_tree_triton.py": {
+      "source": "h3_sparse_attention/landmark_tree_triton.py",
+      "source_sha256": "b01656d27a8e910fb084872360c7b0ae1d3a5f419c141bd24c335c4b3bdd8e87",
+      "ported_sha256": "0806cc05867e42f50dacf17275e2b10dd25b80c19c7347fdb32d9285ad5f2af2"
+    },
+    "h3_sparse_attention/landmark_tree_v2.py": {
+      "source": "h3_sparse_attention/landmark_tree_v2.py",
+      "source_sha256": "c0bcd920c76f0874f3aca1397b50f246f30059b314f21092b916df7223a7d382",
+      "ported_sha256": "b96901fb1a756d4b4a3d8570cea892f6a22eec9412d4779bfac21ee862765424"
+    },
+    "h3_sparse_attention/landmark_tree_v2_triton.py": {
+      "source": "h3_sparse_attention/landmark_tree_v2_triton.py",
+      "source_sha256": "daa71f7f76ecda53be614e82c43c7458eefe6023b6a018d4e59a60d18f812413",
+      "ported_sha256": "9402018c20d54cd1af4d5e986d22d2f40276ed5918fa69026c9c0de473d934f3"
+    },
+    "h3_sparse_attention/landmark_v2_cosine.py": {
+      "source": "h3_sparse_attention/landmark_v2_cosine.py",
+      "source_sha256": "9f0cca5a75e2a40ff775d23a5b19bd94b3d668360a1bd826f0bb68e68b31a485",
+      "ported_sha256": "9c3e1f98883fc4cc2a5ab929f0bd0941f3470f09cb95109d724ebf2b38a263bb"
+    },
+    "h3_sparse_attention/landmark_v2_cosine_fast.py": {
+      "source": "h3_sparse_attention/landmark_v2_cosine_fast.py",
+      "source_sha256": "897efe80b24ac3b4e999cc483bd3a8e6efc8464214539c186e611bb8094b3cf2",
+      "ported_sha256": "8461b9858675d6af311fc8b987fb1cb44acc76af2ec18e9ea733ef9588a6e670"
+    },
+    "h3_sparse_attention/landmark_v2_cosine_triton.py": {
+      "source": "h3_sparse_attention/landmark_v2_cosine_triton.py",
+      "source_sha256": "6b9d0a7e9331764191067bd5744aa04a6011d801ead5820e07dddd32b020339b",
+      "ported_sha256": "397f24468a7eb4a0865fabe79552908db7aef9de01e386d4850bff96366a9ddc"
+    },
+    "h3_sparse_attention/landmark_v2_euclidean.py": {
+      "source": "h3_sparse_attention/landmark_v2_euclidean.py",
+      "source_sha256": "c92a1f2d43d5611990254a574dc5d11d691c2fe9e1eb86ed07ddb6746a6bbf47",
+      "ported_sha256": "82434a6efe4d22931218e85135a27f5176f906c062da271e4c4e4b342cf637e9"
+    },
+    "h3_sparse_attention/landmark_v2_fused_node.py": {
+      "source": "h3_sparse_attention/landmark_v2_fused_node.py",
+      "source_sha256": "a90be08a32530f7d3785d5f6f7d9d056b85daa78413a9cf2f1fbab66cf23f483",
+      "ported_sha256": "a17eb7fe16b28225e6bf1ee1d25c0e5b165ff389eea789afceda2a7e1e4e8afd"
+    },
+    "h3_sparse_attention/landmark_v2_max.py": {
+      "source": "h3_sparse_attention/landmark_v2_max.py",
+      "source_sha256": "0d08866fb9f3b829a189eaa6cd31b7776974f2b39e32197e1ed4332fffca2a9d",
+      "ported_sha256": "98294f92414ffe94c3a6a4f3312d2e2d371b6dd69c16ef933bc30dcd4005d810"
+    },
+    "h3_sparse_attention/landmark_v2_order.py": {
+      "source": "h3_sparse_attention/landmark_v2_order.py",
+      "source_sha256": "015b98bcc9b9812acca7fcbdf14a3a95c55fb359719c484e700a219977e19345",
+      "ported_sha256": "a1a08a22acf0c973cc8584dc3d8255102ce14c00b23dd013dc3ce8aa191ef9cb"
+    },
+    "h3_sparse_attention/mahalanobis_kmeans.py": {
+      "source": "h3_sparse_attention/mahalanobis_kmeans.py",
+      "source_sha256": "2c0270022b4cfa247f0b80eb0046f0a0f18142e9654cff09eada566b21281ee8",
+      "ported_sha256": "a167a361f43f7109c8b6247fbb46c02f26e14bd61da67d4f8dce055d7c698ef2"
+    },
+    "h3_sparse_attention/reblock_hierarchy.py": {
+      "source": "h3_sparse_attention/reblock_hierarchy.py",
+      "source_sha256": "f4a0cb8928f47c252fefa0148e898ce52411426361dd3e439eefaf5fee2ae2c3",
+      "ported_sha256": "3b3410b8d1060c68cbff3866aab353834192486542f3b470b96735a15d341e4a"
+    },
+    "h3_sparse_attention/sol_numerator_virtual_q.py": {
+      "source": "h3_sparse_attention/sol_numerator_virtual_q.py",
+      "source_sha256": "47ce0adc46aa4836aaa19cc5ada210cb7355e8b549a8349444129ad34878e176",
+      "ported_sha256": "59893eb668f26b2155f2c98562d8286f6ebb13d6ffa4af0a6d828fbbc392053a"
+    },
+    "sol_attn/THIRD_PARTY_NOTICES.md": {
+      "source": "sol_attn/THIRD_PARTY_NOTICES.md",
+      "source_sha256": "103d86cce2d458005c83713765880b0d48205faa4b7b20a774d36fc3df56da00",
+      "ported_sha256": "103d86cce2d458005c83713765880b0d48205faa4b7b20a774d36fc3df56da00"
+    },
+    "sol_attn/__init__.py": {
+      "source": "sol_attn/__init__.py",
+      "source_sha256": "f8dd33b38c74a834b76fad7dbd8582d7f58a116fb33b98a01aabc241d20b4a15",
+      "ported_sha256": "f8dd33b38c74a834b76fad7dbd8582d7f58a116fb33b98a01aabc241d20b4a15"
+    },
+    "sol_attn/_vendor/__init__.py": {
+      "source": "sol_attn/_vendor/__init__.py",
+      "source_sha256": "eb3ec1ff32f5d2344a839acc90ee48329906532f560596f3ff733d4923553078",
+      "ported_sha256": "eb3ec1ff32f5d2344a839acc90ee48329906532f560596f3ff733d4923553078"
+    },
+    "sol_attn/_vendor/flash_attn/__init__.py": {
+      "source": "sol_attn/_vendor/flash_attn/__init__.py",
+      "source_sha256": "42edd3f7a999b03f052836071389179a2edbc0a239221b67a5c8da8d09d127d6",
+      "ported_sha256": "42edd3f7a999b03f052836071389179a2edbc0a239221b67a5c8da8d09d127d6"
+    },
+    "sol_attn/_vendor/flash_attn/cute/__init__.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/__init__.py",
+      "source_sha256": "63631d004ed460922766940b7eeac674cbcd8a43eeb0e5595962845c862ca026",
+      "ported_sha256": "63631d004ed460922766940b7eeac674cbcd8a43eeb0e5595962845c862ca026"
+    },
+    "sol_attn/_vendor/flash_attn/cute/ampere_helpers.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/ampere_helpers.py",
+      "source_sha256": "cadac170a7da379e27c36d044360480d710cfa88d082dad2b9decd58e4847111",
+      "ported_sha256": "cadac170a7da379e27c36d044360480d710cfa88d082dad2b9decd58e4847111"
+    },
+    "sol_attn/_vendor/flash_attn/cute/block_info.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/block_info.py",
+      "source_sha256": "d518a31b430b6a4aa6e925eb5171036b9984f77c9dca9840f4b32c1e2d60ccdb",
+      "ported_sha256": "d518a31b430b6a4aa6e925eb5171036b9984f77c9dca9840f4b32c1e2d60ccdb"
+    },
+    "sol_attn/_vendor/flash_attn/cute/block_sparsity.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/block_sparsity.py",
+      "source_sha256": "bb836711cbee9baed9db96987b301709f149fb72b8fb0842c69cabe327f989d0",
+      "ported_sha256": "bb836711cbee9baed9db96987b301709f149fb72b8fb0842c69cabe327f989d0"
+    },
+    "sol_attn/_vendor/flash_attn/cute/cute_dsl_utils.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/cute_dsl_utils.py",
+      "source_sha256": "162ba9671cb16d20fccf3547e43d606aa83e775329d5287bc9320569afe60137",
+      "ported_sha256": "162ba9671cb16d20fccf3547e43d606aa83e775329d5287bc9320569afe60137"
+    },
+    "sol_attn/_vendor/flash_attn/cute/fast_math.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/fast_math.py",
+      "source_sha256": "7e5f822bf4d0ba36967558f3ae9a1408b410cb726c31222cd61703569d1be738",
+      "ported_sha256": "7e5f822bf4d0ba36967558f3ae9a1408b410cb726c31222cd61703569d1be738"
+    },
+    "sol_attn/_vendor/flash_attn/cute/flash_fwd.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/flash_fwd.py",
+      "source_sha256": "840e90f8e5d1fca2f73fbdb44df938027aa4750210af814fa28551f7a723ec27",
+      "ported_sha256": "840e90f8e5d1fca2f73fbdb44df938027aa4750210af814fa28551f7a723ec27"
+    },
+    "sol_attn/_vendor/flash_attn/cute/mask.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/mask.py",
+      "source_sha256": "f920b98640efc91d737b631bb7ea223f71cd2b086ae3dae2d3db37a28fd390d2",
+      "ported_sha256": "f920b98640efc91d737b631bb7ea223f71cd2b086ae3dae2d3db37a28fd390d2"
+    },
+    "sol_attn/_vendor/flash_attn/cute/named_barrier.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/named_barrier.py",
+      "source_sha256": "98d1cf1f2254203769da8d566f5ddadc755fb1cb3f4e514012da3addb9233c09",
+      "ported_sha256": "98d1cf1f2254203769da8d566f5ddadc755fb1cb3f4e514012da3addb9233c09"
+    },
+    "sol_attn/_vendor/flash_attn/cute/pack_gqa.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/pack_gqa.py",
+      "source_sha256": "e55c56628c37334e4ec672f877018dc1fce89c4c30ede05c7515b08fb5596450",
+      "ported_sha256": "e55c56628c37334e4ec672f877018dc1fce89c4c30ede05c7515b08fb5596450"
+    },
+    "sol_attn/_vendor/flash_attn/cute/pipeline.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/pipeline.py",
+      "source_sha256": "849bce91c72be0a5c7458979e10c8290f45e05253a83600e30fb9540c61ed56a",
+      "ported_sha256": "849bce91c72be0a5c7458979e10c8290f45e05253a83600e30fb9540c61ed56a"
+    },
+    "sol_attn/_vendor/flash_attn/cute/seqlen_info.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/seqlen_info.py",
+      "source_sha256": "8a922e1217b54b5185d9c8d8f928f8836058a2f4b3bddded4c38460a2e39d60f",
+      "ported_sha256": "8a922e1217b54b5185d9c8d8f928f8836058a2f4b3bddded4c38460a2e39d60f"
+    },
+    "sol_attn/_vendor/flash_attn/cute/softmax.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/softmax.py",
+      "source_sha256": "56ee749e3a388e0bb3f853fea0c236cf89f291d167f269f8b04d3bb2f31cc37a",
+      "ported_sha256": "56ee749e3a388e0bb3f853fea0c236cf89f291d167f269f8b04d3bb2f31cc37a"
+    },
+    "sol_attn/_vendor/flash_attn/cute/tile_scheduler.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/tile_scheduler.py",
+      "source_sha256": "ac0d1211e34d73c2bbb44b7f62b3a77d1f9aac177653a5a028cb4f5fa1b1ce0e",
+      "ported_sha256": "ac0d1211e34d73c2bbb44b7f62b3a77d1f9aac177653a5a028cb4f5fa1b1ce0e"
+    },
+    "sol_attn/_vendor/flash_attn/cute/utils.py": {
+      "source": "sol_attn/_vendor/flash_attn/cute/utils.py",
+      "source_sha256": "f268b5af4c4d6fad6dd44bd6c6da0c475a6ec36ed90aeb1334b45aa4e1d86d57",
+      "ported_sha256": "f268b5af4c4d6fad6dd44bd6c6da0c475a6ec36ed90aeb1334b45aa4e1d86d57"
+    },
+    "sol_attn/common/__init__.py": {
+      "source": "sol_attn/common/__init__.py",
+      "source_sha256": "2d18d24871bacaaeb6417ee37f4e1b57530c6bf3f51e20ca803bad6a6e53c25b",
+      "ported_sha256": "2d18d24871bacaaeb6417ee37f4e1b57530c6bf3f51e20ca803bad6a6e53c25b"
+    },
+    "sol_attn/common/layout_utils.py": {
+      "source": "sol_attn/common/layout_utils.py",
+      "source_sha256": "d8ed2213f8162bf820eb9934ea3ec0b4b3038c7a73fe64d65bcf025639e63c0e",
+      "ported_sha256": "d8ed2213f8162bf820eb9934ea3ec0b4b3038c7a73fe64d65bcf025639e63c0e"
+    },
+    "sol_attn/common/runtime.py": {
+      "source": "sol_attn/common/runtime.py",
+      "source_sha256": "b6d19ddc6b0f6f1e4ddd48094133ee56d6c1ab383c57e7d02887318d53c264b4",
+      "ported_sha256": "b6d19ddc6b0f6f1e4ddd48094133ee56d6c1ab383c57e7d02887318d53c264b4"
+    },
+    "sol_attn/common/selector.py": {
+      "source": "sol_attn/common/selector.py",
+      "source_sha256": "b75eab435ec873af383a61ca2f32eb3eb75fd3fec94c30302fbfe8149f9bb0a1",
+      "ported_sha256": "b75eab435ec873af383a61ca2f32eb3eb75fd3fec94c30302fbfe8149f9bb0a1"
+    },
+    "sol_attn/interface.py": {
+      "source": "sol_attn/interface.py",
+      "source_sha256": "271e0cc8a799d2369805c23fba5a2b9b41b90be8efc3e7f8896e468e5d9b1daa",
+      "ported_sha256": "271e0cc8a799d2369805c23fba5a2b9b41b90be8efc3e7f8896e468e5d9b1daa"
+    },
+    "sol_attn/preprocess.py": {
+      "source": "sol_attn/preprocess.py",
+      "source_sha256": "7881ad541233e97315010fda093991eddacc33f3ffd80c7c2e996ac2c8990a80",
+      "ported_sha256": "7881ad541233e97315010fda093991eddacc33f3ffd80c7c2e996ac2c8990a80"
+    },
+    "sol_attn/sm100/LICENSE.flash-attention": {
+      "source": "sol_attn/sm100/LICENSE.flash-attention",
+      "source_sha256": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73",
+      "ported_sha256": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73"
+    },
+    "sol_attn/sm100/__init__.py": {
+      "source": "sol_attn/sm100/__init__.py",
+      "source_sha256": "77a77ead8e28f2a388a77497297f6e9e9385cfe0e99a1f67e2036d41ef4c1c78",
+      "ported_sha256": "77a77ead8e28f2a388a77497297f6e9e9385cfe0e99a1f67e2036d41ef4c1c78"
+    },
+    "sol_attn/sm100/kernel.py": {
+      "source": "sol_attn/sm100/kernel.py",
+      "source_sha256": "a614f29e002fdde2e9258da516b452d2ea07ecdeec8410722a344c72a40f61a0",
+      "ported_sha256": "a614f29e002fdde2e9258da516b452d2ea07ecdeec8410722a344c72a40f61a0"
+    },
+    "sol_attn/sm100/mainloop.py": {
+      "source": "sol_attn/sm100/mainloop.py",
+      "source_sha256": "707d565bccc7fb8c60e130c91d6d65549d8762c562a227ef2c0a231697a1cf2d",
+      "ported_sha256": "707d565bccc7fb8c60e130c91d6d65549d8762c562a227ef2c0a231697a1cf2d"
+    },
+    "sol_attn/sm100/math.py": {
+      "source": "sol_attn/sm100/math.py",
+      "source_sha256": "00974a22a4c5b5e47628f67a560dc966a50ef7225eb3f773a296d71b5ac5be7f",
+      "ported_sha256": "00974a22a4c5b5e47628f67a560dc966a50ef7225eb3f773a296d71b5ac5be7f"
+    },
+    "sol_attn/sm100/softmax.py": {
+      "source": "sol_attn/sm100/softmax.py",
+      "source_sha256": "c6b88f8e5eec040f194fc2f24f7e69338548b6e33a5ba5e3720ad6d2ea6c0311",
+      "ported_sha256": "c6b88f8e5eec040f194fc2f24f7e69338548b6e33a5ba5e3720ad6d2ea6c0311"
+    },
+    "sol_attn/sm100/tmem.py": {
+      "source": "sol_attn/sm100/tmem.py",
+      "source_sha256": "e761576ab085c7f9c135421ed8e6f202fca5b3f96252a14ae99051e8685c00c8",
+      "ported_sha256": "e761576ab085c7f9c135421ed8e6f202fca5b3f96252a14ae99051e8685c00c8"
+    },
+    "sol_attn/sm120/__init__.py": {
+      "source": "sol_attn/sm120/__init__.py",
+      "source_sha256": "193997e4e5925c7a8cabe0247068698bdab1bb7fab283d0857fc01bf9a2763c1",
+      "ported_sha256": "193997e4e5925c7a8cabe0247068698bdab1bb7fab283d0857fc01bf9a2763c1"
+    },
+    "sol_attn/sm120/kernel.py": {
+      "source": "sol_attn/sm120/kernel.py",
+      "source_sha256": "7274e1da5e8239853d0167cad36db6f6f546c448cd86b1f6f08d76e30871160f",
+      "ported_sha256": "7274e1da5e8239853d0167cad36db6f6f546c448cd86b1f6f08d76e30871160f"
+    },
+    "sol_attn/sm120/mainloop.py": {
+      "source": "sol_attn/sm120/mainloop.py",
+      "source_sha256": "2dd60f9816633a268808e26d015ca2741ff085f35065718d3c6f48507f0fe08e",
+      "ported_sha256": "2dd60f9816633a268808e26d015ca2741ff085f35065718d3c6f48507f0fe08e"
+    },
+    "sol_attn/sm90/__init__.py": {
+      "source": "sol_attn/sm90/__init__.py",
+      "source_sha256": "dbb468f6dda2c220593e36cb8e1e753f4586e1ab47b7a6ba1e8f98e47dc3802e",
+      "ported_sha256": "dbb468f6dda2c220593e36cb8e1e753f4586e1ab47b7a6ba1e8f98e47dc3802e"
+    },
+    "sol_attn/sm90/_compat/__init__.py": {
+      "source": "sol_attn/sm90/_compat/__init__.py",
+      "source_sha256": "dc9300ddffe0a8acd263d301c56b6c3094f0ddb3279be7917ace8e9cfbaf2586",
+      "ported_sha256": "dc9300ddffe0a8acd263d301c56b6c3094f0ddb3279be7917ace8e9cfbaf2586"
+    },
+    "sol_attn/sm90/_compat/activation.py": {
+      "source": "sol_attn/sm90/_compat/activation.py",
+      "source_sha256": "77b1c16a9970b2fe79de4a945db9930850dcf4f4869ed4639805337c6a40a07d",
+      "ported_sha256": "77b1c16a9970b2fe79de4a945db9930850dcf4f4869ed4639805337c6a40a07d"
+    },
+    "sol_attn/sm90/_compat/copy_utils.py": {
+      "source": "sol_attn/sm90/_compat/copy_utils.py",
+      "source_sha256": "8e5e6fa9a79382995636ff1df391fdc37ed134cb5fa3d8f4db66213f476f5bd2",
+      "ported_sha256": "8e5e6fa9a79382995636ff1df391fdc37ed134cb5fa3d8f4db66213f476f5bd2"
+    },
+    "sol_attn/sm90/_compat/cute_dsl_utils.py": {
+      "source": "sol_attn/sm90/_compat/cute_dsl_utils.py",
+      "source_sha256": "afffcb709248851cc14dc91da466e104271de4438dbca73c2ac7c1c6c061bae8",
+      "ported_sha256": "afffcb709248851cc14dc91da466e104271de4438dbca73c2ac7c1c6c061bae8"
+    },
+    "sol_attn/sm90/_compat/layout_utils.py": {
+      "source": "sol_attn/sm90/_compat/layout_utils.py",
+      "source_sha256": "4ad6a7a87adf0bf8dc76c5aa04689d717ca63aeeaba5c754e9a96fb72787fa5a",
+      "ported_sha256": "4ad6a7a87adf0bf8dc76c5aa04689d717ca63aeeaba5c754e9a96fb72787fa5a"
+    },
+    "sol_attn/sm90/_compat/sm90_utils.py": {
+      "source": "sol_attn/sm90/_compat/sm90_utils.py",
+      "source_sha256": "3c4bfd2cc468b372671e7654f6ae06cdf5f3b64b4f7f03cf6d4467c51b4829f2",
+      "ported_sha256": "3c4bfd2cc468b372671e7654f6ae06cdf5f3b64b4f7f03cf6d4467c51b4829f2"
+    },
+    "sol_attn/sm90/atoms.py": {
+      "source": "sol_attn/sm90/atoms.py",
+      "source_sha256": "bdabb2257d5384f901c8a8a4d0b3e9b8697fbe89b2f8d4f0fd3db28d21ba135a",
+      "ported_sha256": "bdabb2257d5384f901c8a8a4d0b3e9b8697fbe89b2f8d4f0fd3db28d21ba135a"
+    },
+    "sol_attn/sm90/exact.py": {
+      "source": "sol_attn/sm90/exact.py",
+      "source_sha256": "e44e3e72883f50f93d2112721d7d697e6041ba1f9f2079a27da73fd0030eff6e",
+      "ported_sha256": "e44e3e72883f50f93d2112721d7d697e6041ba1f9f2079a27da73fd0030eff6e"
+    },
+    "sol_attn/sm90/fwd.py": {
+      "source": "sol_attn/sm90/fwd.py",
+      "source_sha256": "87a961541fcf95a8b2bb5ef6d4df7fdf9f2345ca3e1089f99611050ca84e1ad9",
+      "ported_sha256": "87a961541fcf95a8b2bb5ef6d4df7fdf9f2345ca3e1089f99611050ca84e1ad9"
+    },
+    "sol_attn/sm90/kernel.py": {
+      "source": "sol_attn/sm90/kernel.py",
+      "source_sha256": "fcc3980955a60cdbb93cc4d52187d58359fa99d7a9ec9f594fde2e50b5e497f5",
+      "ported_sha256": "fcc3980955a60cdbb93cc4d52187d58359fa99d7a9ec9f594fde2e50b5e497f5"
+    },
+    "sol_attn/sm90/mainloop.py": {
+      "source": "sol_attn/sm90/mainloop.py",
+      "source_sha256": "4cec571d97201d76d5f9fccd4a4919d83d82dfdcc77d7c68ad6514567fbe0da7",
+      "ported_sha256": "4cec571d97201d76d5f9fccd4a4919d83d82dfdcc77d7c68ad6514567fbe0da7"
+    },
+    "sol_attn/sm90/split_combine.py": {
+      "source": "sol_attn/sm90/split_combine.py",
+      "source_sha256": "be1f14997ed4bacb8bff1fb0f7979bda6424af1394661e07d692a2f2460101c3",
+      "ported_sha256": "be1f14997ed4bacb8bff1fb0f7979bda6424af1394661e07d692a2f2460101c3"
+    },
+    "sol_attn/triton_ref/__init__.py": {
+      "source": "sol_attn/triton_ref/__init__.py",
+      "source_sha256": "7053365a47158cf36d0a244451b017cd2ff0402bbd19005b23a53cc12d866840",
+      "ported_sha256": "7053365a47158cf36d0a244451b017cd2ff0402bbd19005b23a53cc12d866840"
+    },
+    "sol_attn/triton_ref/fwd.py": {
+      "source": "sol_attn/triton_ref/fwd.py",
+      "source_sha256": "82ea811b92c75c576d7a2dedd016776da0556ab9c7e5f2973be6ed65d89240eb",
+      "ported_sha256": "82ea811b92c75c576d7a2dedd016776da0556ab9c7e5f2973be6ed65d89240eb"
+    },
+    "sol_attn/triton_ref/preprocess.py": {
+      "source": "sol_attn/triton_ref/preprocess.py",
+      "source_sha256": "c1aaa53b26ac9293f504f1d107814ed6c1924a9b671ebebfffc54ec83f743264",
+      "ported_sha256": "c1aaa53b26ac9293f504f1d107814ed6c1924a9b671ebebfffc54ec83f743264"
+    },
+    "h3_sparse_attention/processor.py": {
+      "source": "h3_sparse_attention/processor.py",
+      "source_sha256": "3dd909a8cc220c9c28b75a91977d89c86eb4385a984774c5b9b8ea9b18ece801",
+      "ported_sha256": "16c3da5bb045dc4e8500c2a4424e69a53faba5a37e2d48f9697f1baa097733f3"
+    },
+    "h3_sparse_attention/spark.py": {
+      "source": "h3_sparse_attention/spark.py",
+      "source_sha256": "d4547f907e158b0d3bdcba4002fed2aa849e17f99dcfb595a041add8e737d71d",
+      "ported_sha256": "d4547f907e158b0d3bdcba4002fed2aa849e17f99dcfb595a041add8e737d71d"
+    },
+    "h3_sparse_attention/landmark_direction.py": {
+      "source": "h3_sparse_attention/landmark_direction.py",
+      "source_sha256": "79421e3f7d19883aca8386748d1e9e64701a03a2d1d20dfae9a493e106444a0f",
+      "ported_sha256": "c7b8db937fc29db2d975d1efe6dc105ea599b5f8072b677827ef09395f4761c0"
+    },
+    "h3_sparse_attention/landmark_virtual_q.py": {
+      "source": "h3_sparse_attention/landmark_virtual_q.py",
+      "source_sha256": "3cdf357c20c0bf75bbc2b3a1ce022c5ab665e7bcd5a6c153e9d8f1026381c1dc",
+      "ported_sha256": "5dd56e1e45b51406b7c034cc4d7172fcfc7dbea6b4680ba5a0aa3327be1e3465"
+    },
+    "h3_sparse_attention/spark_integration.py": {
+      "source": "h3_sparse_attention/processor.py",
+      "source_sha256": "3dd909a8cc220c9c28b75a91977d89c86eb4385a984774c5b9b8ea9b18ece801",
+      "ported_sha256": "c83f5325863ece2e97989ebd2606c3d68b1cef0b26ea02a1d02a11d01cc4d5dd"
+    },
+    "h3_sparse_attention/rope_sol_kernel.py": {
+      "source": "h3_sparse_attention/rope_sol_kernel.py",
+      "source_sha256": "f6750d8ec3cd706e8f32297f2b0358792d4e8155a1748a94a97fe5989c0ceec0",
+      "ported_sha256": "8fc7696d3027dc7d914f3c1fbfec1d46c2eb8edb40f7efdd6ccf829cba189878"
+    },
+    "h3_sparse_attention/sol_logsumexp_correction_triton.py": {
+      "source": "h3_sparse_attention/sol_logsumexp_correction_triton.py",
+      "source_sha256": "695cd946bf4e647064425bb7b7e0a52543f92a669eaa20d31dd1e754eafaed62",
+      "ported_sha256": "d1c2f80babf5617b9b403f3acb9e9616200d75f48f57198302a5afedef1ddfc9"
+    },
+    "h3_sparse_attention/sol_topk_cutoff.py": {
+      "source": "h3_sparse_attention/sol_topk_cutoff.py",
+      "source_sha256": "c81574edeeb728d36e2a9e8e08c5bf835a5d5968b8e41b167c1761aae822019e",
+      "ported_sha256": "49d6925369879ba21bc86a158a6980e9343754474e1cb72a3ff688859f199647"
+    },
+    "h3_sparse_attention/sol_vaware_compensation.py": {
+      "source": "h3_sparse_attention/sol_vaware_compensation.py",
+      "source_sha256": "09b1b2acdba4a7abf813c91b4774da4c6a043f15706f6890ebfe1719a0a048be",
+      "ported_sha256": "1e2694d2f9474e4e1bdce1ad006d007a4be6d80cd4590c7fa8c3820632ef916b"
+    },
+    "h3_sparse_attention/spark_defaults.py": {
+      "source": "h3_sparse_attention/spark_defaults.py",
+      "source_sha256": "6e295740e552d2188b5facf86b0ac812d13fe71d1559405fa15cef3315f6cb08",
+      "ported_sha256": "6fdd2b1ccac1795ede706164fa15d7b46b29870cb199578449614c42a8054d9f"
+    },
+    "h3_sparse_attention/spark_reweight_sm120.py": {
+      "source": "h3_sparse_attention/spark_reweight_sm120.py",
+      "source_sha256": "50219d130de10c5d709f2bfb1811112e98c84642877345a2150f2fd00762517c",
+      "ported_sha256": "03a4f8147d7a8111c99670f1a9f3eb38b5843b5cf00ff57101110b452cdcffbb"
+    },
+    "h3_sparse_attention/topk_sol_kernel.py": {
+      "source": "h3_sparse_attention/topk_sol_kernel.py",
+      "source_sha256": "0a34982c93b659c708d2d2869ca339fa21f787bb9fcdaf0bc086ea3e770355e8",
+      "ported_sha256": "22e6bfe64530071e8c5379edacba085bf14a12e74d7f6cd7234ff6610706107c"
+    },
+    "h3_sparse_attention/virtual_q_permute.py": {
+      "source": "h3_sparse_attention/virtual_q_permute.py",
+      "source_sha256": "050b710adfc366bdbe95522dc81c43b43c4674c603438f7a7aa8cb9e4471a1dc",
+      "ported_sha256": "5f23c8df093cc53b4218d73c44771866e1d0e7d3fbe6bb640b0c56276836c08d"
+    },
+    "h3_sparse_attention/spark_route.py": {
+      "source": "h3_sparse_attention/spark_route.py",
+      "source_sha256": "39763ae6d84a2cd467777b126bc8c6bce9f62164ec092c6b6cbc27ffa73e2765",
+      "ported_sha256": "e67965e11efd950640945b66f03953f25b02a553a9eef2149e226c6a61409c70"
+    },
+    "h3_sparse_attention/__init__.py": {
+      "source": "h3_sparse_attention/__init__.py",
+      "source_sha256": "5f8b2a84157cb8a2abe0271f0e11373c8d47987e796b0be78b03a1783651ec75",
+      "ported_sha256": "547b321e9b24c55c12ad7f7906a572941bed1939d68936a4c7081594bf8fc18c"
+    }
+  },
+  "spark_installer_update": "Source working tree at ca44a1780eba8bfd9d2cbdc4a9ff813bd8c38277; file hashes include uncommitted updates.",
+  "validation": {
+    "spark_source_parity": {
+      "seed": 131,
+      "dtype": "bfloat16",
+      "qkv_shape_bhtd": [
+        1,
+        2,
+        1159,
+        128
+      ],
+      "video_grid": [
+        72,
+        4,
+        4
+      ],
+      "context_tokens": 7,
+      "configuration": "H3SparseAttentionConfig.spark(20) defaults",
+      "environment": {
+        "H3_SPARK_REWEIGHT_FUSED": "0"
+      },
+      "result": "bitwise equal to updated MiniMax-H3-Sparse _sol_attention"
+    },
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "torch": "2.12.1+cu130",
+    "full_video_generation": false
+  }
+}

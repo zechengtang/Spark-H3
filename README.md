@@ -450,3 +450,11 @@ MiniMax H3 is released under the [MiniMax H3 Community License Agreement](https:
 ## Contact Us
 
 Contact us at [model@minimax.io](mailto:model@minimax.io).
+
+## Optional Sol-Attn and Spark
+
+Local Sol-Attn kernels, reversible `install_h3_sol_attn` and
+`install_h3_spark_attn` inference adapters, and the standalone
+`spark_reblock` / `spark_reweight` primitives are available. Install with
+`python -m pip install -e '.[cuda]'` and see
+[the Sol-Attn and Spark guide](h3_sparse_attention/README.md) for usage and tests.

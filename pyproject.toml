@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "minimax-h3-sparse-attention"
+version = "0.1.0"
+description = "Sol-Attn and Spark primitives for MiniMax-H3 inference"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.4"]
+
+[project.optional-dependencies]
+cuda = ["triton>=3.2", "nvidia-cutlass-dsl>=4.4", "cuda-python>=12"]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["h3_sparse_attention*", "sol_attn*"]
+
+[tool.setuptools.package-data]
+h3_sparse_attention = ["*.md", "PORT_MANIFEST.json"]
+sol_attn = ["THIRD_PARTY_NOTICES.md", "sm100/LICENSE.flash-attention"]

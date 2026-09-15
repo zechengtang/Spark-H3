@@ -1,0 +1,317 @@
+"""Spark dependencies adapted from MiniMax-H3-Sparse; see PORT_MANIFEST.json."""
+from __future__ import annotations
+
+
+import os
+
+
+import torch
+
+
+import triton
+
+
+import triton.language as tl
+
+
+from triton.language.extra.cuda import libdevice
+
+
+from .landmark_v2_cosine_fast import _fp16x3_dot
+
+
+FUSED_NODE_ENABLED = os.environ.get("H3_LMV2_FUSED_NODE", "1") == "1"
+
+
+FUSED_NODE_MAX_TOKENS = int(os.environ.get("H3_LMV2_FUSED_NODE_MAX_TOKENS", "1024"))
+
+
+FUSED_NODE_WARPS = os.environ.get("H3_LMV2_FUSED_NODE_WARPS")
+
+
+_LANDMARKS = 32
+
+
+def use_fused_node(node_tokens: int, children: int, dim: int) -> bool:
+    return (
+        FUSED_NODE_ENABLED
+        and dim == 128
+        and children in (2, 4)
+        and _LANDMARKS <= node_tokens <= FUSED_NODE_MAX_TOKENS
+    )
+
+
+@triton.jit
+def _unit_row(vector):
+    """FP32 unit vector with the proxy kernel's clamp."""
+    return vector / tl.maximum(libdevice.sqrt_rn(tl.sum(vector * vector, 0)), 1.0e-12)
+
+
+@triton.jit
+def _proxy_split(center, unit, distance, weight, left_cap: tl.constexpr,
+                 right_cap: tl.constexpr, LANDMARKS: tl.constexpr,
+                 ITERATIONS: tl.constexpr):
+    """One capacity-weighted binary proxy split; returns direction and child weights.
+
+    ``center``/``unit`` are [K, D] FP32, ``distance`` is [K, K] cosine
+    distance, ``weight`` is the [K] int32 active landmark weight at this node.
+    The sorted-prefix capacity rule of ``_cosine_proxy_node`` is evaluated
+    through a rank comparison, which is the same total order ``(delta, id)``.
+    """
+    landmark = tl.arange(0, LANDMARKS)
+    first_slot = landmark[:, None]
+    second_slot = landmark[None, :]
+    pair_valid = (first_slot < second_slot) & (weight[:, None] > 0) & (weight[None, :] > 0)
+    masked = tl.where(pair_valid, distance, -float("inf"))
+    maximum_distance = tl.max(tl.max(masked, axis=1), axis=0)
+    pair_index = first_slot * LANDMARKS + second_slot
+    candidate = tl.where(masked == maximum_distance, pair_index, LANDMARKS * LANDMARKS)
+    farthest = tl.min(tl.min(candidate, axis=1), axis=0)
+    first = farthest // LANDMARKS
+    second = farthest % LANDMARKS
+    active_count = tl.sum((weight > 0).to(tl.int32), axis=0)
+    only = tl.argmax((weight > 0).to(tl.int32), axis=0, tie_break_left=True)
+    first = tl.where(active_count < 2, only, first)
+    second = tl.where(active_count < 2, only, second)
+    left_center = tl.sum(tl.where(landmark[:, None] == first, center, 0.0), axis=0)
+    right_center = tl.sum(tl.where(landmark[:, None] == second, center, 0.0), axis=0)
+    left_weight = tl.zeros((LANDMARKS,), tl.int32)
+    right_weight = weight
+    for _ in tl.static_range(ITERATIONS):
+        direction = _unit_row(right_center) - _unit_row(left_center)
+        delta = tl.sum(unit * direction[None, :], axis=1)
+        # Stable (delta, landmark) order: weight of everything sorted before i.
+        before = (delta[None, :] < delta[:, None]) | (
+            (delta[None, :] == delta[:, None]) & (second_slot < first_slot)
+        )
+        prefix_before = tl.sum(tl.where(before, weight[None, :], 0), axis=1)
+        take = tl.minimum(tl.maximum(left_cap - prefix_before, 0), weight)
+        left_weight = take
+        right_weight = weight - take
+        left_center = tl.sum(center * left_weight[:, None].to(tl.float32), axis=0) / left_cap
+        right_center = tl.sum(center * right_weight[:, None].to(tl.float32), axis=0) / right_cap
+    direction = _unit_row(right_center) - _unit_row(left_center)
+    return direction, left_weight, right_weight
+
+
+@triton.jit
+def _route_key(score, original):
+    """Order-preserving int64 key: score bits in the high word, token id low."""
+    bits = score.to(tl.int32, bitcast=True).to(tl.int64) & 0xFFFFFFFF
+    negative = (bits & 0x80000000) != 0
+    ordered = tl.where(negative, (~bits) & 0xFFFFFFFF, bits ^ 0x80000000)
+    return (ordered - 0x80000000) * 0x100000000 + original
+
+
+@triton.jit
+def _kth_smallest(key, k: tl.constexpr, positions):
+    ordered = tl.sort(key, dim=0, descending=False)
+    return tl.sum(tl.where(positions == k - 1, ordered, 0), axis=0)
+
+
+@triton.jit
+def _fused_node_split_kernel(
+    source, global_indices, row_batch, scratch, output, tokens,
+    N: tl.constexpr, BLOCK_N: tl.constexpr, MAX_LEN: tl.constexpr,
+    LANDMARKS: tl.constexpr, CHILDREN: tl.constexpr, INTERNAL: tl.constexpr,
+    CAP0: tl.constexpr, CAP1: tl.constexpr, CAP2: tl.constexpr, CAP3: tl.constexpr,
+    BLOCK_T: tl.constexpr, ROWS_PER_STEP: tl.constexpr, MODE: tl.constexpr,
+    FP8: tl.constexpr,
+    MIDPOINT: tl.constexpr = False,
+):
+    parent = tl.program_id(0)
+    dims = tl.arange(0, 128)
+    landmark = tl.arange(0, LANDMARKS)
+    base = global_indices + parent.to(tl.int64) * N
+
+    # 1. Interval means in current token order.  ROWS_PER_STEP rows per
+    # landmark are gathered in one load for memory-level parallelism, then
+    # added one at a time so the accumulation order matches the unfused
+    # row-by-row kernel exactly (adding masked zeros is exact in FP32).
+    start = landmark * N // LANDMARKS
+    length = (landmark + 1) * N // LANDMARKS - start
+    sample_start = start + length // 2 if MIDPOINT else start
+    sample_length = tl.full((LANDMARKS,), 1, tl.int32) if MIDPOINT else length
+    total = tl.zeros((LANDMARKS, 128), tl.float32)
+    step_rows = tl.arange(0, ROWS_PER_STEP)
+    for offset in tl.static_range(0, 1 if MIDPOINT else MAX_LEN, ROWS_PER_STEP):
+        local_rows = offset + step_rows
+        active = local_rows[None, :] < sample_length[:, None]
+        rows = tl.load(base + sample_start[:, None] + local_rows[None, :], mask=active, other=0)
+        if FP8:
+            value = tl.load(source + rows[:, :, None] * 128 + dims[None, None, :],
+                            mask=active[:, :, None], other=0).to(tl.float8e4nv, bitcast=True).to(tl.float32)
+        else:
+            value = tl.load(source + rows[:, :, None] * 128 + dims[None, None, :],
+                            mask=active[:, :, None], other=0.0).to(tl.float32)
+        if ROWS_PER_STEP == 1:
+            total += tl.sum(value, axis=1)
+        else:
+            for step in tl.static_range(ROWS_PER_STEP):
+                total += tl.sum(tl.where((step_rows == step)[None, :, None], value, 0.0), axis=1)
+    if FP8:
+        # The unfused FP8 path stores BF16 centers; round the same way.
+        center = (total / sample_length[:, None]).to(tl.bfloat16).to(tl.float32)
+    else:
+        center = (total / sample_length[:, None]).to(source.dtype.element_ty).to(tl.float32)
+
+    # 2. Proxy tree.
+    unit = center / tl.maximum(libdevice.sqrt_rn(tl.sum(center * center, axis=1)), 1.0e-12)[:, None]
+    distance = 1.0 - tl.dot(unit, tl.trans(unit), input_precision="ieee")
+    weight = length.to(tl.int32)
+    if CHILDREN == 2:
+        direction0, _, _ = _proxy_split(center, unit, distance, weight, CAP0, CAP1, LANDMARKS, 2)
+    else:
+        direction0, left_weight, right_weight = _proxy_split(
+            center, unit, distance, weight, CAP0 + CAP1, CAP2 + CAP3, LANDMARKS, 2)
+        direction1, _, _ = _proxy_split(center, unit, distance, left_weight, CAP0, CAP1, LANDMARKS, 2)
+        direction2, _, _ = _proxy_split(center, unit, distance, right_weight, CAP2, CAP3, LANDMARKS, 2)
+    columns = tl.arange(0, 16)
+    directions = tl.where((columns == 0)[:, None], direction0[None, :], 0.0)
+    if CHILDREN == 4:
+        directions = tl.where((columns == 1)[:, None], direction1[None, :], directions)
+        directions = tl.where((columns == 2)[:, None], direction2[None, :], directions)
+
+    # 3. Cosine proxy scores for every token, tile by tile.
+    scratch_base = scratch + parent.to(tl.int64) * N * INTERNAL
+    for tile in tl.static_range(0, BLOCK_N, BLOCK_T):
+        rows = tile + tl.arange(0, BLOCK_T)
+        active = rows < N
+        source_rows = tl.load(base + rows, mask=active, other=0)
+        if FP8:
+            x = tl.load(source + source_rows[:, None] * 128 + dims[None, :],
+                        mask=active[:, None], other=0).to(tl.float8e4nv, bitcast=True).to(tl.float32)
+        else:
+            x = tl.load(source + source_rows[:, None] * 128 + dims[None, :],
+                        mask=active[:, None], other=0.0).to(tl.float32)
+        norm = tl.maximum(libdevice.sqrt_rn(tl.sum(x * x, axis=1)), 1.0e-12)
+        if MODE == "fp16":
+            # Keep raw features in FP32 until normalization bounds them.
+            dot = tl.dot((x / norm[:, None]).to(tl.float16),
+                         tl.trans(directions.to(tl.float16)))
+        elif MODE == "fp16x3":
+            dot = _fp16x3_dot(x / norm[:, None], tl.trans(directions))
+        elif MODE == "bf16":
+            dot = tl.dot(x.to(tl.bfloat16), tl.trans(directions.to(tl.bfloat16)))
+        elif MODE == "tf32":
+            dot = tl.dot(x, tl.trans(directions), input_precision="tf32")
+        else:
+            dot = tl.dot(x, tl.trans(directions), input_precision="tf32x3")
+        scores = dot if MODE == "fp16" or MODE == "fp16x3" else dot / norm[:, None]
+        tl.store(scratch_base + rows[:, None] * INTERNAL + columns[None, :], scores,
+                 mask=active[:, None] & (columns < INTERNAL)[None, :])
+
+    # The score tiles and the routing vectors use different thread layouts;
+    # make the scratch stores visible before any thread reads them back.
+    tl.debug_barrier()
+
+    # 4. Exact-capacity routing.
+    positions = tl.arange(0, BLOCK_N)
+    valid = positions < N
+    global_ids = tl.load(base + positions, mask=valid, other=0)
+    original = global_ids - tl.load(row_batch + parent) * tokens
+    infinite = tl.full((BLOCK_N,), 9223372036854775807, tl.int64)
+    score0 = tl.load(scratch_base + positions * INTERNAL, mask=valid, other=0.0)
+    key0 = tl.where(valid, _route_key(score0, original), infinite)
+    if CHILDREN == 2:
+        threshold0 = _kth_smallest(key0, CAP0, positions)
+        left = valid & (key0 <= threshold0)
+        label = tl.where(left, 0, 1)
+    else:
+        threshold0 = _kth_smallest(key0, CAP0 + CAP1, positions)
+        left = valid & (key0 <= threshold0)
+        right = valid & (key0 > threshold0)
+        score1 = tl.load(scratch_base + positions * INTERNAL + 1, mask=valid, other=0.0)
+        score2 = tl.load(scratch_base + positions * INTERNAL + 2, mask=valid, other=0.0)
+        key1 = _route_key(tl.where(left, score1, score2), original)
+        threshold1 = _kth_smallest(tl.where(left, key1, infinite), CAP0, positions)
+        threshold2 = _kth_smallest(tl.where(right, key1, infinite), CAP2, positions)
+        label = tl.where(left, (key1 > threshold1).to(tl.int32),
+                         2 + (key1 > threshold2).to(tl.int32))
+
+    # 5. Stable partition into children, writing original token ids.
+    out_base = output + parent.to(tl.int64) * N
+    for child in tl.static_range(CHILDREN):
+        if child == 0:
+            child_offset = 0
+        elif child == 1:
+            child_offset = CAP0
+        elif child == 2:
+            child_offset = CAP0 + CAP1
+        else:
+            child_offset = CAP0 + CAP1 + CAP2
+        member = valid & (label == child)
+        rank = tl.cumsum(member.to(tl.int32), axis=0) - 1
+        tl.store(out_base + child_offset + rank, original, mask=member)
+
+
+def _default_warps(n: int) -> int:
+    if FUSED_NODE_WARPS is not None:
+        return int(FUSED_NODE_WARPS)
+    return 4
+
+
+def _default_block_t(n: int) -> int:
+    return 64
+
+
+def _default_rows_per_step(n: int) -> int:
+    return 1
+
+
+def fused_node_split(
+    source: torch.Tensor,
+    global_indices: torch.Tensor,
+    row_batch: torch.Tensor,
+    tokens: int,
+    child_capacities: tuple[int, ...],
+    *,
+    mode: str = "tf32x3",
+    num_warps: int | None = None,
+    block_t: int | None = None,
+    rows_per_step: int | None = None,
+    fp8: bool = False,
+    midpoint: bool = False,
+    landmarks: int = 32,
+) -> torch.Tensor:
+    """Split every node in ``global_indices`` and return original ids in child order.
+
+    ``source`` is the contiguous ``[rows, 128]`` feature table, ``global_indices``
+    the ``[parents, N]`` int64 rows of each node in current order,
+    ``row_batch`` the ``[parents]`` batch row of each node and ``tokens`` the
+    per-row token count, so original ids are ``global - row_batch * tokens``.
+    """
+    expected_dtypes = (torch.uint8,) if fp8 else (torch.float16, torch.bfloat16)
+    if not (source.is_cuda and source.ndim == 2 and source.shape[1] == 128
+            and source.is_contiguous() and source.dtype in expected_dtypes):
+        raise ValueError("fused node split requires a contiguous CUDA [rows,128] table "
+                         "(FP16/BF16, or uint8-viewed FP8 E4M3 with fp8=True)")
+    if global_indices.ndim != 2 or global_indices.dtype != torch.long:
+        raise ValueError("global_indices must be int64 [parents, tokens]")
+    parents, n = global_indices.shape
+    children = len(child_capacities)
+    if children not in (2, 4) or sum(child_capacities) != n or min(child_capacities) <= 0:
+        raise ValueError("child capacities must be two or four positive counts summing to N")
+    if landmarks not in (16, 32, 64, 128) or not landmarks <= n <= FUSED_NODE_MAX_TOKENS:
+        raise ValueError("node size outside the fused range")
+    if row_batch.shape != (parents,) or row_batch.dtype != torch.long:
+        raise ValueError("row_batch must be int64 [parents]")
+    if mode not in ("fp16", "fp16x3", "bf16", "tf32", "tf32x3"):
+        raise ValueError("unsupported score precision")
+    caps = tuple(int(value) for value in child_capacities) + (0,) * (4 - children)
+    global_indices = global_indices.contiguous()
+    row_batch = row_batch.contiguous()
+    scratch = torch.empty((parents, n, children - 1), device=source.device, dtype=torch.float32)
+    output = torch.empty((parents, n), device=source.device, dtype=torch.long)
+    _fused_node_split_kernel[(parents,)](
+        source, global_indices, row_batch, scratch, output, int(tokens),
+        N=n, BLOCK_N=triton.next_power_of_2(n), MAX_LEN=triton.cdiv(n, landmarks),
+        LANDMARKS=landmarks, CHILDREN=children, INTERNAL=children - 1,
+        CAP0=caps[0], CAP1=caps[1], CAP2=caps[2], CAP3=caps[3],
+        BLOCK_T=_default_block_t(n) if block_t is None else block_t,
+        ROWS_PER_STEP=_default_rows_per_step(n) if rows_per_step is None else rows_per_step,
+        MODE=mode, FP8=fp8, MIDPOINT=midpoint,
+        num_warps=(16 if landmarks >= 128 else 8 if landmarks == 64 else _default_warps(n)) if num_warps is None else num_warps,
+    )
+    return output
+
