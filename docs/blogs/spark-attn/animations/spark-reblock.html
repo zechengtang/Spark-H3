@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Better blocks, same attention · Spark-Attn</title><style>
+:root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:#182d42;background:#f8fafc}
+*{box-sizing:border-box}body{margin:0;padding:24px;max-width:1100px;margin-inline:auto}
+.eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#52718c;font-weight:750}
+h1{font-size:clamp(23px,3.5vw,34px);margin:9px 0 8px;letter-spacing:-.04em}p{font-size:14px;line-height:1.65;margin:0;color:#526679}
+.stages{display:flex;gap:8px;margin:20px 0 12px}.stage{flex:1;padding:9px;border-radius:8px;font-size:12px;background:#eaf0f5;color:#627385;text-align:center}.stage.active{background:#193d58;color:white}
+svg{display:block;width:100%;height:auto;background:white;border:1px solid #dde6ee;border-radius:14px}svg text{font-family:inherit;fill:#233c51}svg .small{font-size:12px;fill:#60778a}svg .label{font-size:15px;font-weight:650}svg .large{font-size:28px;font-weight:750;letter-spacing:-.04em}
+.insight{min-height:65px;margin-top:12px;padding:13px 16px;border-left:3px solid #0f9488;background:#edf8f6;border-radius:0 8px 8px 0;color:#274d50;font-size:14px;line-height:1.55}
+.controls{display:flex;align-items:center;gap:12px;margin-top:16px}button{border:1px solid #cad9e4;border-radius:8px;background:white;color:#1a3d59;padding:9px 16px;font:600 13px inherit;cursor:pointer;min-width:78px}button:hover{background:#e7f1f8}button:focus-visible,input:focus-visible{outline:3px solid #3b82f6;outline-offset:3px}input{min-width:30px;flex:1;accent-color:#187c86}output{font-variant-numeric:tabular-nums;font-size:12px;color:#52718c;min-width:35px}
+.caption{margin-top:12px;font-size:12px;color:#728495}.legend{display:flex;gap:15px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:#526679}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+@media(max-width:540px){body{padding:12px}.stages{gap:4px}.stage{font-size:10px;padding:8px 3px}.insight{font-size:12px;min-height:89px}button{padding:8px;min-width:60px}.controls{gap:8px}svg .small{font-size:14px}}
+</style></head><body>
+<div class="eyebrow">Spark-Attn / 01 / interactive illustration</div>
+<h1>Better blocks, same attention</h1><p>Spark-Reblock groups tokens with similar attention preferences before block selection.</p>
+<div class="stages" aria-label="Animation stages"><div class="stage">01 · Fixed blocks</div><div class="stage">02 · Reorder Q and K/V</div><div class="stage">03 · Select coherent blocks</div></div>
+<svg viewBox="0 0 850 530" role="img" aria-label="Spark-Reblock groups tokens with similar attention preferences before block selection."><title>Better blocks, same attention</title><desc>Illustrative 16-token example, not measured model results. Colors denote four attention-preference groups. Toy blocks contain 4 tokens; production blocks contain 64. The animation shows the resulting permutation, not the intermediate tree construction.</desc></svg>
+<div class="insight"></div>
+<div class="controls"><button id="play" type="button">Pause</button><button id="replay" type="button">Replay</button><label for="scrub" class="eyebrow">Progress</label><input id="scrub" aria-label="Animation progress" type="range" min="0" max="100" step="0.1" value="0"><output>0%</output></div>
+<p class="caption">Illustrative 16-token example, not measured model results. Colors denote four attention-preference groups. Toy blocks contain 4 tokens; production blocks contain 64. The animation shows the resulting permutation, not the intermediate tree construction.</p>
+<script>
+const svg=document.querySelector('svg'), ns='http://www.w3.org/2000/svg';
+function el(tag,attrs={},text=''){const n=document.createElementNS(ns,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);if(text)n.textContent=text;svg.append(n);return n;}
+function rect(x,y,w,h,fill,more={}){return el('rect',{x,y,width:w,height:h,fill,...more});}
+function txt(x,y,text,cls='small',more={}){return el('text',{x,y,class:cls,...more},text);}
+const clamp=x=>Math.max(0,Math.min(1,x));
+const ease=x=>{x=clamp(x);return x*x*(3-2*x);};
+const lerp=(a,b,t)=>a+(b-a)*t;
+const stages=[...document.querySelectorAll('.stage')],insight=document.querySelector('.insight');
+function stage(index,message){stages.forEach((n,i)=>{n.classList.toggle('active',i===index);n.setAttribute('aria-current',i===index?'step':'false');});insight.textContent=message;}
+
+
+const colors=['#147d92','#efaa42','#8565c4','#dd728b'];
+const q=[0,1,2,3,1,2,3,0,2,3,0,1,3,0,1,2],k=[2,0,3,1,0,3,1,2,3,1,2,0,1,2,0,3];
+function target(types){const order=types.map((v,i)=>i).sort((a,b)=>types[a]-types[b]||a-b);return types.map((_,i)=>order.indexOf(i));}
+const qp=target(q),kp=target(k),mx=488,my=114,s=20;
+txt(28,34,'GROUP BY ATTENTION PREFERENCE','label');
+txt(28,57,'16 query tokens · 4 tokens per toy block');
+txt(mx,34,'THE SAME ATTENTION, REORDERED','label');
+txt(mx,57,'Rows: Q · Columns: K (V follows K)');
+for(let b=0;b<4;b++){
+ rect(25,89+b*67,330,58,'#f5f8fb',{rx:9,stroke:'#dde6ee'});
+ txt(37,113+b*67,'BLOCK '+(b+1));
+}
+const tokens=q.map((c,i)=>{const n=el('g');n.append(el('circle',{r:17,fill:colors[c]}));n.append(txt(0,5,''+(i+1),'small',{'text-anchor':'middle',style:'fill:white;font-weight:700'}));return n;});
+const rowDots=q.map((c,i)=>el('circle',{r:6,fill:colors[c]}));
+const colDots=k.map((c,i)=>el('circle',{r:6,fill:colors[c]}));
+const cells=[];
+for(let i=0;i<16;i++)for(let j=0;j<16;j++){
+ const match=q[i]===k[j];cells.push({i,j,n:rect(0,0,s-1,s-1,match?'#218a9a':'#eaf2f5',{rx:2}),mass:Math.exp(match?2:-2)});
+}
+for(let i=0;i<=4;i++){
+ el('line',{x1:mx,y1:my+4*s*i,x2:mx+16*s,y2:my+4*s*i,stroke:'#9bb1c1','stroke-width':1});
+ el('line',{x1:mx+4*s*i,y1:my,x2:mx+4*s*i,y2:my+16*s,stroke:'#9bb1c1','stroke-width':1});
+}
+const selected=Array.from({length:4},()=>rect(0,0,4*s,4*s,'none',{stroke:'#df9b26','stroke-width':3,rx:3}));
+txt(28,395,'EXACT-BLOCK BUDGET','small');
+txt(28,426,'1 of 4 per query block','label');
+txt(28,456,'Tokens and attention values stay unchanged.');
+txt(488,470,'Attention mass inside selected blocks');
+const massText=txt(488,505,'25.0%','large');
+txt(615,503,'Illustrative toy attention','small');
+const position=(idx)=>[130+(idx%4)*58,118+Math.floor(idx/4)*67];
+function render(t){
+ const a=ease((t-.18)/.5),route= t<.18?0:t<.68?1:2;
+ stage(route,[
+ 'Fixed blocks mix four preferences. Important attention entries are scattered across many blocks.',
+ 'Reorder Q rows and K/V columns independently. Similar attention preferences move into balanced blocks.',
+ 'With the same exact-block budget, the selected blocks cover more attention mass in this toy example. Outputs are returned to the original Q order.'
+ ][route]);
+ tokens.forEach((n,i)=>{const p=position(i),r=position(qp[i]);n.setAttribute('transform',`translate(${lerp(p[0],r[0],a)},${lerp(p[1],r[1],a)})`);});
+ rowDots.forEach((n,i)=>{n.setAttribute('cx',mx-16);n.setAttribute('cy',my+(lerp(i,qp[i],a)+.5)*s);});
+ colDots.forEach((n,i)=>{n.setAttribute('cy',my-16);n.setAttribute('cx',mx+(lerp(i,kp[i],a)+.5)*s);});
+ cells.forEach(({i,j,n})=>{n.setAttribute('x',mx+lerp(j,kp[j],a)*s);n.setAttribute('y',my+lerp(i,qp[i],a)*s);});
+ const finished=a===1,blockMass=Array.from({length:4},()=>[0,0,0,0]);
+ cells.forEach(({i,j,mass})=>{blockMass[Math.floor((finished?qp[i]:i)/4)][Math.floor((finished?kp[j]:j)/4)]+=mass;});
+ const chosen=blockMass.map(row=>row.indexOf(Math.max(...row)));
+ selected.forEach((n,b)=>{n.setAttribute('x',mx+chosen[b]*4*s);n.setAttribute('y',my+b*4*s);n.setAttribute('opacity',a>0&&a<1?0:1);});
+ const retained=blockMass.reduce((v,row,b)=>v+row[chosen[b]],0)/cells.reduce((v,c)=>v+c.mass,0);
+ massText.textContent=a>0&&a<1?'Moving…':(100*retained).toFixed(1)+'%';
+ massText.setAttribute('font-size',a>0&&a<1?'21':'28');
+ svg.dataset.retainedMass=retained;svg.dataset.progress=t;
+}
+
+
+const slider=document.querySelector('#scrub'),play=document.querySelector('#play'),time=document.querySelector('output');
+let progress=0,playing=!matchMedia('(prefers-reduced-motion: reduce)').matches,visible=true,last=0;
+function paint(){render(progress);slider.value=progress*100;time.textContent=Math.round(progress*100)+'%';play.textContent=playing?'Pause':'Play';play.setAttribute('aria-label',playing?'Pause animation':'Play animation');}
+play.onclick=()=>{if(progress>=1&&!playing)progress=0;playing=!playing;last=0;paint();};
+document.querySelector('#replay').onclick=()=>{progress=0;playing=true;last=0;paint();};
+slider.oninput=()=>{progress=Number(slider.value)/100;playing=false;paint();};
+new IntersectionObserver(([entry])=>{visible=entry.isIntersecting;last=0;}).observe(svg);
+document.addEventListener('visibilitychange',()=>{last=0;});
+function tick(now){if(playing&&visible&&!document.hidden){if(last)progress=Math.min(1,progress+(now-last)/14000);if(progress>=1)playing=false;paint();}last=now;requestAnimationFrame(tick);}
+paint();requestAnimationFrame(tick);
+if(window.parent!==window)new ResizeObserver(()=>window.parent.postMessage({type:'spark-animation-height',height:Math.ceil(document.body.getBoundingClientRect().height)+24},location.origin)).observe(document.body);
+</script></body></html>

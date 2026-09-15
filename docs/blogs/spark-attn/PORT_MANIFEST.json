@@ -1,0 +1,111 @@
+{
+  "source_repository": "MiniMax-H3-Sparse",
+  "source_commit": "ca44a1780eba8bfd9d2cbdc4a9ff813bd8c38277",
+  "files": [
+    {
+      "source": "docs/blogs/landmark_tree_v2/animations/spark-reblock.html",
+      "destination": "docs/blogs/spark-attn/animations/spark-reblock.html",
+      "source_sha256": "eefe3697939cb8e125c51d7c5be0b0a080859d25419a9c2d4273f428d44a0c13",
+      "adapted_sha256": "eefe3697939cb8e125c51d7c5be0b0a080859d25419a9c2d4273f428d44a0c13"
+    },
+    {
+      "source": "reports/min10_no_local_vbench20pct_20260915/REPORT.md",
+      "destination": "docs/blogs/spark-attn/references/reports/min10_no_local_vbench20pct_20260915/REPORT.md",
+      "source_sha256": "071bfed72814307f9af8c3cc1a4982c9359b574a3d745d6694af33956be92358",
+      "adapted_sha256": "071bfed72814307f9af8c3cc1a4982c9359b574a3d745d6694af33956be92358"
+    },
+    {
+      "source": "reports/min10_tau1_no_local_vbench20pct_20260915/results.json",
+      "destination": "docs/blogs/spark-attn/references/reports/min10_tau1_no_local_vbench20pct_20260915/results.json",
+      "source_sha256": "dba7ac17a62b23377d08347df5b4187f9fb58975f4c4611f35e51bd42dd13473",
+      "adapted_sha256": "dba7ac17a62b23377d08347df5b4187f9fb58975f4c4611f35e51bd42dd13473"
+    },
+    {
+      "source": "reports/min10_topk10_no_local_vbench20pct_20260915/results.json",
+      "destination": "docs/blogs/spark-attn/references/reports/min10_topk10_no_local_vbench20pct_20260915/results.json",
+      "source_sha256": "f2493f2e0c517070e24b3e41858f252c407a5e2c76139ff54ae44aaae5b7975a",
+      "adapted_sha256": "f2493f2e0c517070e24b3e41858f252c407a5e2c76139ff54ae44aaae5b7975a"
+    },
+    {
+      "source": "reports/min10_topk10_no_local_vbench20pct_20260915/settings.json",
+      "destination": "docs/blogs/spark-attn/references/reports/min10_topk10_no_local_vbench20pct_20260915/settings.json",
+      "source_sha256": "afb1347b6d5b8dae3392342c9379b6a9ed59fb9c568558f9154d0e593e9a3b58",
+      "adapted_sha256": "afb1347b6d5b8dae3392342c9379b6a9ed59fb9c568558f9154d0e593e9a3b58"
+    },
+    {
+      "source": "reports/vbench20pct_768p10s_seed42_20260913/report.md",
+      "destination": "docs/blogs/spark-attn/references/reports/vbench20pct_768p10s_seed42_20260913/report.md",
+      "source_sha256": "562b012557d8ca86441697840536136f1333bbe68563336b52ee4071d0c62779",
+      "adapted_sha256": "562b012557d8ca86441697840536136f1333bbe68563336b52ee4071d0c62779"
+    },
+    {
+      "source": "reports/lmv2_initial_order_25/report.md",
+      "destination": "docs/blogs/spark-attn/references/reports/lmv2_initial_order_25/report.md",
+      "source_sha256": "6551b41098b9645e7cb4c08b57de99995fd534fc65a21ef9bf95a355d28d59fd",
+      "adapted_sha256": "6551b41098b9645e7cb4c08b57de99995fd534fc65a21ef9bf95a355d28d59fd"
+    },
+    {
+      "source": "SOL_JENSEN_COMMON_SHIFT_CAUSAL_VERDICT.md",
+      "destination": "docs/blogs/spark-attn/references/SOL_JENSEN_COMMON_SHIFT_CAUSAL_VERDICT.md",
+      "source_sha256": "88065dbbe6be3f3edc93f75776a158b7b791b91832318f4b23c663778d4b749c",
+      "adapted_sha256": "88065dbbe6be3f3edc93f75776a158b7b791b91832318f4b23c663778d4b749c"
+    },
+    {
+      "source": "SOL_LSE_MECHANISM_DIAGNOSTIC_VERDICT.md",
+      "destination": "docs/blogs/spark-attn/references/SOL_LSE_MECHANISM_DIAGNOSTIC_VERDICT.md",
+      "source_sha256": "7a64f8c8ec9a55e97a723d5a2e95cef9e331f03a05b5293c54ca1244228dd430",
+      "adapted_sha256": "7a64f8c8ec9a55e97a723d5a2e95cef9e331f03a05b5293c54ca1244228dd430"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/animations/spark-reweight.html",
+      "destination": "docs/blogs/spark-attn/animations/spark-reweight.html",
+      "source_sha256": "abf5e89e021a10b86ea4c8eabd2016abc2c1c13ff85e28f29549c41dd5ea7b1b",
+      "adapted_sha256": "abf5e89e021a10b86ea4c8eabd2016abc2c1c13ff85e28f29549c41dd5ea7b1b"
+    },
+    {
+      "source": "reports/virtual_q_levels_20260913/REPORT.md",
+      "destination": "docs/blogs/spark-attn/references/reports/virtual_q_levels_20260913/REPORT.md",
+      "source_sha256": "8439e329ef3e2d01be65b3fa0781510f6f92678e881df9c8ba2f48b128136677",
+      "adapted_sha256": "8439e329ef3e2d01be65b3fa0781510f6f92678e881df9c8ba2f48b128136677"
+    },
+    {
+      "source": "reports/virtual_q_levels_20260913/RESULT.md",
+      "destination": "docs/blogs/spark-attn/references/reports/virtual_q_levels_20260913/RESULT.md",
+      "source_sha256": "38d8a0601c48b98be6c49661e172e9aa61d8d1eea76cc1e568a92ea4bc200491",
+      "adapted_sha256": "38d8a0601c48b98be6c49661e172e9aa61d8d1eea76cc1e568a92ea4bc200491"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/preview.py",
+      "destination": "docs/blogs/spark-attn/preview.py",
+      "source_sha256": "8b0104c17531ea59718d00d2201268a57eeace3c753437dbe494d72edc1ba074",
+      "adapted_sha256": "a2ef41072b92a5fcffbed5b79a5fa5e01e85c271371b28025eabf1cf61ef4053"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/render_math.js",
+      "destination": "docs/blogs/spark-attn/render_math.js",
+      "source_sha256": "1bf1c6101c9de889a88ed271de92391cb7c98635dc5df6dd67c1ce68caaba2d6",
+      "adapted_sha256": "1bf1c6101c9de889a88ed271de92391cb7c98635dc5df6dd67c1ce68caaba2d6"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/animations/build.py",
+      "destination": "docs/blogs/spark-attn/animations/build.py",
+      "source_sha256": "9031be681d6541bcc369789ae63c451d5b40608a6a90dbdaae36c3dc693e11dc",
+      "adapted_sha256": "9031be681d6541bcc369789ae63c451d5b40608a6a90dbdaae36c3dc693e11dc"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/README.md",
+      "destination": "docs/blogs/spark-attn/README.md",
+      "source_sha256": "62eca644ad0124cf5874fb069fe458fe6999aac2c8cb4d61a4ba87512cdcd5cd",
+      "adapted_sha256": "357e0d23505cc09acdd0a0b97b76b5bece90a6f372a8d16a9a1f8e8f618ba90f"
+    }
+  ],
+  "verification": {
+    "local_blog_links": "passed",
+    "preview_check": "passed",
+    "rendered_equations": 3,
+    "interactive_animations": 2,
+    "browser_errors": [],
+    "mobile_horizontal_overflow": false,
+    "benchmark_rerun": false
+  }
+}

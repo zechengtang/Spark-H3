@@ -53,6 +53,13 @@ The remaining eight are style-specific video generation skills built for the Min
   </tr>
 </table>
 
+## Spark-MiniMax-H3
+
+Read the [Spark-Attn blog](docs/blogs/spark-attn/README.md) for the reblocking
+and reweighting methods, benchmark results, and interactive explanations.
+See the [inference guide](h3_sparse_attention/README.md) to enable Spark or
+Sol-Attn in this repository.
+
 ## Online API
 Use MiniMax-H3 directly via API. 
 - Global: [platform.minimax.io](https://platform.minimax.io/docs/api-reference/video-generation-v2-create) | CN: [platform.minimaxi.com](https://platform.minimaxi.com/docs/api-reference/video-generation-v2-create)
