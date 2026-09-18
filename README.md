@@ -70,7 +70,7 @@ requirements, defaults, and options.
 - [ ] Conduct further evaluation.
 
 ## 🤝 Acknowledgments
-
+ 
 Thanks to [MiniMax-H3](https://github.com/MiniMax-AI/MiniMax-H3) and
 [Sol-Attn / Sol-Engine](https://github.com/NVlabs/Sana/tree/sol-engine) for the
 model and attention infrastructure. See the [third-party notices](sol_attn/THIRD_PARTY_NOTICES.md)
