@@ -1,15 +1,13 @@
 # Spark-Attn for MiniMax-H3
 
-Spark-Attn is a sparse attention method for MiniMax-H3 video generation, built
-on Sol-Attn. It combines two operations:
+Spark-Attn is a block sparse attention method for MiniMax-H3 video generation. It combines two operations:
 
-- **Reblocking** groups similar query and key tokens into blocks so sparse
+- **Reblocking** groups similar tokens into blocks so sparse
   attention can select more relevant interactions.
 - **Reweighting** uses query-conditioned key/value summaries to approximate
   unselected blocks while preserving their attention mass and value contribution.
 
-This repository provides the Spark attention kernels and a reversible
-MiniMax-H3 inference integration. Conditioning video, text, and audio retain
+This repository provides the Spark attention kernels and MiniMax-H3 inference integration. Conditioning video, text, and audio retain
 exact attention handling.
 
 ## Quick start
