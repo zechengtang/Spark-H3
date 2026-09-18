@@ -1,16 +1,42 @@
-# Spark-Attn for MiniMax-H3
+<div align="center">
 
-Spark-Attn is a block sparse attention method for MiniMax-H3 video generation. It combines two operations:
+<h1>⚡ Spark-Attn</h1>
+<h3>Block sparse attention for MiniMax-H3 video generation</h3>
 
-- **Reblocking** groups similar tokens into blocks so sparse
-  attention can select more relevant interactions.
-- **Reweighting** uses query-conditioned key/value summaries to approximate
+<p><strong>Reblock similar tokens · Reweight unselected blocks</strong></p>
+
+<p>
+  <a href="https://github.com/zechengtang/Spark-MiniMax-H3"><img src="https://img.shields.io/badge/GitHub-Spark--Attn-24292f?style=flat-square&amp;logo=github&amp;logoColor=white" alt="Spark-Attn on GitHub"></a>
+  <a href="h3_sparse_attention/README.md"><img src="https://img.shields.io/badge/Docs-Usage_%26_Configuration-2563eb?style=flat-square" alt="Usage and configuration guide"></a>
+  <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3"><img src="https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-MiniMax--H3-ffc107?style=flat-square" alt="MiniMax-H3 model weights on Hugging Face"></a>
+</p>
+
+<p>
+  <a href="#quick-start">🚀 Quick Start</a> &nbsp;·&nbsp;
+  <a href="docs/blogs/spark-attn/README.md">📖 Method &amp; Illustrations</a> &nbsp;·&nbsp;
+  <a href="#todo">🗓️ TODO</a>
+</p>
+
+</div>
+
+---
+
+## ✨ Spark-Attn
+
+Spark-Attn is a block sparse attention method for MiniMax-H3 video generation.
+It combines two operations:
+
+- **🧩 Reblocking** groups similar tokens into blocks so sparse attention can
+  select more relevant interactions.
+- **⚖️ Reweighting** uses query-conditioned key/value summaries to approximate
   unselected blocks while preserving their attention mass and value contribution.
 
-This repository provides the Spark attention kernels and MiniMax-H3 inference integration. Conditioning video, text, and audio retain
-exact attention handling.
+This repository provides the Spark attention kernels and MiniMax-H3 inference
+integration. Conditioning video, text, and audio retain exact attention handling.
 
-## Quick start
+<a id="quick-start"></a>
+
+## 🚀 Quick Start
 
 Set up your H3 pipeline using the [upstream MiniMax-H3 instructions](https://github.com/MiniMax-AI/MiniMax-H3),
 then install Spark in the same environment with a compatible PyTorch/CUDA stack:
@@ -31,13 +57,20 @@ with install_h3_spark_attn(pipe.transformer, num_inference_steps=20):
 `inputs` contains your pipeline's generation arguments. The context manager
 restores the original attention processors on exit.
 
-See the [usage and configuration guide](h3_sparse_attention/README.md) for
-requirements and options, or the [Spark-Attn article](docs/blogs/spark-attn/README.md)
-for the method and illustrations. Kernel attributions are in
-[third-party notices](sol_attn/THIRD_PARTY_NOTICES.md).
+→ See the [usage and configuration guide](h3_sparse_attention/README.md) for
+requirements, defaults, and options.
 
-## TODO
+<a id="todo"></a>
+
+## 🗓️ TODO
 
 - [ ] Release a ComfyUI version.
 - [ ] Release the technical report.
 - [ ] Conduct further evaluation.
+
+## 🤝 Acknowledgments
+
+Thanks to [MiniMax-H3](https://github.com/MiniMax-AI/MiniMax-H3) and
+[Sol-Attn / Sol-Engine](https://github.com/NVlabs/Sana/tree/sol-engine) for the
+model and attention infrastructure. See the [third-party notices](sol_attn/THIRD_PARTY_NOTICES.md)
+for kernel attributions and included licenses.
