@@ -47,6 +47,10 @@ const colors=['#147d92','#efaa42','#8565c4','#dd728b'];
 const q=[0,1,2,3,1,2,3,0,2,3,0,1,3,0,1,2],k=[2,0,3,1,0,3,1,2,3,1,2,0,1,2,0,3];
 function target(types){const order=types.map((v,i)=>i).sort((a,b)=>types[a]-types[b]||a-b);return types.map((_,i)=>order.indexOf(i));}
 const qp=target(q),kp=target(k),mx=488,my=114,s=20;
+// Stable, balanced toy partitions: first coarse preference, then within each parent.
+function parentOrder(types){return target(types.map(c=>Math.floor(c/2)));}
+const qm=parentOrder(q),km=parentOrder(k);
+svg.setAttribute('viewBox','0 0 850 825');
 txt(28,34,'GROUP BY ATTENTION PREFERENCE','label');
 txt(28,57,'16 query tokens · 4 tokens per toy block');
 txt(mx,34,'THE SAME ATTENTION, REORDERED','label');
@@ -74,25 +78,56 @@ txt(488,470,'Attention mass inside selected blocks');
 const massText=txt(488,505,'25.0%','large');
 txt(615,503,'Illustrative toy attention','small');
 const position=(idx)=>[130+(idx%4)*58,118+Math.floor(idx/4)*67];
+// The tree records the same token membership as the animated permutation.
+txt(28,554,'REPEAT THE SPLIT INSIDE EACH CHILD','label');
+txt(28,577,'Stop when a group reaches the block size: 4 tokens in this toy.');
+const treeNodes=[];
+function treeNode(x,y,w,label,ids){
+ const box=rect(x,y,w,48,'#f5f8fb',{rx:8,stroke:'#c5d4df','stroke-width':2});
+ txt(x+w/2,y+19,label,'label',{'text-anchor':'middle'});
+ txt(x+w/2,y+37,ids,'small',{'text-anchor':'middle'});
+ treeNodes.push(box);
+}
+const edges=[];
+for(const [x1,y1,x2,y2] of [[425,639,225,667],[425,639,625,667],[225,715,125,746],[225,715,325,746],[625,715,525,746],[625,715,725,746]]){
+ edges.push(el('line',{x1,y1,x2,y2,stroke:'#c5d4df','stroke-width':2}));
+}
+treeNode(325,591,200,'Parent · 16 tokens','split into equal children');
+treeNode(125,667,200,'Child A · 8 tokens','repeat split within A');
+treeNode(525,667,200,'Child B · 8 tokens','repeat split within B');
+for(let c=0;c<4;c++)treeNode(35+c*200,746,180,'Leaf '+(c+1)+' · 4 tokens',q.flatMap((v,i)=>v===c?[i+1]:[]).join(' · '));
 function render(t){
- const a=ease((t-.18)/.5),route= t<.18?0:t<.68?1:2;
+ const first=ease((t-.12)/.2),second=ease((t-.44)/.22);
+ const route=t<.12?0:t<.44?1:t<.72?2:3;
+ const moving=(first>0&&first<1)||(second>0&&second<1);
+ const qpos=q.map((_,i)=>lerp(lerp(i,qm[i],first),qp[i],second));
+ const kpos=k.map((_,i)=>lerp(lerp(i,km[i],first),kp[i],second));
  stage(route,[
- 'Fixed blocks mix four preferences. Important attention entries are scattered across many blocks.',
- 'Reorder Q rows and K/V columns independently. Similar attention preferences move into balanced blocks.',
- 'With the same exact-block budget, the selected blocks cover more attention mass in this toy example. Outputs are returned to the original Q order.'
+ 'Start with 16 tokens. Fixed blocks mix attention preferences; the root contains every token.',
+ 'Split the root into two equal children of 8 tokens by coarse preference. Token IDs stay unchanged; each child owns its own subset.',
+ 'Recurse: apply the split separately inside A and B. Tokens stay within their parent, producing four leaves of 4 tokens. Stop at the leaf block size.',
+ 'Pack the leaf blocks, then select attention blocks. Q and K are reordered independently; V follows K. Return the output to the original Q order.'
  ][route]);
- tokens.forEach((n,i)=>{const p=position(i),r=position(qp[i]);n.setAttribute('transform',`translate(${lerp(p[0],r[0],a)},${lerp(p[1],r[1],a)})`);});
- rowDots.forEach((n,i)=>{n.setAttribute('cx',mx-16);n.setAttribute('cy',my+(lerp(i,qp[i],a)+.5)*s);});
- colDots.forEach((n,i)=>{n.setAttribute('cy',my-16);n.setAttribute('cx',mx+(lerp(i,kp[i],a)+.5)*s);});
- cells.forEach(({i,j,n})=>{n.setAttribute('x',mx+lerp(j,kp[j],a)*s);n.setAttribute('y',my+lerp(i,qp[i],a)*s);});
- const finished=a===1,blockMass=Array.from({length:4},()=>[0,0,0,0]);
- cells.forEach(({i,j,mass})=>{blockMass[Math.floor((finished?qp[i]:i)/4)][Math.floor((finished?kp[j]:j)/4)]+=mass;});
+ treeNodes.forEach((n,i)=>{
+   const reached=i===0||i<3&&first===1||i>=3&&second===1;
+   const active=route===0?i===0:route===1?i===0:route===2?i===1||i===2:i>=3;
+   n.setAttribute('fill',reached?'#edf8f6':'#f5f8fb');
+   n.setAttribute('stroke',active?'#148d95':'#c5d4df');
+   n.setAttribute('stroke-width',active?3:1);
+ });
+ edges.forEach((n,i)=>n.setAttribute('stroke',i<2&&first===1||i>=2&&second===1?'#148d95':'#c5d4df'));
+ tokens.forEach((n,i)=>{const p=position(i),m=position(qm[i]),r=position(qp[i]);n.setAttribute('transform',`translate(${lerp(lerp(p[0],m[0],first),r[0],second)},${lerp(lerp(p[1],m[1],first),r[1],second)})`);});
+ rowDots.forEach((n,i)=>{n.setAttribute('cx',mx-16);n.setAttribute('cy',my+(qpos[i]+.5)*s);});
+ colDots.forEach((n,i)=>{n.setAttribute('cy',my-16);n.setAttribute('cx',mx+(kpos[i]+.5)*s);});
+ cells.forEach(({i,j,n})=>{n.setAttribute('x',mx+kpos[j]*s);n.setAttribute('y',my+qpos[i]*s);});
+ const blockMass=Array.from({length:4},()=>[0,0,0,0]);
+ cells.forEach(({i,j,mass})=>{blockMass[Math.floor(qpos[i]/4)][Math.floor(kpos[j]/4)]+=mass;});
  const chosen=blockMass.map(row=>row.indexOf(Math.max(...row)));
- selected.forEach((n,b)=>{n.setAttribute('x',mx+chosen[b]*4*s);n.setAttribute('y',my+b*4*s);n.setAttribute('opacity',a>0&&a<1?0:1);});
+ selected.forEach((n,b)=>{n.setAttribute('x',mx+chosen[b]*4*s);n.setAttribute('y',my+b*4*s);n.setAttribute('opacity',moving?0:1);});
  const retained=blockMass.reduce((v,row,b)=>v+row[chosen[b]],0)/cells.reduce((v,c)=>v+c.mass,0);
- massText.textContent=a>0&&a<1?'Moving…':(100*retained).toFixed(1)+'%';
- massText.setAttribute('font-size',a>0&&a<1?'21':'28');
- svg.dataset.retainedMass=retained;svg.dataset.progress=t;
+ massText.textContent=moving?'Moving…':(100*retained).toFixed(1)+'%';
+ massText.setAttribute('font-size',moving?'21':'28');
+ svg.dataset.retainedMass=retained;svg.dataset.progress=t;svg.dataset.phase=route;svg.dataset.queryOrder=JSON.stringify(qpos);svg.dataset.keyOrder=JSON.stringify(kpos);
 }
 '''
 
@@ -175,8 +210,8 @@ def page(kind, title, description, stages, code, caption):
 def main():
     reblock = page('01', 'Better blocks, same attention',
         'Spark-Reblock groups tokens with similar attention preferences before block selection.',
-        ['01 · Fixed blocks', '02 · Reorder Q and K/V', '03 · Select coherent blocks'], REBLOCK,
-        'Illustrative 16-token example, not measured model results. Colors denote four attention-preference groups. Toy blocks contain 4 tokens; production blocks contain 64. The animation shows the resulting permutation, not the intermediate tree construction.')
+        ['01 · Root', '02 · Split parent', '03 · Recurse in children', '04 · Leaf blocks'], REBLOCK,
+        'Illustrative 16-token example, not measured model results. Colors denote four attention-preference groups. Toy blocks contain 4 tokens; production blocks contain 64. The binary splits illustrate recursion with predetermined toy preferences; production uses learned similarity, configured fanout (8-way in the blog ablation), and 64-token leaves.')
     reweight = page('02', 'Give the compressed branch its proper weight',
         'Spark-Reweight corrects attention mass and the attention-weighted value summary together.',
         ['01 · Block-mean approximation', '02 · Restore attention mass', '03 · Restore the value summary'], REWEIGHT,

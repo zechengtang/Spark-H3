@@ -1,0 +1,56 @@
+name: Deploy Spark-H3 blog
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release containing spark-h3-site.zip
+        required: true
+        type: string
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download prepared static site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern spark-h3-site.zip --dir "$RUNNER_TEMP/site-package"
+      - name: Extract and verify static site
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          import zipfile
+          root = Path('_site').resolve()
+          root.mkdir()
+          with zipfile.ZipFile(Path(os.environ['RUNNER_TEMP']) / 'site-package/spark-h3-site.zip') as archive:
+              for name in archive.namelist():
+                  if not (root / name).resolve().is_relative_to(root):
+                      raise ValueError('Invalid archive path')
+              archive.extractall(root)
+          manifest = json.loads((root / 'site-manifest.json').read_text())
+          for item in manifest['files']:
+              path = (root / item['file']).resolve()
+              assert path.is_relative_to(root)
+              with path.open('rb') as stream:
+                  assert hashlib.file_digest(stream, 'sha256').hexdigest() == item['sha256'], item['file']
+          assert (root / 'index.html').is_file()
+          PY
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Publish GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

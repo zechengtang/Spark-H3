@@ -15,10 +15,10 @@ svg{display:block;width:100%;height:auto;background:white;border:1px solid #dde6
 <div class="eyebrow">Spark-Attn / 02 / interactive illustration</div>
 <h1>Give the compressed branch its proper weight</h1><p>Spark-Reweight corrects attention mass and the attention-weighted value summary together.</p>
 <div class="stages" aria-label="Animation stages"><div class="stage">01 · Block-mean approximation</div><div class="stage">02 · Restore attention mass</div><div class="stage">03 · Restore the value summary</div></div>
-<svg viewBox="0 0 850 530" role="img" aria-label="Spark-Reweight corrects attention mass and the attention-weighted value summary together."><title>Give the compressed branch its proper weight</title><desc>Illustrative scalar example at the shared query a, not measured model results. The exact branch has mass 8 and value 0.1. The four compressed tokens have logits [-2, -1, 1, 2] and values [-1, -0.5, 0.5, 1]. Corrections are shown in stages for explanation; the implementation computes them together.</desc></svg>
+<svg viewBox="0 0 850 530" role="img" aria-label="Spark-Reweight corrects attention mass and the attention-weighted value summary together."><title>Give the compressed branch its proper weight</title></svg>
 <div class="insight"></div>
 <div class="controls"><button id="play" type="button">Pause</button><button id="replay" type="button">Replay</button><label for="scrub" class="eyebrow">Progress</label><input id="scrub" aria-label="Animation progress" type="range" min="0" max="100" step="0.1" value="0"><output>0%</output></div>
-<p class="caption">Illustrative scalar example at the shared query a, not measured model results. The exact branch has mass 8 and value 0.1. The four compressed tokens have logits [-2, -1, 1, 2] and values [-1, -0.5, 0.5, 1]. Corrections are shown in stages for explanation; the implementation computes them together.</p>
+
 <script>
 const svg=document.querySelector('svg'), ns='http://www.w3.org/2000/svg';
 function el(tag,attrs={},text=''){const n=document.createElementNS(ns,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);if(text)n.textContent=text;svg.append(n);return n;}

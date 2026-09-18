@@ -1,0 +1,289 @@
+{
+  "output_directory": ".preview/gallery",
+  "ours_model": "topk10+reblock+global_reweight_16_16_8",
+  "preview_encoding": {
+    "video_workers": 4,
+    "encoder_threads": 4,
+    "decoder_threads": 4,
+    "codec": "H.264",
+    "crf": 18,
+    "audio": "AAC 192k",
+    "purpose": "browser preview; FFV1 archives preserved"
+  },
+  "sources": [
+    {
+      "path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/generation_manifest.json",
+      "sha256": "314efba9734f19421ab39e07d6be9c5f7457a6c9b557fe514486df2e624c567b"
+    },
+    {
+      "path": "/autodl-fs/data/h3_repos/MiniMax-H3-Sparse/reports/global_reweight_fanout16_16_8_topk10_50prompt_20260917/results.json",
+      "sha256": "21fc26f387071a5f2744012d9c254541fa07bb080939b2c74fd30f6bcb151a95"
+    }
+  ],
+  "cases": [
+    {
+      "sample_id": "vbench_all_0844",
+      "case": 28,
+      "prompt": "integrated_multimodal_description: [Shot 1] A serene bathroom scene unfolds with a modern, glass-enclosed shower. Water cascades gently from a sleek, rainfall showerhead, creating a soothing ambiance. The steam rises, enveloping the space in a warm, misty embrace. Soft, ambient lighting enhances the tranquil atmosphere, casting gentle shadows on the pristine white tiles. A plush, white towel hangs neatly on a nearby rack, ready for use. The sound of water droplets hitting the floor creates a rhythmic, calming melody. The overall setting exudes relaxation and rejuvenation, inviting one to step in and unwind.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
+      "prompt_sha256": "e1601517246f5a20eb150b8b841f580f25a59754a4ea867943c4989ef4814596",
+      "speedup": 1.7230764859839203,
+      "dense": {
+        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/28_vbench_all_0844.mkv",
+        "archive_sha256": "b30f8f6e61fcc4b8703701b68a8390e4f71305a491e6d7d9e28d91fac58cad94",
+        "denoise_seconds": 588.0757639035583,
+        "file": "vbench_all_0844_dense.mp4",
+        "poster": "vbench_all_0844_dense.jpg",
+        "preview_sha256": "058df61d37c88d78b4b39f489775a992b79b4eddd5501dfb310fcb22148e7174",
+        "bytes": 1959343
+      },
+      "ours": {
+        "archive_path": "/autodl-fs/data/h3_outputs/global_reweight_fanout16_16_8_topk10_50prompt_20260917/global_16_16_8/28.mkv",
+        "archive_sha256": "812e5755423c75ac5053c6f55e86cd783549d98d71545976e1a9682031ebc755",
+        "denoise_seconds": 341.2940566986799,
+        "file": "vbench_all_0844_spark_global_16_16_8.mp4",
+        "poster": "vbench_all_0844_spark_global_16_16_8.jpg",
+        "preview_sha256": "d301d38e1247a89ec6deaf4afa2907fc46fee3efcfcd4f1738c618008be946ae",
+        "bytes": 2037572,
+        "preparation_seconds": 13.196923602372408,
+        "verified_frames": 240,
+        "verified_dimensions": [
+          1344,
+          768
+        ],
+        "verified_fps": 24,
+        "verified_audio": true
+      }
+    },
+    {
+      "sample_id": "vbench_all_0819",
+      "case": 23,
+      "prompt": "integrated_multimodal_description: [Shot 1] A colossal iceberg drifts majestically in the frigid, azure waters of the Arctic Ocean, its towering, jagged peaks glistening under the soft, ethereal light of the midnight sun. The iceberg's surface is a mesmerizing blend of pristine white and deep blue, with intricate patterns of cracks and crevices hinting at its ancient origins. Seabirds circle above, their calls echoing in the crisp, cold air, while the gentle lapping of waves against the iceberg's base creates a soothing, rhythmic sound. Occasionally, a chunk of ice breaks off, splashing into the water below, sending ripples across the serene, icy expanse. The scene is both awe-inspiring and tranquil, capturing the raw beauty and power of nature in its purest form.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
+      "prompt_sha256": "aae5d2f615f9746df2d0f9dd56aef3ee8a401ad0ee44c44d4452e545ccc8a168",
+      "speedup": 1.6432067832094037,
+      "dense": {
+        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/23_vbench_all_0819.mkv",
+        "archive_sha256": "89e6a3024d6e04de52e8f419b3c430c6bc4bb93d3e2ea6a592c4be9ca1590edb",
+        "denoise_seconds": 568.4074099706486,
+        "file": "vbench_all_0819_dense.mp4",
+        "poster": "vbench_all_0819_dense.jpg",
+        "preview_sha256": "ca7ce335864a4aacb9602ab36ad17e111cf203f89c54b75e9337ec64d7083632",
+        "bytes": 3768932
+      },
+      "ours": {
+        "archive_path": "/autodl-fs/data/h3_outputs/global_reweight_fanout16_16_8_topk10_50prompt_20260917/global_16_16_8/23.mkv",
+        "archive_sha256": "557b87579afbbc621a7f54b4d366eaf522e0adfc36d0f961a028c04d39a00274",
+        "denoise_seconds": 345.9135002233088,
+        "file": "vbench_all_0819_spark_global_16_16_8.mp4",
+        "poster": "vbench_all_0819_spark_global_16_16_8.jpg",
+        "preview_sha256": "99ce0aa16a3add9abf62f079dda9c5cdee2e7e85997f916876cc60c56b4b2386",
+        "bytes": 3913946,
+        "preparation_seconds": 14.659869719296694,
+        "verified_frames": 240,
+        "verified_dimensions": [
+          1344,
+          768
+        ],
+        "verified_fps": 24,
+        "verified_audio": true
+      }
+    },
+    {
+      "sample_id": "vbench_all_0803",
+      "case": 20,
+      "prompt": "integrated_multimodal_description: [Shot 1] A vast, golden desert stretches endlessly under a brilliant blue sky, with rolling dunes casting long shadows in the early morning light. The scene transitions to a close-up of the fine, rippled sand, each grain glistening under the sun's intense rays. A solitary cactus stands resiliently, its green contrasting sharply with the arid landscape. As the sun sets, the sky transforms into a canvas of vibrant oranges and purples, casting a warm glow over the desert. Finally, the night falls, revealing a breathtaking canopy of stars, with the Milky Way arching gracefully over the tranquil, silent expanse.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
+      "prompt_sha256": "ee7c8a4277afc46c140a2d3c1f64be5ec4403cd0a81320be2778696a6e26602c",
+      "speedup": 1.6951788196155084,
+      "dense": {
+        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/20_vbench_all_0803.mkv",
+        "archive_sha256": "3cafe40e2d2c200d60bb1790768a6cb41c590928acca708c9b439c58107ef0d5",
+        "denoise_seconds": 579.9037931114435,
+        "file": "vbench_all_0803_dense.mp4",
+        "poster": "vbench_all_0803_dense.jpg",
+        "preview_sha256": "5e416cc739c48d7ab8951a83481dd5134a4b21da6b3c0542673c772952993153",
+        "bytes": 8207631
+      },
+      "ours": {
+        "archive_path": "/autodl-fs/data/h3_outputs/global_reweight_fanout16_16_8_topk10_50prompt_20260917/global_16_16_8/20.mkv",
+        "archive_sha256": "facab2c0f0b45c279119afc11521196160546dbd17c52cc7c80608cea2491dcb",
+        "denoise_seconds": 342.09004171192646,
+        "file": "vbench_all_0803_spark_global_16_16_8.mp4",
+        "poster": "vbench_all_0803_spark_global_16_16_8.jpg",
+        "preview_sha256": "851134eb4c0044b794a6712e996ceb88370c4783ad222267c3dcc6cd617d7d01",
+        "bytes": 8702054,
+        "preparation_seconds": 16.347450863569975,
+        "verified_frames": 240,
+        "verified_dimensions": [
+          1344,
+          768
+        ],
+        "verified_fps": 24,
+        "verified_audio": true
+      }
+    },
+    {
+      "sample_id": "vbench_all_0724",
+      "case": 40,
+      "prompt": "integrated_multimodal_description: [Shot 1] Several large, deep purple plums rotate gracefully on a pristine white turntable, their glossy skins catching the light. As they spin, tiny water droplets begin to form and glisten on their surfaces, enhancing their rich color and texture. The close-up, macro perspective reveals the intricate details of the plums' skins, with each droplet magnifying the natural beauty of the fruit. The isolated white background ensures that the focus remains solely on the plums, highlighting their luscious, inviting appearance as they continue their mesmerizing rotation.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
+      "prompt_sha256": "de99d7bc5727143c6172cf6d7838669378bf1de8fc0e0d1f3fa3410f9f6a268f",
+      "speedup": 1.7227081259358943,
+      "dense": {
+        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/40_vbench_all_0724.mkv",
+        "archive_sha256": "ea6ba52546db3cf01aff3e373ff26b3d41ebe8dcb3c3b5840e686b1785381e91",
+        "denoise_seconds": 588.2883118540049,
+        "file": "vbench_all_0724_dense.mp4",
+        "poster": "vbench_all_0724_dense.jpg",
+        "preview_sha256": "91b7d8ee9bde82b83309e1895890f96a6dd2117c4054929a09a089e488f30ef2",
+        "bytes": 5163616
+      },
+      "ours": {
+        "archive_path": "/autodl-fs/data/h3_outputs/global_reweight_fanout16_16_8_topk10_50prompt_20260917/global_16_16_8/40.mkv",
+        "archive_sha256": "8f389a9aea8bcc5d30bdff341e935942cd2c05a597de7d797495808e4fd723dc",
+        "denoise_seconds": 341.4904144220054,
+        "file": "vbench_all_0724_spark_global_16_16_8.mp4",
+        "poster": "vbench_all_0724_spark_global_16_16_8.jpg",
+        "preview_sha256": "b9715cffecd14efbd3697e33512b4668185ba7aba68ec5fc78257d253ecf8f30",
+        "bytes": 5250819,
+        "preparation_seconds": 11.495116703212261,
+        "verified_frames": 240,
+        "verified_dimensions": [
+          1344,
+          768
+        ],
+        "verified_fps": 24,
+        "verified_audio": true
+      }
+    },
+    {
+      "sample_id": "vbench_all_0763",
+      "case": 48,
+      "prompt": "integrated_multimodal_description: [Shot 1] A majestic polar bear, standing on its hind legs, strums an electric guitar with surprising dexterity, set against a backdrop of the Arctic tundra. The bear's white fur contrasts sharply with the vibrant red of the guitar, creating a striking visual. Snowflakes gently fall around, adding a magical touch to the scene. The bear's eyes are closed, lost in the music, as its large paws expertly navigate the strings. In the background, the Northern Lights dance across the sky, casting an ethereal glow over the icy landscape. The scene captures a whimsical blend of nature and fantasy, where the wild meets the world of music.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
+      "prompt_sha256": "7cfca00057b3f216593501f27325b327bcd952d4c9d4f78a6ced9e5f98fa84b1",
+      "speedup": 1.7033661773316646,
+      "dense": {
+        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/48_vbench_all_0763.mkv",
+        "archive_sha256": "bb33955d041a091960a8d53bf598832e6012b1afaf19f912b7cd5dc88ede880f",
+        "denoise_seconds": 586.8336704149842,
+        "file": "vbench_all_0763_dense.mp4",
+        "poster": "vbench_all_0763_dense.jpg",
+        "preview_sha256": "c925e80d7da072f6e8fdce732fbcc83fa6c11ac0bc3fdd62e92f576601da3eaf",
+        "bytes": 3787547
+      },
+      "ours": {
+        "archive_path": "/autodl-fs/data/h3_outputs/global_reweight_fanout16_16_8_topk10_50prompt_20260917/global_16_16_8/48.mkv",
+        "archive_sha256": "b9e4308168c36822a6aef577e5809974ca0169d48476b4a422cb8179360602fa",
+        "denoise_seconds": 344.51410285383463,
+        "file": "vbench_all_0763_spark_global_16_16_8.mp4",
+        "poster": "vbench_all_0763_spark_global_16_16_8.jpg",
+        "preview_sha256": "c1c80cad3b806fec48f0be1ee0d5634e0c9c9921af7b04093e3eec9071af64bf",
+        "bytes": 3855395,
+        "preparation_seconds": 10.596574481576681,
+        "verified_frames": 240,
+        "verified_dimensions": [
+          1344,
+          768
+        ],
+        "verified_fps": 24,
+        "verified_audio": true
+      }
+    },
+    {
+      "sample_id": "vbench_all_0744",
+      "case": 44,
+      "prompt": "integrated_multimodal_description: [Shot 1] Gwen Stacy, with her signature blonde hair tied back in a ponytail, sits in a cozy, sunlit corner of a vintage library. She wears a casual outfit of a light blue sweater and dark jeans, her feet tucked under her on a plush armchair. The room is filled with towering bookshelves, and the warm glow of a nearby lamp casts a soft light on her face. She is deeply engrossed in an old, leather-bound book, her expression one of intense concentration. Occasionally, she pauses to jot down notes in a small, worn notebook beside her, the ambiance serene and scholarly.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
+      "prompt_sha256": "945a2d10e176b7e77728e7a461c4c5ee52d4cbbdcfc993e7127234595ed5b992",
+      "speedup": 1.7123644779771034,
+      "dense": {
+        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/44_vbench_all_0744.mkv",
+        "archive_sha256": "062dab1643b8b15e17fcc9d6fd53dea107f0495566f393b9e79c4aaab6dfa192",
+        "denoise_seconds": 581.9704484567046,
+        "file": "vbench_all_0744_dense.mp4",
+        "poster": "vbench_all_0744_dense.jpg",
+        "preview_sha256": "6d90b8784eb8e6e47cf0f1223e6d4e5a8f8214135947679a82ce05582760cd01",
+        "bytes": 3727790
+      },
+      "ours": {
+        "archive_path": "/autodl-fs/data/h3_outputs/global_reweight_fanout16_16_8_topk10_50prompt_20260917/global_16_16_8/44.mkv",
+        "archive_sha256": "30610e7e4c498ae6a8b4ae2afa5d8404d9a8f1c435093330f8768733bf9c78bc",
+        "denoise_seconds": 339.8636539950967,
+        "file": "vbench_all_0744_spark_global_16_16_8.mp4",
+        "poster": "vbench_all_0744_spark_global_16_16_8.jpg",
+        "preview_sha256": "3d1298571cdaed50b4ece7fa3fc39c62d4b741835facfa9d82fd153506dae249",
+        "bytes": 4107210,
+        "preparation_seconds": 70.93739825114608,
+        "verified_frames": 240,
+        "verified_dimensions": [
+          1344,
+          768
+        ],
+        "verified_fps": 24,
+        "verified_audio": true
+      }
+    },
+    {
+      "sample_id": "vbench_all_0753",
+      "case": 46,
+      "prompt": "integrated_multimodal_description: [Shot 1] A sleek, black cat lounges on a sunlit poolside deck, wearing stylish, tiny sunglasses that reflect the shimmering water. The cat's fur glistens under the bright sun, and its relaxed posture exudes cool confidence. Nearby, a colorful beach towel and a half-empty glass of lemonade add to the summery vibe. The cat occasionally stretches, its sunglasses staying perfectly in place, while the gentle ripples in the pool create a soothing background. The scene captures a perfect blend of feline elegance and laid-back summer fun.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
+      "prompt_sha256": "9a40c99077fdfd99ef7c2ae7fb5074eebb9808ebf89a46851acd57f6cd037ecf",
+      "speedup": 1.7325466626506292,
+      "dense": {
+        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/46_vbench_all_0753.mkv",
+        "archive_sha256": "87a716dbba8ee7b7d8274105669dcc74bd7caee539ae43ea1cc8fbc9091f8df7",
+        "denoise_seconds": 591.0699918046594,
+        "file": "vbench_all_0753_dense.mp4",
+        "poster": "vbench_all_0753_dense.jpg",
+        "preview_sha256": "db3cc67b318846993526c2016897c2aef020a09f2ad636a5b3b1217fd5f7e132",
+        "bytes": 7316200
+      },
+      "ours": {
+        "archive_path": "/autodl-fs/data/h3_outputs/global_reweight_fanout16_16_8_topk10_50prompt_20260917/global_16_16_8/46.mkv",
+        "archive_sha256": "cb3a542beb68584262cae936271600543180beaa048f49e4117b8a0b4ab19f80",
+        "denoise_seconds": 341.15675181895494,
+        "file": "vbench_all_0753_spark_global_16_16_8.mp4",
+        "poster": "vbench_all_0753_spark_global_16_16_8.jpg",
+        "preview_sha256": "a5a7bc687a32d1108bda516db273af9382d4d5bd97c19c67b60b9ddf744c00eb",
+        "bytes": 7466430,
+        "preparation_seconds": 12.829760000109673,
+        "verified_frames": 240,
+        "verified_dimensions": [
+          1344,
+          768
+        ],
+        "verified_fps": 24,
+        "verified_audio": true
+      }
+    },
+    {
+      "sample_id": "vbench_all_0685",
+      "case": 32,
+      "prompt": "integrated_multimodal_description: [Shot 1] A lone stormtrooper, clad in iconic white armor, stands on a sunlit beach, holding a futuristic vacuum cleaner. The scene opens with the stormtrooper methodically vacuuming the golden sand, the ocean waves gently lapping in the background. Seagulls fly overhead, casting fleeting shadows on the pristine shore. The stormtrooper's movements are precise and deliberate, contrasting humorously with the serene beach setting. As the camera zooms in, the details of the armor gleam under the bright sunlight, and the vacuum hums softly, creating an amusing juxtaposition of sci-fi and everyday life. The scene concludes with the stormtrooper pausing to look out at the horizon, the vast ocean stretching endlessly, blending the surreal with the mundane.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
+      "prompt_sha256": "05928a18b850609245bd5306aaaac28c4ca47b91cf152572c2902b9f2aeaa88c",
+      "speedup": 1.6914822649498162,
+      "dense": {
+        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/32_vbench_all_0685.mkv",
+        "archive_sha256": "7cc3a03d21449523fc361092e56da22c0b577d8b24ecaa544869ff3dc43d4472",
+        "denoise_seconds": 580.029531750828,
+        "file": "vbench_all_0685_dense.mp4",
+        "poster": "vbench_all_0685_dense.jpg",
+        "preview_sha256": "0cd4b81d1cf2026c767a2ce901787efae9cf907b2c8625de25666a78acf29686",
+        "bytes": 7926588
+      },
+      "ours": {
+        "archive_path": "/autodl-fs/data/h3_outputs/global_reweight_fanout16_16_8_topk10_50prompt_20260917/global_16_16_8/32.mkv",
+        "archive_sha256": "3cf87aa7bff2ad0dc80cd4da4c96ba2330fd7d589b32ae4763e48f24bf16be9e",
+        "denoise_seconds": 342.91197949275374,
+        "file": "vbench_all_0685_spark_global_16_16_8.mp4",
+        "poster": "vbench_all_0685_spark_global_16_16_8.jpg",
+        "preview_sha256": "5a0288c96bd1599038ac35773dbe9b2e7078d122b9cead432fc310ef3f5e3f75",
+        "bytes": 8744134,
+        "preparation_seconds": 12.430452346801758,
+        "verified_frames": 240,
+        "verified_dimensions": [
+          1344,
+          768
+        ],
+        "verified_fps": 24,
+        "verified_audio": true
+      }
+    }
+  ]
+}

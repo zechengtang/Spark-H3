@@ -1,0 +1,20 @@
+{
+  "directory": "/autodl-fs/data/h3_experiments/minimax_blog_sync_20260918_051657/export/site",
+  "archive": "/autodl-fs/data/h3_experiments/minimax_blog_sync_20260918_051657/export/spark-h3-site.zip",
+  "archive_bytes": 261679500,
+  "archive_sha256": "fff0a0ac3d838eb81734eb4093862922fc65c53361080d57b5e60469b8e82a76",
+  "site_bytes": 261638678,
+  "files": 119,
+  "video_count": 32,
+  "created_utc": "2026-09-18T05:17:52.620948+00:00",
+  "verification": {
+    "static_subpath_browser": "passed",
+    "videos": 32,
+    "animations": 2,
+    "mobile_layout": "passed",
+    "prompt_expansion": "passed",
+    "http_errors": [],
+    "javascript_errors": [],
+    "file_hashes_verified": 119
+  }
+}

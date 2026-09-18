@@ -20,12 +20,12 @@ import markdown
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-RUNTIME = HERE / '.preview'
+RUNTIME = Path(os.environ.get('SPARK_BLOG_RUNTIME', str(HERE / '.preview'))).expanduser().resolve()
 ASSETS = RUNTIME / 'assets'
 GIF = 'https://yang-song.net/assets/img/score/denoise_vp.gif'
 KATEX_VERSION = '0.16.22'
 CDN = f'https://cdn.jsdelivr.net/npm/katex@{KATEX_VERSION}/'
-MATH = re.compile(r'\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)')
+MATH = re.compile(r'\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|(?<!\\)\$(?!\$)([^$\n]+?)(?<!\\)\$')
 LOCK = threading.Lock()
 CACHE = {}
 ANIMATIONS = frozenset({'spark-reblock.html', 'spark-reweight.html'})
@@ -40,29 +40,7 @@ window.addEventListener('message', event => {
 });
 </script>'''
 
-STYLE = '''
-:root{color-scheme:light;--ink:#1c2837;--muted:#667085;--line:#e1e7ed;--blue:#235cb5}
-*{box-sizing:border-box}body{margin:0;color:var(--ink);background:#f5f7fa;
-font-family:system-ui,-apple-system,"Noto Sans CJK SC","Microsoft YaHei",sans-serif}
-header{background:#fff;border-bottom:1px solid var(--line);padding:18px max(24px,calc((100vw - 1080px)/2));
-font-size:14px;color:var(--muted)}header a{margin-right:20px}a{color:var(--blue);text-decoration:none}
-a:hover{text-decoration:underline}main{max-width:1080px;margin:32px auto 70px;background:white;
-padding:48px 64px;border:1px solid var(--line);border-radius:14px;line-height:1.9;font-size:16px}
-h1{font-size:clamp(28px,4vw,40px);line-height:1.4;letter-spacing:-.5px;margin-top:0}
-h2{font-size:26px;margin-top:54px;padding-top:16px;border-top:1px solid var(--line)}
-h3{font-size:20px;margin-top:32px}p{margin:18px 0}li{margin:8px 0}img{display:block;width:100%;
-height:auto;margin:24px auto 12px;border-radius:8px;background:#fff}em{color:var(--muted);font-size:14px}
-pre{padding:20px;background:#f4f6f9;overflow:auto;border-radius:8px;line-height:1.6}
-code{font-size:.88em;background:#f2f5f8;padding:2px 4px;border-radius:3px}pre code{padding:0;background:none}
-table{display:block;overflow-x:auto;border-collapse:collapse;font-size:14px;margin:24px 0}
-th,td{padding:10px 14px;border:1px solid var(--line);text-align:left}th{background:#f4f7fb}
-blockquote{border-left:4px solid #417ac2;margin:24px 0;padding:6px 22px;background:#f2f7ff}
-.katex-display{overflow-x:auto;overflow-y:hidden;padding:10px 0}.toc{border:1px solid var(--line);
-padding:18px 24px;border-radius:8px;background:#fafbfd;font-size:14px}.toc ul{margin:4px 0}
-.spark-animation{display:block;width:100%;height:880px;border:1px solid var(--line);border-radius:14px;margin:24px 0 12px}
-@media(max-width:760px){main{margin:0;padding:28px 20px;border:none;border-radius:0}header{padding:14px 20px}
-h2{font-size:23px}h3{font-size:19px}.katex{font-size:1em}}
-'''
+STYLE = (HERE / 'blog.css').read_text()
 
 
 def download(url, relative):
@@ -105,27 +83,235 @@ def reference_paths():
     return result
 
 
+def attention_art():
+    """Decorative attention-grid motif; not measured experiment data."""
+    tiles = []
+    for row in range(16):
+        for col in range(16):
+            selected = row // 4 == col // 4
+            color = '#b6ee76' if selected else '#456351'
+            opacity = (0.45 + ((row * 7 + col * 3) % 7) / 12 if selected
+                       else 0.12 + ((row * 3 + col * 5) % 5) / 30)
+            tiles.append(f'<rect x="{38 + col * 22}" y="{38 + row * 22}" '
+                         f'width="17" height="17" rx="2" fill="{color}" opacity="{opacity:.2f}"/>')
+    return ('<div class="hero-art" aria-hidden="true"><svg viewBox="0 0 430 430" '
+            'xmlns="http://www.w3.org/2000/svg">'
+            '<path d="M20 105V20h85 M325 20h85v85 M410 325v85h-85 M105 410H20v-85" '
+            'fill="none" stroke="#78947b" stroke-width="1"/>'
+            + ''.join(tiles) + '</svg></div>')
+
+
+def article_layout(content):
+    """Style the Markdown's existing content without maintaining a second copy."""
+    title = re.search(r'<h1[^>]*>(.*?)</h1>\s*<p>(.*?)</p>', content, re.S)
+    if title is None:
+        raise ValueError('Expected a blog title followed by its byline.')
+    heading, meta = title.groups()
+    name, separator, subtitle = heading.partition(': ')
+    if not separator:
+        name, subtitle = heading, ''
+    content = content[title.end():]
+    sections = list(re.finditer(r'<h2 id="([^"]+)">(.*?)</h2>', content, re.S))
+    intro = content[:sections[0].start()] if sections else content
+    features = re.search(r'<ul>(.*?)</ul>', intro, re.S)
+    links = []
+    if features:
+        items = re.findall(r'<li>(.*?)</li>', features.group(1), re.S)
+        for index, (item, section) in enumerate(zip(items, sections), 1):
+            links.append(f'<a class="component-link" href="#{section.group(1)}">'
+                         f'<span class="component-number">0{index}</span><span>{item}</span>'
+                         '<span class="arrow" aria-hidden="true">↗</span></a>')
+        intro = intro[:features.start()] + intro[features.end():]
+    hero = ('<section class="hero" aria-labelledby="blog-title"><div class="hero-inner">'
+            '<div class="hero-stage"><div class="hero-copy">'
+            '<p class="eyebrow">MiniMax-H3 · BSA</p>'
+            f'<h1 id="blog-title">{name}</h1><p class="hero-subtitle">{subtitle}</p>'
+            f'<p class="hero-meta">{meta}</p><div class="hero-actions">'
+            '<a class="button primary" href="#overview">Explore the method <span aria-hidden="true">↓</span></a>'
+            '<a class="button" href="https://github.com/zechengtang/Spark-H3">Code <span aria-hidden="true">↗</span></a>'
+            '</div></div>' + attention_art() + '</div>'
+            '<div class="component-links">' + ''.join(links) + '</div></div></section>')
+    overview = ('<section class="overview" id="overview" aria-labelledby="overview-title">'
+                '<div class="section-heading"><p class="eyebrow">Overview</p>'
+                '<h2 id="overview-title">Better BSA</h2></div>'
+                '<div class="overview-copy">' + intro + '</div></section>')
+    chapters = []
+    figure_index = 0
+    def figure(match):
+        nonlocal figure_index
+        figure_index += 1
+        return ('<figure class="article-figure"><div class="figure-image">' + match.group(1)
+                + '</div><figcaption><span class="figure-number">'
+                + f'{figure_index:02d}</span>' + match.group(2) + '</figcaption></figure>')
+    for index, section in enumerate(sections):
+        end = sections[index + 1].start() if index + 1 < len(sections) else len(content)
+        body = content[section.end():end]
+        body = re.sub(r'<p>(<img\b[^>]*>)</p>\s*<p><em>(.*?)</em></p>', figure, body, flags=re.S)
+        label = html.escape(section.group(2) + ' results', quote=True)
+        body = re.sub(r'(<table>.*?</table>)',
+                      lambda m: f'<div class="table-wrap" role="region" tabindex="0" aria-label="{label}">{m.group(1)}</div>',
+                      body, flags=re.S)
+        chapters.append(f'<section class="chapter" id="{section.group(1)}" '
+                        f'aria-labelledby="{section.group(1)}-title">'
+                        '<div class="section-heading">'
+                        f'<span class="chapter-number">0{index + 1} / METHOD</span>'
+                        f'<h2 id="{section.group(1)}-title"><a href="#{section.group(1)}">'
+                        f'{section.group(2)}</a></h2></div><div class="chapter-body">{body}</div></section>')
+    return hero + overview + ''.join(chapters)
+
+
+def gallery_data():
+    data = json.loads((HERE / 'gallery.json').read_text())
+    data['output_directory'] = str(RUNTIME / 'gallery')
+    return data
+
+
+def gallery_html():
+    cards = []
+    for index, case in enumerate(gallery_data()['cases'], 1):
+        sid = html.escape(case['sample_id'])
+        excerpt = re.sub(r'^integrated_multimodal_description:\s*(?:\[Shot 1\]\s*)?', '', case['prompt'])
+        excerpt = ' '.join(excerpt.split())
+        videos = []
+        for method, label in [('dense', 'Dense'), ('ours', 'Spark-H3')]:
+            item = case[method]
+            speedup = case['dense']['denoise_seconds'] / item['denoise_seconds']
+            videos.append(
+                f'<figure class="comparison-video {method}"><figcaption>'
+                f'<strong class="comparison-method"><i aria-hidden="true"></i>{label}</strong>'
+                '<span class="comparison-timing"><span class="timing-label">Denoising time</span>'
+                f'<span class="timing-value">{item["denoise_seconds"]:.2f}<small> s</small></span>'
+                f'<span class="timing-speedup">{speedup:.2f}×</span>'
+                '</span></figcaption>'
+                f'<video autoplay muted loop playsinline preload="metadata" disablepictureinpicture disableremoteplayback '
+                f'aria-label="{label}: {sid}" poster="/gallery/{item["poster"]}" '
+                f'src="/gallery/{item["file"]}"></video></figure>')
+        cards.append(
+            f'<article class="comparison-card" aria-labelledby="case-{sid}">'
+            '<div class="comparison-heading"><div class="comparison-identity">'
+            f'<h3 class="comparison-index" id="case-{sid}" aria-label="Comparison {index}">{index:02d}</h3></div>'
+            '</div>'
+            '<div class="comparison-pair">' + ''.join(videos) + '</div>'
+            '<details class="comparison-prompt"><summary>'
+            '<span class="prompt-heading"><span class="prompt-label">Prompt</span>'
+            '<span class="prompt-toggle"><span class="prompt-expand">Show full prompt</span>'
+            '<span class="prompt-collapse">Collapse prompt</span><span class="prompt-chevron" aria-hidden="true">↗</span></span></span>'
+            '<span class="prompt-excerpt">' + html.escape(excerpt) + '</span></summary>'
+            '<div class="prompt-full">' + html.escape(case['prompt']) + '</div></details></article>')
+    return '<div class="comparison-gallery">' + ''.join(cards) + '</div>'
+
+
+
+
+def integration_data():
+    return {name: json.loads((HERE / 'integration' / f'{name}.json').read_text())
+            for name in ('turbo-lora', 'fasth3-0753')}
+
+
+def resolve_integration_file(route):
+    for name in ('turbo-lora', 'fasth3-0753'):
+        if route == f'/{name}/manifest.json':
+            return HERE / 'integration' / f'{name}.json'
+    record = json.loads((HERE / 'integration/media.json').read_text()).get(route)
+    if record is None:
+        return None
+    path = (RUNTIME / record['file']).resolve()
+    return path if path.is_relative_to(RUNTIME.resolve()) else None
+
+
+def integration_html(data, family):
+    manifest = data[family]
+    records = {r['variant']: r for r in manifest['variants']}
+    groups = []
+    for prompt_index, prompt in enumerate(('0753', '0685'), 1):
+        if family == 'turbo-lora':
+            models = [(f'{prompt}_{model}_{mode}',
+                       ('LightX2V' if model == 'lightx2v' else 'Larry v4 EMA') +
+                       (' · Dense' if mode == 'dense' else ' · Spark-H3'),
+                       '8 denoising steps')
+                      for model in ('lightx2v', 'larry') for mode in ('dense', 'sparse')]
+            prompt_text = manifest['cases'][prompt]['generation_prompt']
+        else:
+            prefix = '' if prompt == '0753' else '0685_'
+            models = [(prefix + name, title, detail) for name, title, detail in (
+                ('v1_dense_native', 'FastH3 v1 Dense', '4 denoising steps · full attention'),
+                ('v1_dense_topk10_global', 'FastH3 v1 Dense · Spark-H3', '4 denoising steps · Spark-Attn'),
+                ('v1_vsa_native', 'FastH3 v1 VSA', '4 denoising steps · 90% sparsity'),
+                ('v2_native', 'FastH3 v2 VSA', '8 denoising steps · 80% sparsity'))]
+            prompt_text = manifest['prompt' if prompt == '0753' else 'prompt0685']
+        cards = []
+        for variant, title, detail in models:
+            record = records[variant]
+            video = ('<video autoplay muted loop playsinline preload="none" disablepictureinpicture disableremoteplayback '
+                     f'aria-label="{html.escape(title)}: {prompt_index:02d}" '
+                     f'data-src="{html.escape(record["preview"], quote=True)}"></video>')
+            cards.append(
+                '<figure class="integration-video"><figcaption>'
+                f'<strong>{html.escape(title)}</strong><span>{html.escape(detail)}</span>'
+                '</figcaption>' + video + '<div class="integration-video-footer">'
+                f'<span>Generation <strong>{record["generation_seconds"]:.2f} s</strong></span>'
+                '</div></figure>')
+        excerpt = re.sub(r'^integrated_multimodal_description:\s*(?:\[Shot 1\]\s*)?', '', prompt_text)
+        excerpt = ' '.join(excerpt.split())
+        groups.append(
+            '<div class="integration-group">'
+            f'<h4>{prompt_index:02d}</h4>'
+            '<div class="integration-video-grid">' + ''.join(cards) + '</div>'
+            '<details class="comparison-prompt"><summary>'
+            '<span class="prompt-heading"><span class="prompt-label">Prompt</span>'
+            '<span class="prompt-toggle"><span class="prompt-expand">Show full prompt</span>'
+            '<span class="prompt-collapse">Collapse prompt</span><span class="prompt-chevron" aria-hidden="true">↗</span></span></span>'
+            '<span class="prompt-excerpt">' + html.escape(excerpt) + '</span></summary>'
+            f'<div class="prompt-full">{html.escape(prompt_text)}</div></details></div>')
+    return '<div class="integration-gallery">' + ''.join(groups) + '</div>'
+
+
+INTEGRATION_SCRIPT = """<script>
+(() => {
+  const prepare = video => {
+    if (video.dataset.src) {
+      video.src = video.dataset.src;
+      delete video.dataset.src;
+      video.preload = 'metadata';
+      video.load();
+    }
+  };
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) if (entry.isIntersecting) {
+      prepare(entry.target);
+      entry.target.play().catch(() => {});
+      observer.unobserve(entry.target);
+    }
+  }, {rootMargin: '200px'});
+  document.querySelectorAll('.integration-video video').forEach(v => observer.observe(v));
+})();
+</script>"""
+
 def render():
     with LOCK:
         source = (HERE / 'README.md').read_text()
-        fingerprint = hashlib.sha256(source.encode()).hexdigest()
+        style = (HERE / 'blog.css').read_text()
+        integrations = integration_data()
+        fingerprint = hashlib.sha256((source + style + (HERE / 'gallery.json').read_text() + json.dumps(integrations, sort_keys=True)).encode()).hexdigest()
         if CACHE.get('fingerprint') == fingerprint:
             return CACHE['result']
         fragments = []
         def hold(match):
             index = len(fragments)
             fragments.append({'text': next(x for x in match.groups() if x is not None),
-                              'display': match.group(3) is None})
+                              'display': match.group(1) is not None or match.group(2) is not None})
             return f'H3MATHTOKEN{index}END'
         protected = MATH.sub(hold, source)
         protected = protected.replace('](' + GIF + ')', '](/assets/denoise_vp.gif)')
-        protected = protected.replace('src="animations/', 'src="/animations/')
         for target, path in reference_paths().items():
             route = ('/animations/' + path.name if path.parent == HERE / 'animations' and path.name in ANIMATIONS
                      else '/references/' + str(path.relative_to(REPO)))
             protected = protected.replace('](' + target + ')', '](' + route + ')')
         converter = markdown.Markdown(extensions=['tables', 'fenced_code', 'toc'], extension_configs={'toc': {'toc_depth': '2-2'}})
-        content = converter.convert(protected)
+        content = converter.convert(protected).replace('<!-- VIDEO_GALLERY -->', gallery_html())
+        content = content.replace('<!-- TURBO_INTEGRATION -->', integration_html(integrations, 'turbo-lora'))
+        content = content.replace('<!-- FASTH3_INTEGRATION -->', integration_html(integrations, 'fasth3-0753'))
+        content = article_layout(content)
         process = subprocess.run(['node', str(HERE / 'render_math.js'), str(ASSETS / 'katex/katex.min.js')],
                                  input=json.dumps(fragments), text=True, capture_output=True, check=True)
         maths = json.loads(process.stdout)
@@ -136,19 +322,34 @@ def render():
         assert 'H3MATHTOKEN' not in content
         page = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
                 '<meta name="viewport" content="width=device-width,initial-scale=1">'
-                '<title>Spark-Attn · Spark-MiniMax-H3</title>'
+                '<title>Spark-H3 · MiniMax-H3</title>'
                 '<link rel="stylesheet" href="/assets/katex/katex.min.css">'
-                '<style>' + STYLE + '</style></head><body><header>'
-                '<a href="/">Spark-MiniMax-H3 · Blog</a><a href="/source.md">Markdown source</a>'
-                '<a href="/assets/denoise_vp.gif">Original animation</a></header><main>'
-                '<details class="toc"><summary>Contents</summary>' + converter.toc + '</details>'
-                + content + '</main>' + RESIZE_ANIMATIONS + '</body></html>')
+                '<meta name="description" content="Spark-H3: adaptive block partitioning and reweighted pooling for MiniMax-H3 sparse attention.">'
+                '<style>' + style + '</style></head><body id="top">'
+                '<a class="skip-link" href="#overview">Skip to article</a>'
+                '<header class="site-nav"><nav class="nav-inner" aria-label="Main navigation">'
+                '<a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">✳</span>Spark-H3</a>'
+                '<div class="nav-links"><a href="#spark-reblock">Reblock</a><a href="#spark-reweight">Reweight</a>'
+                '<a class="nav-source" href="https://github.com/zechengtang/Spark-H3">Code ↗</a></div></nav></header><main>'
+                + content + '</main><footer class="site-footer"><div class="footer-inner">'
+                '<div><strong>Spark-H3</strong><br>SparkH3 Team · MiniMax-H3</div>'
+                '<div class="footer-links"><a href="/source.md">Markdown source ↗</a>'
+                '<a href="#top">Back to top ↑</a></div></div></footer>'
+                + RESIZE_ANIMATIONS + INTEGRATION_SCRIPT + '</body></html>')
         result = (page.encode(), len(fragments))
         CACHE.update(fingerprint=fingerprint, result=result)
         return result
 
 
 def resolve_file(route):
+    distilled = resolve_integration_file(route)
+    if distilled is not None:
+        return distilled
+    if route.startswith('/gallery/'):
+        data = gallery_data()
+        allowed = {c[m][kind] for c in data['cases'] for m in ('dense', 'ours') for kind in ('file', 'poster')}
+        name = route.removeprefix('/gallery/')
+        return Path(data['output_directory']) / name if name in allowed else None
     if route in {'/animations/' + name for name in ANIMATIONS}:
         return HERE / 'animations' / route.rsplit('/', 1)[-1]
     if route == '/source.md':
@@ -169,6 +370,48 @@ class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.respond(True)
 
+    def send_media(self, path, head):
+        size = path.stat().st_size
+        start, end = 0, size - 1
+        requested = self.headers.get('Range')
+        if requested:
+            match = re.fullmatch(r'bytes=(\d*)-(\d*)', requested)
+            if match and any(match.groups()):
+                left, right = match.groups()
+                if left:
+                    start = int(left)
+                    end = min(int(right), end) if right else end
+                else:
+                    start = max(0, size - int(right))
+            else:
+                start = size
+            if start >= size or start > end:
+                self.send_response(416)
+                self.send_header('Content-Range', f'bytes */{size}')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+        self.send_response(206 if requested else 200)
+        self.send_header('Content-Type', mimetypes.guess_type(str(path))[0] or 'application/octet-stream')
+        self.send_header('Accept-Ranges', 'bytes')
+        self.send_header('Content-Length', str(end - start + 1))
+        if requested:
+            self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+        self.end_headers()
+        if not head:
+            try:
+                with path.open('rb') as stream:
+                    stream.seek(start)
+                    remaining = end - start + 1
+                    while remaining:
+                        block = stream.read(min(1024 * 1024, remaining))
+                        if not block:
+                            break
+                        self.wfile.write(block)
+                        remaining -= len(block)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
     def respond(self, head):
         route = unquote(urlsplit(self.path).path)
         if route == '/':
@@ -179,9 +422,12 @@ class Handler(BaseHTTPRequestHandler):
             if path is None or not path.is_file():
                 self.send_error(404)
                 return
+            if route.startswith('/gallery/') or path.suffix.lower() in {'.mp4', '.mkv'}:
+                self.send_media(path, head)
+                return
             data = path.read_bytes()
             content_type = (mimetypes.guess_type(str(path))[0] or 'application/octet-stream')
-            if route.startswith('/references/') or route == '/source.md':
+            if (route.startswith('/references/') and not content_type.startswith('image/')) or route == '/source.md':
                 content_type = 'text/plain; charset=utf-8'
         self.send_response(200)
         self.send_header('Content-Type', content_type)
@@ -198,6 +444,8 @@ def check():
     text = page.decode()
     assert count > 0 and 'class="katex"' in text
     assert 'src="/assets/denoise_vp.gif"' in text and 'Yang Song' in text
+    assert len(re.findall(r'class="article-figure"', text)) == 3
+    assert len(re.findall(r'class="table-wrap"', text)) == 4
     assert GIF not in text  # Both image and direct-image link are local; article attribution remains external.
     for target in ('/.git/config', '/etc/passwd', '/assets/../../etc/passwd', '/references/.git/config'):
         assert resolve_file(target) is None
@@ -209,15 +457,14 @@ def check():
 
 
 def main():
-    global RUNTIME, ASSETS
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', choices=['prepare', 'check', 'serve'])
     parser.add_argument('--runtime', type=Path, default=RUNTIME)
-    parser.add_argument('--host', default='127.0.0.1')
+    parser.add_argument('--host', default='0.0.0.0')
     parser.add_argument('--port', type=int, default=6006)
     args = parser.parse_args()
-    RUNTIME = args.runtime.expanduser().resolve()
-    ASSETS = RUNTIME / 'assets'
+    globals()['RUNTIME'] = args.runtime.expanduser().resolve()
+    globals()['ASSETS'] = RUNTIME / 'assets'
     if args.mode == 'prepare':
         prepare()
     elif args.mode == 'check':

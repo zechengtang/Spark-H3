@@ -1,0 +1,65 @@
+{
+  "spark-reblock": {
+    "states": {
+      "0": {
+        "retainedMass": "0.2500000000000008",
+        "progress": "0"
+      },
+      "55": {
+        "retainedMass": "0.2500000000000008",
+        "progress": "0.55"
+      },
+      "100": {
+        "retainedMass": "0.9479149938275184",
+        "progress": "1"
+      }
+    },
+    "javascript_errors": [],
+    "play_pause_replay": "passed",
+    "mobile_overflow": false
+  },
+  "spark-reweight": {
+    "states": {
+      "0": {
+        "mass": "4",
+        "value": "0",
+        "output": "0.06666666666666667",
+        "dense": "0.4958972568956108",
+        "progress": "0"
+      },
+      "55": {
+        "mass": "10.61055265179775",
+        "value": "0",
+        "output": "0.04298636450877891",
+        "dense": "0.4958972568956108",
+        "progress": "0.55"
+      },
+      "100": {
+        "mass": "10.61055265179775",
+        "value": "0.7943904795486523",
+        "output": "0.4958972568956108",
+        "dense": "0.4958972568956108",
+        "progress": "1"
+      }
+    },
+    "javascript_errors": [],
+    "play_pause_replay": "passed",
+    "mobile_overflow": false
+  },
+  "scope": "Illustrative animations only; no model experiment",
+  "live_browser_verification": {
+    "url": "http://127.0.0.1:6008/",
+    "embedded_animations": 2,
+    "standalone_links": "passed",
+    "iframe_resizing": "passed",
+    "desktop_width": 1440,
+    "mobile_width": 390,
+    "javascript_errors": [],
+    "existing_6006_gallery": "passed"
+  },
+  "source_sha256": {
+    "build.py": "9031be681d6541bcc369789ae63c451d5b40608a6a90dbdaae36c3dc693e11dc",
+    "spark-reblock.html": "eefe3697939cb8e125c51d7c5be0b0a080859d25419a9c2d4273f428d44a0c13",
+    "spark-reweight.html": "abf5e89e021a10b86ea4c8eabd2016abc2c1c13ff85e28f29549c41dd5ea7b1b"
+  }
+}

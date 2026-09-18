@@ -1,0 +1,66 @@
+{
+  "/fasth3-0753/media/0685_v1_dense_native.mp4": {
+    "file": "integration/fasth3-0753/media/0685_v1_dense_native.mp4",
+    "sha256": "023d08c195a23aedf549bae79a7c5b924093bb922fccbd03be56791c404e22fb"
+  },
+  "/fasth3-0753/media/0685_v1_dense_topk10_global.mp4": {
+    "file": "integration/fasth3-0753/media/0685_v1_dense_topk10_global.mp4",
+    "sha256": "060529963132947a908137e527813a94904d43036ed794979e843b05f8442aa6"
+  },
+  "/fasth3-0753/media/0685_v1_vsa_native.mp4": {
+    "file": "integration/fasth3-0753/media/0685_v1_vsa_native.mp4",
+    "sha256": "e2a2cae5f080b8f0ee689761bcfe0b5fdd52b26b2e96da22f31bc5715839a501"
+  },
+  "/fasth3-0753/media/0685_v2_native.mp4": {
+    "file": "integration/fasth3-0753/media/0685_v2_native.mp4",
+    "sha256": "554c688c7693734484460b4c1df4f2289c30c5a81e66c0b90fff2ad656c75aeb"
+  },
+  "/fasth3-0753/media/v1_dense_native.mp4": {
+    "file": "integration/fasth3-0753/media/v1_dense_native.mp4",
+    "sha256": "0cb5ba99d5fe1be6894191d5c79e145ecbdfb24e93d96ecbf2c4c622588ec337"
+  },
+  "/fasth3-0753/media/v1_dense_topk10_global.mp4": {
+    "file": "integration/fasth3-0753/media/v1_dense_topk10_global.mp4",
+    "sha256": "f0465e3dcf7f9d22b8dcabbe7dc1cb21a9d8921727e9e6d4db426ce65ed8f199"
+  },
+  "/fasth3-0753/media/v1_vsa_native.mp4": {
+    "file": "integration/fasth3-0753/media/v1_vsa_native.mp4",
+    "sha256": "cd88511d13f614eff78b07ed1eea47782bf2def91644d07e6a4637827eaf7581"
+  },
+  "/fasth3-0753/media/v2_native.mp4": {
+    "file": "integration/fasth3-0753/media/v2_native.mp4",
+    "sha256": "64d5528bd08940315208bef78e7e60d464e831436ccac8e67fa85e4019197343"
+  },
+  "/turbo-lora/media/0685_larry_dense.mp4": {
+    "file": "integration/turbo-lora/media/0685_larry_dense.mp4",
+    "sha256": "808d4372445fdff635fe6ece135358d7c8c772cd0ac6424f7c7a867f31b28171"
+  },
+  "/turbo-lora/media/0685_larry_sparse.mp4": {
+    "file": "integration/turbo-lora/media/0685_larry_sparse.mp4",
+    "sha256": "ad20a2bd0a50f5ca24e84d6ab2657ca3523f13fef9a7c6b584fb2a2357d3eac5"
+  },
+  "/turbo-lora/media/0685_lightx2v_dense.mp4": {
+    "file": "integration/turbo-lora/media/0685_lightx2v_dense.mp4",
+    "sha256": "0793ae57eced015b177afcfc7575584cc7d19c51cc887e6d908e329cdef6aa85"
+  },
+  "/turbo-lora/media/0685_lightx2v_sparse.mp4": {
+    "file": "integration/turbo-lora/media/0685_lightx2v_sparse.mp4",
+    "sha256": "fd885fd0cb3ed5968f6f18beb68b79b6015369f17ce0be5af95badf9cc8f8dac"
+  },
+  "/turbo-lora/media/0753_larry_dense.mp4": {
+    "file": "integration/turbo-lora/media/0753_larry_dense.mp4",
+    "sha256": "ffb6a853efb8cff12ea98546c6008996205f1e381153be79d9c4fc68c51455f3"
+  },
+  "/turbo-lora/media/0753_larry_sparse.mp4": {
+    "file": "integration/turbo-lora/media/0753_larry_sparse.mp4",
+    "sha256": "32115c3a958f99abb347eec6da548bc7222198f34b66b1a55f08798f6b02e3e4"
+  },
+  "/turbo-lora/media/0753_lightx2v_dense.mp4": {
+    "file": "integration/turbo-lora/media/0753_lightx2v_dense.mp4",
+    "sha256": "0e329466a677b696b64c857a5793dc2dd57d7578943c41c40d093f1d32fe41d0"
+  },
+  "/turbo-lora/media/0753_lightx2v_sparse.mp4": {
+    "file": "integration/turbo-lora/media/0753_lightx2v_sparse.mp4",
+    "sha256": "ba21f14822f9c42e4f69c786b5e1a8667ec747991ebb462bea3da146eb9742b6"
+  }
+}

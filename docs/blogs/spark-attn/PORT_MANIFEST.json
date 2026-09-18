@@ -1,84 +1,38 @@
 {
   "source_repository": "MiniMax-H3-Sparse",
   "source_commit": "ca44a1780eba8bfd9d2cbdc4a9ff813bd8c38277",
+  "source_working_tree": true,
+  "sync_date": "2026-09-18T05:18:18.041051+00:00",
   "files": [
     {
-      "source": "docs/blogs/landmark_tree_v2/animations/spark-reblock.html",
-      "destination": "docs/blogs/spark-attn/animations/spark-reblock.html",
-      "source_sha256": "eefe3697939cb8e125c51d7c5be0b0a080859d25419a9c2d4273f428d44a0c13",
-      "adapted_sha256": "eefe3697939cb8e125c51d7c5be0b0a080859d25419a9c2d4273f428d44a0c13"
-    },
-    {
-      "source": "reports/min10_no_local_vbench20pct_20260915/REPORT.md",
-      "destination": "docs/blogs/spark-attn/references/reports/min10_no_local_vbench20pct_20260915/REPORT.md",
-      "source_sha256": "071bfed72814307f9af8c3cc1a4982c9359b574a3d745d6694af33956be92358",
-      "adapted_sha256": "071bfed72814307f9af8c3cc1a4982c9359b574a3d745d6694af33956be92358"
-    },
-    {
-      "source": "reports/min10_tau1_no_local_vbench20pct_20260915/results.json",
-      "destination": "docs/blogs/spark-attn/references/reports/min10_tau1_no_local_vbench20pct_20260915/results.json",
-      "source_sha256": "dba7ac17a62b23377d08347df5b4187f9fb58975f4c4611f35e51bd42dd13473",
-      "adapted_sha256": "dba7ac17a62b23377d08347df5b4187f9fb58975f4c4611f35e51bd42dd13473"
-    },
-    {
-      "source": "reports/min10_topk10_no_local_vbench20pct_20260915/results.json",
-      "destination": "docs/blogs/spark-attn/references/reports/min10_topk10_no_local_vbench20pct_20260915/results.json",
-      "source_sha256": "f2493f2e0c517070e24b3e41858f252c407a5e2c76139ff54ae44aaae5b7975a",
-      "adapted_sha256": "f2493f2e0c517070e24b3e41858f252c407a5e2c76139ff54ae44aaae5b7975a"
-    },
-    {
-      "source": "reports/min10_topk10_no_local_vbench20pct_20260915/settings.json",
-      "destination": "docs/blogs/spark-attn/references/reports/min10_topk10_no_local_vbench20pct_20260915/settings.json",
-      "source_sha256": "afb1347b6d5b8dae3392342c9379b6a9ed59fb9c568558f9154d0e593e9a3b58",
-      "adapted_sha256": "afb1347b6d5b8dae3392342c9379b6a9ed59fb9c568558f9154d0e593e9a3b58"
-    },
-    {
-      "source": "reports/vbench20pct_768p10s_seed42_20260913/report.md",
-      "destination": "docs/blogs/spark-attn/references/reports/vbench20pct_768p10s_seed42_20260913/report.md",
-      "source_sha256": "562b012557d8ca86441697840536136f1333bbe68563336b52ee4071d0c62779",
-      "adapted_sha256": "562b012557d8ca86441697840536136f1333bbe68563336b52ee4071d0c62779"
-    },
-    {
-      "source": "reports/lmv2_initial_order_25/report.md",
-      "destination": "docs/blogs/spark-attn/references/reports/lmv2_initial_order_25/report.md",
-      "source_sha256": "6551b41098b9645e7cb4c08b57de99995fd534fc65a21ef9bf95a355d28d59fd",
-      "adapted_sha256": "6551b41098b9645e7cb4c08b57de99995fd534fc65a21ef9bf95a355d28d59fd"
-    },
-    {
-      "source": "SOL_JENSEN_COMMON_SHIFT_CAUSAL_VERDICT.md",
-      "destination": "docs/blogs/spark-attn/references/SOL_JENSEN_COMMON_SHIFT_CAUSAL_VERDICT.md",
-      "source_sha256": "88065dbbe6be3f3edc93f75776a158b7b791b91832318f4b23c663778d4b749c",
-      "adapted_sha256": "88065dbbe6be3f3edc93f75776a158b7b791b91832318f4b23c663778d4b749c"
-    },
-    {
-      "source": "SOL_LSE_MECHANISM_DIAGNOSTIC_VERDICT.md",
-      "destination": "docs/blogs/spark-attn/references/SOL_LSE_MECHANISM_DIAGNOSTIC_VERDICT.md",
-      "source_sha256": "7a64f8c8ec9a55e97a723d5a2e95cef9e331f03a05b5293c54ca1244228dd430",
-      "adapted_sha256": "7a64f8c8ec9a55e97a723d5a2e95cef9e331f03a05b5293c54ca1244228dd430"
-    },
-    {
-      "source": "docs/blogs/landmark_tree_v2/animations/spark-reweight.html",
-      "destination": "docs/blogs/spark-attn/animations/spark-reweight.html",
-      "source_sha256": "abf5e89e021a10b86ea4c8eabd2016abc2c1c13ff85e28f29549c41dd5ea7b1b",
-      "adapted_sha256": "abf5e89e021a10b86ea4c8eabd2016abc2c1c13ff85e28f29549c41dd5ea7b1b"
-    },
-    {
-      "source": "reports/virtual_q_levels_20260913/REPORT.md",
-      "destination": "docs/blogs/spark-attn/references/reports/virtual_q_levels_20260913/REPORT.md",
-      "source_sha256": "8439e329ef3e2d01be65b3fa0781510f6f92678e881df9c8ba2f48b128136677",
-      "adapted_sha256": "8439e329ef3e2d01be65b3fa0781510f6f92678e881df9c8ba2f48b128136677"
-    },
-    {
-      "source": "reports/virtual_q_levels_20260913/RESULT.md",
-      "destination": "docs/blogs/spark-attn/references/reports/virtual_q_levels_20260913/RESULT.md",
-      "source_sha256": "38d8a0601c48b98be6c49661e172e9aa61d8d1eea76cc1e568a92ea4bc200491",
-      "adapted_sha256": "38d8a0601c48b98be6c49661e172e9aa61d8d1eea76cc1e568a92ea4bc200491"
+      "source": "docs/blogs/landmark_tree_v2/README.md",
+      "destination": "docs/blogs/spark-attn/README.md",
+      "source_sha256": "318c516ec967bb3ded1061bc97366bf0459dda010995dd688a6de6476debb76f",
+      "adapted_sha256": "318c516ec967bb3ded1061bc97366bf0459dda010995dd688a6de6476debb76f"
     },
     {
       "source": "docs/blogs/landmark_tree_v2/preview.py",
       "destination": "docs/blogs/spark-attn/preview.py",
-      "source_sha256": "8b0104c17531ea59718d00d2201268a57eeace3c753437dbe494d72edc1ba074",
-      "adapted_sha256": "a2ef41072b92a5fcffbed5b79a5fa5e01e85c271371b28025eabf1cf61ef4053"
+      "source_sha256": "bb38a968124776ee6dec24896cfff73ec3513538fdf9edbc7ff4fe1ab13e75d2",
+      "adapted_sha256": "c2a0369353369572787f00f43edf4355af0fa2420fc83bcd42bbcc232589a77d"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/blog.css",
+      "destination": "docs/blogs/spark-attn/blog.css",
+      "source_sha256": "34c252ec6b8baee10beed4b9692bb6c3662f0e3068d66dd2162dfe18f45d38e5",
+      "adapted_sha256": "34c252ec6b8baee10beed4b9692bb6c3662f0e3068d66dd2162dfe18f45d38e5"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/gallery.json",
+      "destination": "docs/blogs/spark-attn/gallery.json",
+      "source_sha256": "b57cfc0ba406d27077ab6d6a2fa91771ec8bfdca53d52ee481d23459db2b7ac1",
+      "adapted_sha256": "9262c49616ea55118f4ee5acf95fc7c18b932b75f9dc66dbdb8013f0faa79069"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/results_50prompt.json",
+      "destination": "docs/blogs/spark-attn/results_50prompt.json",
+      "source_sha256": "e0e9d1d4d918f3b91176c3e447aac18a648b6e6734be1ffabfa80fdff3599b60",
+      "adapted_sha256": "e0e9d1d4d918f3b91176c3e447aac18a648b6e6734be1ffabfa80fdff3599b60"
     },
     {
       "source": "docs/blogs/landmark_tree_v2/render_math.js",
@@ -87,25 +41,115 @@
       "adapted_sha256": "1bf1c6101c9de889a88ed271de92391cb7c98635dc5df6dd67c1ce68caaba2d6"
     },
     {
-      "source": "docs/blogs/landmark_tree_v2/animations/build.py",
-      "destination": "docs/blogs/spark-attn/animations/build.py",
-      "source_sha256": "9031be681d6541bcc369789ae63c451d5b40608a6a90dbdaae36c3dc693e11dc",
-      "adapted_sha256": "9031be681d6541bcc369789ae63c451d5b40608a6a90dbdaae36c3dc693e11dc"
+      "source": "docs/blogs/landmark_tree_v2/plot_jensen_gap.py",
+      "destination": "docs/blogs/spark-attn/plot_jensen_gap.py",
+      "source_sha256": "976653046f3881a3da58a089d1c213b24133ad1adc03767e770e05957e8089fe",
+      "adapted_sha256": "976653046f3881a3da58a089d1c213b24133ad1adc03767e770e05957e8089fe"
     },
     {
-      "source": "docs/blogs/landmark_tree_v2/README.md",
-      "destination": "docs/blogs/spark-attn/README.md",
-      "source_sha256": "62eca644ad0124cf5874fb069fe458fe6999aac2c8cb4d61a4ba87512cdcd5cd",
-      "adapted_sha256": "357e0d23505cc09acdd0a0b97b76b5bece90a6f372a8d16a9a1f8e8f618ba90f"
+      "source": "docs/blogs/landmark_tree_v2/plot_reweight_correction.py",
+      "destination": "docs/blogs/spark-attn/plot_reweight_correction.py",
+      "source_sha256": "102076ec759f40c0340ce769110dded1e26d66561a8a2eeb4693208f340c83d6",
+      "adapted_sha256": "102076ec759f40c0340ce769110dded1e26d66561a8a2eeb4693208f340c83d6"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/export_github_pages.py",
+      "destination": "docs/blogs/spark-attn/export_github_pages.py",
+      "source_sha256": "fb8aad50d02f0d74cbcfb7071789a5811dcbbc40c1ef064268d2b4d0fa628114",
+      "adapted_sha256": "fb8aad50d02f0d74cbcfb7071789a5811dcbbc40c1ef064268d2b4d0fa628114"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/GITHUB_PAGES.md",
+      "destination": "docs/blogs/spark-attn/GITHUB_PAGES.md",
+      "source_sha256": "6869d69216057c094a2c6b04f758996bdce8151a8a94eac5d6cf4a187c05c6ad",
+      "adapted_sha256": "e00f9dd28f7a93d2d5208c3e21614a873d1741df821dd863b072d0cc245d9a3b"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/animations/build.py",
+      "destination": "docs/blogs/spark-attn/animations/build.py",
+      "source_sha256": "dd83e7214e8b38339e151729b50a8617dee45430377ea53ffba79c9be20adfbb",
+      "adapted_sha256": "dd83e7214e8b38339e151729b50a8617dee45430377ea53ffba79c9be20adfbb"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/animations/spark-reblock.html",
+      "destination": "docs/blogs/spark-attn/animations/spark-reblock.html",
+      "source_sha256": "6da02ac57d2ac72f3edf2ea7c8e78fc0e86ec290780eac504fecfb49525f713e",
+      "adapted_sha256": "6da02ac57d2ac72f3edf2ea7c8e78fc0e86ec290780eac504fecfb49525f713e"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/animations/spark-reweight.html",
+      "destination": "docs/blogs/spark-attn/animations/spark-reweight.html",
+      "source_sha256": "409b88eac29607ee8fddd284b2419707b70245f9e944296b14db9e696f39445b",
+      "adapted_sha256": "409b88eac29607ee8fddd284b2419707b70245f9e944296b14db9e696f39445b"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/animations/README.md",
+      "destination": "docs/blogs/spark-attn/animations/README.md",
+      "source_sha256": "d323976f2fb8ad5d06833ea0a4ec968f780d96694ac19490e41956c60d538ba2",
+      "adapted_sha256": "d323976f2fb8ad5d06833ea0a4ec968f780d96694ac19490e41956c60d538ba2"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/animations/verification.json",
+      "destination": "docs/blogs/spark-attn/animations/verification.json",
+      "source_sha256": "729ea2c078534ecbd897da9b9d46049c9d6ba323c8babb8c8c8c8e21597112e8",
+      "adapted_sha256": "729ea2c078534ecbd897da9b9d46049c9d6ba323c8babb8c8c8c8e21597112e8"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/figures/jensen_gap.svg",
+      "destination": "docs/blogs/spark-attn/figures/jensen_gap.svg",
+      "source_sha256": "75f7f7d797eb273ace57c282079262c84c5baa76f74b776feff76745b051c6aa",
+      "adapted_sha256": "75f7f7d797eb273ace57c282079262c84c5baa76f74b776feff76745b051c6aa"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/figures/jensen_gap.png",
+      "destination": "docs/blogs/spark-attn/figures/jensen_gap.png",
+      "source_sha256": "4bcc427eebab661e8b8bd7d5242bda99d0dc2a5cb5542ba122da94b8c56fc4bf",
+      "adapted_sha256": "4bcc427eebab661e8b8bd7d5242bda99d0dc2a5cb5542ba122da94b8c56fc4bf"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/figures/reweight_correction.svg",
+      "destination": "docs/blogs/spark-attn/figures/reweight_correction.svg",
+      "source_sha256": "2cd2918069655684ee2078dc9b809e2cfebbf0b56834b3662f7b53891d7de8af",
+      "adapted_sha256": "2cd2918069655684ee2078dc9b809e2cfebbf0b56834b3662f7b53891d7de8af"
+    },
+    {
+      "source": "docs/blogs/landmark_tree_v2/figures/reweight_correction.png",
+      "destination": "docs/blogs/spark-attn/figures/reweight_correction.png",
+      "source_sha256": "e8b7e8a6d5aedbe4ea9074014d5086772707b94e652f2f01d4ad7ba09cfed415",
+      "adapted_sha256": "e8b7e8a6d5aedbe4ea9074014d5086772707b94e652f2f01d4ad7ba09cfed415"
+    },
+    {
+      "source": ".github/workflows/deploy-blog.yml",
+      "destination": ".github/workflows/deploy-blog.yml",
+      "source_sha256": "7eedac5e3105962ffebf3def3159d23c835cba514d4f5dcc67ba468ea1db7d30",
+      "adapted_sha256": "7eedac5e3105962ffebf3def3159d23c835cba514d4f5dcc67ba468ea1db7d30"
     }
   ],
-  "verification": {
-    "local_blog_links": "passed",
+  "adaptations": [
+    "Runtime assets use local .preview or --runtime / SPARK_BLOG_RUNTIME.",
+    "Integration metadata and media allowlist replace dependency on Sparse video_gallery/serve.py.",
+    "Gallery media remains outside tracked Git files.",
+    "GitHub Pages instructions use the destination blog path."
+  ],
+  "local_metadata_sha256": {
+    "integration/turbo-lora.json": "67b28e616212fc4ba7ed4e9b189a1ed81e0a91fc98af15c830163090f4f9a720",
+    "integration/fasth3-0753.json": "2eeb44a07c112c71ed7f7a2549206ab635ed23978711c84a67022b2dd5cc64a9",
+    "integration/media.json": "6d690b945af6609964fd1de1585b02f2482bf28e452967d6449a839b58efe6de"
+  },
+  "backup_directory": "/autodl-fs/data/h3_experiments/minimax_blog_sync_20260918_051657",
+  "validation": {
+    "rendered_html_matches_source_after_repository_path_normalization": true,
+    "local_routes_resolved": 55,
     "preview_check": "passed",
-    "rendered_equations": 3,
-    "interactive_animations": 2,
-    "browser_errors": [],
-    "mobile_horizontal_overflow": false,
-    "benchmark_rerun": false
+    "video_count": 32,
+    "static_subpath_browser": "passed",
+    "videos": 32,
+    "animations": 2,
+    "mobile_layout": "passed",
+    "prompt_expansion": "passed",
+    "http_errors": [],
+    "javascript_errors": [],
+    "file_hashes_verified": 119,
+    "integration_http_byte_ranges": "passed"
   }
 }
