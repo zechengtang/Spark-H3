@@ -8,6 +8,7 @@
 <p>
   <a href="https://github.com/zechengtang/Spark-MiniMax-H3"><img src="https://img.shields.io/badge/GitHub-Spark--Attn-24292f?style=flat-square&amp;logo=github&amp;logoColor=white" alt="Spark-Attn on GitHub"></a>
   <a href="h3_sparse_attention/README.md"><img src="https://img.shields.io/badge/Docs-Usage_%26_Configuration-2563eb?style=flat-square" alt="Usage and configuration guide"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-15803d?style=flat-square" alt="License: Apache 2.0"></a>
   <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3"><img src="https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-MiniMax--H3-ffc107?style=flat-square" alt="MiniMax-H3 model weights on Hugging Face"></a>
 </p>
 
@@ -74,3 +75,10 @@ Thanks to [MiniMax-H3](https://github.com/MiniMax-AI/MiniMax-H3) and
 [Sol-Attn / Sol-Engine](https://github.com/NVlabs/Sana/tree/sol-engine) for the
 model and attention infrastructure. See the [third-party notices](sol_attn/THIRD_PARTY_NOTICES.md)
 for kernel attributions and included licenses.
+
+## 📄 License
+
+Spark-Attn’s original code and documentation are licensed under the
+[Apache License 2.0](LICENSE). Third-party components retain their original
+licenses and notices; see [third-party notices](sol_attn/THIRD_PARTY_NOTICES.md).
+MiniMax-H3 model weights remain subject to their upstream license.
