@@ -1,32 +1,66 @@
-"""Spark dependencies adapted from MiniMax-H3-Sparse; see PORT_MANIFEST.json."""
+"""Triton cutoff preprocessors for fixed-ratio stock CuTe SOL routing."""
+
 from __future__ import annotations
 
-
 import math
-
-
 from typing import Any
 
-
 import torch
-
-
 import triton
-
-
 import triton.language as tl
-
-
 from triton.language.extra import libdevice
 
 
 BLOCK_SIZE = 64
-
-
 HEAD_DIM = 128
-
-
 _LOG2_E = math.log2(math.e)
+
+
+@triton.jit
+def _rms_query_stats_kernel(
+    query,
+    query_mean,
+    query_direction,
+    tokens,
+    heads: tl.constexpr,
+    blocks: tl.constexpr,
+    block_size: tl.constexpr,
+    head_dim: tl.constexpr,
+    dim_tile: tl.constexpr,
+):
+    """Reduce one Q block once, emitting its mean and signed squared mean."""
+
+    block_head = tl.program_id(0)
+    dim_group = tl.program_id(1)
+    block = block_head % blocks
+    head = (block_head // blocks) % heads
+    batch = block_head // (blocks * heads)
+    rows = tl.arange(0, block_size)
+    dims = dim_group * dim_tile + tl.arange(0, dim_tile)
+    token_ids = block * block_size + rows
+    offsets = (
+        ((batch * tokens + token_ids[:, None]) * heads + head) * head_dim
+        + dims[None, :]
+    )
+    valid = (token_ids[:, None] < tokens) & (dims[None, :] < head_dim)
+    values = tl.load(query + offsets, mask=valid, other=0.0).to(tl.float32)
+    count = tl.minimum(block_size, tokens - block * block_size).to(tl.float32)
+    mean = tl.sum(values, axis=0) / count
+    squared = mean * mean
+    output = ((batch * heads + head) * blocks + block) * head_dim + dims
+    output_valid = dims < head_dim
+    tl.store(query_mean + output, mean, mask=output_valid)
+    direction = ((batch * heads + head) * blocks + block) * (2 * head_dim)
+    tl.store(
+        query_direction + direction + dims,
+        tl.where(mean > 0.0, squared, 0.0),
+        mask=output_valid,
+    )
+    tl.store(
+        query_direction + direction + head_dim + dims,
+        tl.where(mean < 0.0, squared, 0.0),
+        mask=output_valid,
+    )
 
 
 @triton.jit
@@ -296,7 +330,9 @@ def _gemm_score_map(
     counts = torch.full(
         (blocks,), float(BLOCK_SIZE), device=q.device, dtype=torch.float32
     )
-    counts[-1] = tokens - (blocks - 1) * BLOCK_SIZE
+    # Scalar assignment copies a host tensor and synchronizes the CUDA stream.
+    # Filling a device view keeps this entirely on the GPU.
+    counts[-1:].fill_(tokens - (blocks - 1) * BLOCK_SIZE)
     query_centroids = q_padded.view(
         batch, blocks, BLOCK_SIZE, heads, HEAD_DIM
     ).sum(dim=2, dtype=torch.float32) / counts.view(1, blocks, 1, 1)
@@ -358,6 +394,7 @@ def gemm_radix_topk_cutoff(
     topk_ratio: float,
     _return_first_excluded: bool = False,
     _key_for_rms_auxiliary: torch.Tensor | None = None,
+    collect_tie_stats: bool = True,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
     """Compute a BF16-GEMM score map and select its cutoff by FP32 radix."""
 
@@ -383,9 +420,8 @@ def gemm_radix_topk_cutoff(
         candidate_blocks=candidate_blocks,
         target_topk=target_topk,
     )
-    tie_mask = tie_flags.bool()
-    tie_rows = int(tie_mask.sum().item())
-    tie_video_query_rows = int(tie_mask[:, :query_blocks].sum().item())
+    # Reporting these counts requires two device-to-host synchronizations.
+    # Threshold-only callers need them only when collecting a route sample.
     sink_first = video_tokens // BLOCK_SIZE
     sink_last = math.ceil((video_tokens + sink_tokens) / BLOCK_SIZE)
     stats = {
@@ -400,9 +436,13 @@ def gemm_radix_topk_cutoff(
         "radix_score_dtype": "float32",
         "route_topk_ratio": topk_ratio,
         "target_topk_blocks_per_query": target_topk,
-        "cutoff_tie_rows": tie_rows,
-        "cutoff_tie_video_query_rows": tie_video_query_rows,
     }
+    if collect_tie_stats or _key_for_rms_auxiliary is not None:
+        tie_mask = tie_flags.bool()
+        stats["cutoff_tie_rows"] = int(tie_mask.sum().item())
+        stats["cutoff_tie_video_query_rows"] = int(
+            tie_mask[:, :query_blocks].sum().item()
+        )
     if _return_first_excluded:
         stats["_first_excluded"] = first_excluded
     if _key_for_rms_auxiliary is not None:
@@ -463,6 +503,148 @@ def triton_one_sided_key_moments(
         num_stages=1,
     )
     return key_moments
+
+
+@torch.no_grad()
+def triton_rms_k_radix_topk_cutoff(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    *,
+    video_tokens: int,
+    sink_tokens: int,
+    topk_ratio: float,
+    _return_auxiliary: bool = False,
+):
+    """Exact fixed-budget one-sided RMS-K cutoff without an explicit route.
+
+    Q means and the signed squared query directions are emitted by one Triton
+    reduction.  A second reduction emits K means and both one-sided moments,
+    without materialising token residual tensors.  Two batched FP32 GEMMs then
+    form the mean and directional-variance terms before the shared radix
+    selector reduces the score map to one cutoff per query block and head.
+    """
+
+    if q.shape != k.shape:
+        raise ValueError("Q/K must share shape")
+    if q.ndim != 4 or q.shape[-1] != HEAD_DIM:
+        raise ValueError("Q must have shape [B, T, H, 128]")
+    if not q.is_cuda or q.dtype != torch.bfloat16 or not q.is_contiguous():
+        raise TypeError("Q must be a contiguous CUDA BF16 tensor")
+    if not k.is_cuda or k.dtype != torch.bfloat16 or not k.is_contiguous():
+        raise TypeError("K must be a contiguous CUDA BF16 tensor")
+    batch, tokens, heads, _ = q.shape
+    blocks = triton.cdiv(tokens, BLOCK_SIZE)
+    candidate_blocks = video_tokens // BLOCK_SIZE
+    query_blocks = math.ceil(video_tokens / BLOCK_SIZE)
+    if candidate_blocks < 1:
+        raise ValueError("at least one complete video block is required")
+    target_topk = max(1, round(topk_ratio * candidate_blocks))
+
+    query_mean = torch.empty(
+        (batch, heads, blocks, HEAD_DIM), device=q.device, dtype=torch.float32
+    )
+    query_direction = torch.empty(
+        (batch, heads, blocks, 2 * HEAD_DIM),
+        device=q.device,
+        dtype=torch.float32,
+    )
+    key_mean = torch.empty(
+        (batch, heads, candidate_blocks, HEAD_DIM),
+        device=q.device,
+        dtype=torch.float32,
+    )
+    key_moments = torch.empty(
+        (batch, heads, candidate_blocks, 2 * HEAD_DIM),
+        device=q.device,
+        dtype=torch.float32,
+    )
+    dim_tile = 32
+    _rms_query_stats_kernel[
+        (batch * heads * blocks, triton.cdiv(HEAD_DIM, dim_tile))
+    ](
+        q,
+        query_mean,
+        query_direction,
+        tokens,
+        heads,
+        blocks,
+        BLOCK_SIZE,
+        HEAD_DIM,
+        dim_tile,
+        num_warps=4,
+        num_stages=1,
+    )
+    _rms_key_stats_kernel[
+        (batch * heads * candidate_blocks, triton.cdiv(HEAD_DIM, dim_tile))
+    ](
+        k,
+        key_mean,
+        key_moments,
+        tokens,
+        heads,
+        candidate_blocks,
+        BLOCK_SIZE,
+        HEAD_DIM,
+        dim_tile,
+        num_warps=4,
+        num_stages=1,
+    )
+
+    flat_batch = batch * heads
+    mean_scores = torch.bmm(
+        query_mean.view(flat_batch, blocks, HEAD_DIM),
+        key_mean.view(flat_batch, candidate_blocks, HEAD_DIM).transpose(1, 2),
+    )
+    variance_scores = torch.bmm(
+        query_direction.view(flat_batch, blocks, 2 * HEAD_DIM),
+        key_moments.view(flat_batch, candidate_blocks, 2 * HEAD_DIM).transpose(1, 2),
+    )
+    variance_scores.clamp_min_(0.0).sqrt_()
+    mean_scores.add_(variance_scores).mul_(HEAD_DIM**-0.5 * _LOG2_E)
+    scores = mean_scores.view(batch, heads, blocks, candidate_blocks).permute(
+        0, 2, 1, 3
+    )
+    threshold, tie_flags, _ = _radix_cutoff_from_scores(
+        scores,
+        blocks=blocks,
+        heads=heads,
+        candidate_blocks=candidate_blocks,
+        target_topk=target_topk,
+    )
+    tie_mask = tie_flags.bool()
+    sink_first = video_tokens // BLOCK_SIZE
+    sink_last = math.ceil((video_tokens + sink_tokens) / BLOCK_SIZE)
+    stats = {
+        "block_size": BLOCK_SIZE,
+        "blocks": blocks,
+        "candidate_video_blocks": candidate_blocks,
+        "query_video_blocks": query_blocks,
+        "sink_blocks": max(0, sink_last - sink_first),
+        "route_threshold_mode": "triton_rms_k_fp32_gemm_radix_cutoff",
+        "score_gemm_input_dtype": "float32",
+        "radix_score_dtype": "float32",
+        "route_topk_ratio": topk_ratio,
+        "target_topk_blocks_per_query": target_topk,
+        "cutoff_tie_rows": int(tie_mask.sum().item()),
+        "cutoff_tie_video_query_rows": int(
+            tie_mask[:, :query_blocks].sum().item()
+        ),
+        "rms_lambdas": [1.0, 0.0, 0.0],
+    }
+    if not _return_auxiliary:
+        return threshold, stats
+
+    # The corrected approximate branch currently uses the portable Triton
+    # explicit-route mainloop. Materialise the route only for that opt-in path;
+    # ordinary RMS routing consumes the compact cutoff directly.
+    selected = scores > threshold[..., None]
+    route = torch.zeros(
+        (batch, blocks, heads, blocks), device=q.device, dtype=torch.bool
+    )
+    route[..., :candidate_blocks] = selected
+    if sink_tokens:
+        route[..., sink_first:sink_last] = True
+    return threshold, stats, key_moments, route.contiguous()
 
 
 @torch.no_grad()
@@ -534,3 +716,10 @@ def triton_gaussian_moment_cutoff(
     }
     return threshold, stats
 
+
+__all__ = [
+    "gemm_radix_topk_cutoff",
+    "triton_one_sided_key_moments",
+    "triton_rms_k_radix_topk_cutoff",
+    "triton_gaussian_moment_cutoff",
+]

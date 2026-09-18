@@ -1252,8 +1252,8 @@ def _validate_partition_inputs(
         raise ValueError("source_indices must be contiguous int64 with label shape")
     batch, tokens = labels.shape
     children = offsets.numel()
-    if children not in (2, 4, 8, 16, 32):
-        raise ValueError("stable partition supports 2, 4, 8, 16, or 32 labels")
+    if not 2 <= children <= 32:
+        raise ValueError("stable partition supports 2 to 32 labels")
     return batch, tokens, children
 
 

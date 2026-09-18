@@ -8,7 +8,7 @@ import torch
 def scalar_tree_order(scores, original_indices, child_capacities):
     """Concatenate leaves after recursive score/index lexicographic sorts.
 
-    Nodes use the same breadth-first binary indices as _exact_tree_route.
+    Nodes use explicit breadth-first branch tags from split_topology.
     Only scalar/index tensors move; raw token groups are gathered by caller.
     """
     batch, groups, nodes = scores.shape
@@ -16,8 +16,11 @@ def scalar_tree_order(scores, original_indices, child_capacities):
         raise ValueError("scalar tree score/capacity shape mismatch")
     root = torch.arange(groups, device=scores.device).expand(batch, -1)
 
-    def split(indices, node, start, end):
-        if end - start == 1:
+    from .landmark_v2_terminal import split_topology
+    topology = split_topology(tuple(child_capacities))
+
+    def split(indices, node):
+        if node < 0:
             return indices
         # Sort secondary key first, then stable-sort primary key. This keeps
         # equal-score membership identical to the existing exact quantiles.
@@ -25,11 +28,10 @@ def scalar_tree_order(scores, original_indices, child_capacities):
         indices = indices.gather(1, ties.argsort(dim=1, stable=True))
         values = scores[:, :, node].gather(1, indices)
         indices = indices.gather(1, values.argsort(dim=1, stable=True))
-        middle = (start + end) // 2
-        capacity = sum(child_capacities[start:middle])
-        left = split(indices[:, :capacity], 2 * node + 1, start, middle)
-        right = split(indices[:, capacity:], 2 * node + 2, middle, end)
+        _, capacity, _, left_tag, right_tag, _ = topology[node]
+        left = split(indices[:, :capacity], left_tag)
+        right = split(indices[:, capacity:], right_tag)
         return torch.cat((left, right), dim=1)
 
-    return split(root, 0, 0, len(child_capacities)).contiguous()
+    return split(root, 0).contiguous()
 

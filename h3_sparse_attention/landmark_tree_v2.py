@@ -1,31 +1,42 @@
-"""Spark dependencies adapted from MiniMax-H3-Sparse; see PORT_MANIFEST.json."""
+"""Block-mean, block-atomic hierarchical landmark routing.
+
+Landmark-tree-v2 follows Adaptive Morton's levelwise parent batching, but uses
+the existing deterministic weighted-landmark proxy tree instead of Morton
+keys.  It deliberately remains separate from the production v1 implementation.
+"""
+
 from __future__ import annotations
 
-
 from dataclasses import dataclass
-
-
 import os
-
 
 import torch
 
-
 from .landmark_initial_order import InitialOrder, initial_token_indices, normalize_initial_order
-
-
 from .landmark_v2_fused_node import use_fused_node as _use_fused_node
+from .reblock_hierarchy import (
+    ReblockHierarchy, build_reblock_hierarchy, normalize_fanout_mode,
+    resolve_final_fanout, resolve_root_fanout,
+)
+
+from .landmark_tree_clustering import (
+    _NodeGroup,
+    _build_proxy_tree,
+    _exact_tree_route,
+    _initial_hilbert_partition as _initial_order_partition,
+    _stable_counting_partition,
+    _tree_score,
+)
 
 
-from .reblock_hierarchy import ReblockHierarchy, build_reblock_hierarchy
-
-
-from .landmark_tree_clustering import _NodeGroup, _build_proxy_tree, _exact_tree_route, _initial_hilbert_partition as _initial_order_partition, _stable_counting_partition, _tree_score
-
-
+# Read before graph construction. Disable only to reproduce the materialized
+# group-one path; changing it does not alter an already captured CUDA graph.
 GROUP1_FAST_ENABLED = os.environ.get("H3_LMV2_GROUP1_FAST", "1") == "1"
-
-
+# Gather the tree's own feature table as FP8 E4M3 instead of BF16.  The model
+# features stay BF16; only the copy read by the landmark means, scores and
+# fused node kernels is rounded, halving the dominant gather traffic.  Routing
+# decisions differ from the BF16 table at near-ties only; measured blocking
+# quality on real Q/K is unchanged (captured attention mass, coherence).
 FP8_FEATURES_ENABLED = os.environ.get("H3_LMV2_FP8_FEATURES", "0") == "1"
 
 
@@ -232,6 +243,14 @@ def _normalize_children(children):
     raise ValueError("children must be 2, 4, 8, 16 or 32, or a nonempty list/tuple of those integers")
 
 
+def _normalize_fanout(max_children, fanout):
+    if fanout is not None:
+        if max_children != 8 and _normalize_children(max_children) != _normalize_children(fanout):
+            raise ValueError("use fanout or legacy max_children, not conflicting values")
+        max_children = fanout
+    return _normalize_children(max_children)
+
+
 def _normalize_order_mode(order_mode):
     """Use the canonical name while accepting historical launch configurations."""
     if order_mode == "preserve_parent_order":
@@ -265,12 +284,17 @@ def _recursive_landmark_tree_v2(
     group_size: int | list[int] | tuple[int, ...] = 1,
     fitting_samples: torch.Tensor | None = None,
     max_children: int | list[int] | tuple[int, ...] = 8,
+    fanout_mode: str = "power_of_two_fanout",
+    fanout: int | list[int] | tuple[int, ...] | None = None,
+    final_fanout: int | list[int] | tuple[int, ...] | None = None,
+    root_fanout: int | None = None,
     landmark_mode: str = "midpoint",
     landmark_count: int = 32,
     aggregation: str = "linear",
     minimum_frames: int | None = None,
 ) -> LandmarkTreeV2Result:
-    max_children = _normalize_children(max_children)
+    max_children = _normalize_fanout(max_children, fanout)
+    fanout_mode = normalize_fanout_mode(fanout_mode)
     landmark_mode = _normalize_landmark_mode(landmark_mode)
     if landmark_count not in (32, 128, 256):
         raise ValueError("landmark_count must be 32, 128, or 256")
@@ -320,7 +344,8 @@ def _recursive_landmark_tree_v2(
         )
     ]
     hierarchy = build_reblock_hierarchy(tokens, tuple(children_schedule), grid_shape=tuple(grid_shape),
-        minimum_frames=int(os.environ.get("H3_TEMPORAL_MIN_FRAMES", "0")) if minimum_frames is None else minimum_frames)
+        minimum_frames=int(os.environ.get("H3_TEMPORAL_MIN_FRAMES", "0")) if minimum_frames is None else minimum_frames,
+        final_fanout=final_fanout, root_fanout=root_fanout, fanout_mode=fanout_mode)
     if hierarchy.minimum_frames:
         if num_excluded or reuse_group4 or any(g != 1 for g in group_sizes):
             raise ValueError("Temporal roots require complete video blocks and group size 1")
@@ -396,6 +421,7 @@ def _recursive_landmark_tree_v2(
             indexed_group1 = optimized_means and _use_group1_fastpath(
                 source, group_size, distance, aggregation)
             node_landmarks = min(landmark_count, node_tokens // group_size)
+            final_round = all(budget == 1 for budget in child_budgets)
             fused_node = (node_landmarks <= 128 and (node_landmarks & (node_landmarks - 1)) == 0 and indexed_group1 and direct_partition and distance == "cosine"
                           and aggregation == "linear"
                           and _use_fused_node(node_tokens, children, dim))
@@ -410,6 +436,41 @@ def _recursive_landmark_tree_v2(
                     mode=FAST_PRECISION, fp8=fp8_source is not None,
                     midpoint=landmark_mode == "midpoint", landmarks=node_landmarks)
                 landmarks_used = node_landmarks
+            elif (fanout_mode == "arbitrary_fanout" and indexed_group1
+                  and distance == "cosine" and aggregation == "linear"):
+                from .landmark_tree_v2_triton import indexed_interval_means
+                from .landmark_v2_terminal import partition_scores
+                node_source = source if fp8_source is None else fp8_source
+                centers, weights = indexed_interval_means(
+                    node_source, global_indices, node_landmarks,
+                    fp8=fp8_source is not None, center_dtype=source.dtype,
+                    midpoint=landmark_mode == "midpoint")
+                scores = _group1_indexed_scores(
+                    source, global_indices, centers, weights, child_group_capacities,
+                    distance, aggregation, fp8_source=fp8_source)
+                if order_mode == "parent_order":
+                    mapped = partition_scores(
+                        scores, group.indices, child_group_capacities,
+                        max_original_index=tokens - 1, validate=validate)
+                else:
+                    from .landmark_v2_order import scalar_tree_order
+                    order = scalar_tree_order(scores, group.indices, child_group_capacities)
+                    mapped = group.indices.gather(1, order)
+                landmarks_used = centers.shape[1]
+            elif fanout_mode == "arbitrary_fanout" and (final_round or children & (children-1)):
+                from .landmark_v2_terminal import node_split_reference
+                representatives, centers, weights = _block_mean_landmarks(
+                    source, global_indices, group_size, optimized_means=optimized_means,
+                    landmark_mode=landmark_mode, landmark_count=landmark_count)
+                original_groups = group.indices.reshape(node_count,-1,group_size)[:,:,0]
+                ordered_ids = node_split_reference(
+                    representatives, original_groups, centers, weights, child_group_capacities,
+                    distance=distance, aggregation=aggregation, order_mode=order_mode)
+                sorted_ids, positions = original_groups.sort(dim=1)
+                group_order = positions.gather(1,torch.searchsorted(sorted_ids.contiguous(),ordered_ids.contiguous()))
+                mapped = group.indices.reshape(node_count,-1,group_size).gather(
+                    1,group_order[:,:,None].expand(-1,-1,group_size)).reshape(node_count,node_tokens)
+                landmarks_used = centers.shape[1]
             else:
                 if indexed_group1:
                     from .landmark_tree_v2_triton import indexed_interval_means
@@ -593,6 +654,10 @@ def recursive_landmark_tree_v2_reference(
     group_size: int | list[int] | tuple[int, ...] = 1,
     fitting_samples: torch.Tensor | None = None,
     max_children: int | list[int] | tuple[int, ...] = 8,
+    fanout_mode: str = "power_of_two_fanout",
+    fanout: int | list[int] | tuple[int, ...] | None = None,
+    final_fanout: int | list[int] | tuple[int, ...] | None = None,
+    root_fanout: int | None = None,
     landmark_mode: str = "midpoint",
     landmark_count: int = 32,
     aggregation: str = "linear",
@@ -610,6 +675,7 @@ def recursive_landmark_tree_v2_reference(
         group_size=group_size,
         fitting_samples=fitting_samples,
         max_children=max_children,
+        fanout_mode=fanout_mode, fanout=fanout, final_fanout=final_fanout, root_fanout=root_fanout,
         landmark_mode=landmark_mode, landmark_count=landmark_count,
         aggregation=aggregation,
         minimum_frames=minimum_frames,
@@ -629,6 +695,10 @@ def recursive_landmark_tree_v2_blocks(
     group_size: int | list[int] | tuple[int, ...] = 1,
     fitting_samples: torch.Tensor | None = None,
     max_children: int | list[int] | tuple[int, ...] = 8,
+    fanout_mode: str = "power_of_two_fanout",
+    fanout: int | list[int] | tuple[int, ...] | None = None,
+    final_fanout: int | list[int] | tuple[int, ...] | None = None,
+    root_fanout: int | None = None,
     landmark_mode: str = "midpoint",
     landmark_count: int = 32,
     aggregation: str = "linear",
@@ -639,6 +709,15 @@ def recursive_landmark_tree_v2_blocks(
     group_size (1/2/4/8) and max_children (2/4/8/16/32) each accept a scalar or
     per-level list/tuple. Defaults are group_size=1, max_children=8 and landmark_mode="midpoint"; levels
     beyond a sequence's length reuse its last value. The schedules are independent.
+    fanout_mode="power_of_two_fanout" selects maximum-first power-of-two
+    scheduling and its complete binary splitter. "arbitrary_fanout" selects
+    the minimum-depth balanced scheduler and early-stopping arbitrary-count
+    splitter. fanout (legacy alias: max_children) bounds nonfinal rounds;
+    root_fanout bounds the first nonfinal round; final_fanout bounds the
+    final round in arbitrary mode. Both default to None, inheriting fanout.
+    A one-round tree uses final_fanout. For example,
+    fanout=8, final_fanout=16 permits up to 16 final children.
+    fanout=8, final_fanout=8 uses a strict eight-child bound throughout.
     parent_order preserves the relative order inherited from each parent.
     distance defaults to cosine; squared Euclidean remains explicitly selectable.
     initial_order selects root indices into original raster THW samples;
@@ -656,6 +735,7 @@ def recursive_landmark_tree_v2_blocks(
         group_size=group_size,
         fitting_samples=fitting_samples,
         max_children=max_children,
+        fanout_mode=fanout_mode, fanout=fanout, final_fanout=final_fanout, root_fanout=root_fanout,
         landmark_mode=landmark_mode, landmark_count=landmark_count,
         aggregation=aggregation,
         minimum_frames=minimum_frames,
@@ -682,17 +762,31 @@ class PreparedLandmarkTreeV2Permutation:
         input_unit_means: bool = False,
         metric_unit_means: bool = False,
         max_children: int | list[int] | tuple[int, ...] = 8,
+        fanout_mode: str = "power_of_two_fanout",
+        fanout: int | list[int] | tuple[int, ...] | None = None,
+        final_fanout: int | list[int] | tuple[int, ...] | None = None,
+        root_fanout: int | None = None,
         landmark_mode: str = "midpoint",
     landmark_count: int = 32,
         aggregation: str = "linear",
         minimum_frames: int | None = None,
+        chunk_frames: int | None = None,
     ) -> None:
         if input_unit_means and metric_unit_means:
             raise ValueError("select only one unit-mean space")
         self.minimum_frames = int(os.environ.get("H3_TEMPORAL_MIN_FRAMES", "0")) if minimum_frames is None else minimum_frames
         if type(self.minimum_frames) is not int or self.minimum_frames < 0:
             raise ValueError("minimum_frames must be a nonnegative integer")
-        self.max_children = _normalize_children(max_children)
+        self.chunk_frames = int(os.environ.get("H3_TEMPORAL_CHUNK_FRAMES", "0")) if chunk_frames is None else chunk_frames
+        if type(self.chunk_frames) is not int or self.chunk_frames < 0:
+            raise ValueError("chunk_frames must be a nonnegative integer")
+        if self.chunk_frames and self.minimum_frames:
+            raise ValueError("chunk and minimum temporal splitting are mutually exclusive")
+        self.max_children = _normalize_fanout(max_children, fanout)
+        self.fanout = self.max_children
+        self.fanout_mode = normalize_fanout_mode(fanout_mode)
+        self.root_fanout = resolve_root_fanout(self.max_children, root_fanout)
+        self.final_fanout = resolve_final_fanout(self.max_children, final_fanout, fanout_mode=self.fanout_mode)
         self.landmark_mode = _normalize_landmark_mode(landmark_mode)
         if landmark_count not in (32, 128, 256):
             raise ValueError("landmark_count must be 32, 128, or 256")
@@ -733,7 +827,7 @@ class PreparedLandmarkTreeV2Permutation:
         elif self.metric_unit_means:
             x = samples.float()
             fitting = (x / x.norm(dim=-1, keepdim=True).clamp_min(1e-12)).to(samples.dtype)
-        chunk_frames = int(os.environ.get("H3_TEMPORAL_CHUNK_FRAMES", "0"))
+        chunk_frames = self.chunk_frames
         if chunk_frames:
             if self.minimum_frames:
                 raise ValueError("chunk and minimum temporal splitting are mutually exclusive")
@@ -745,6 +839,7 @@ class PreparedLandmarkTreeV2Permutation:
                 fitting_samples=fitting, validate=False, optimized_means=True,
                 reuse_group4=False, distance=self.distance, order_mode=self.order_mode,
                 group_size=self.group_size, max_children=self.max_children,
+                fanout_mode=self.fanout_mode, final_fanout=self.final_fanout, root_fanout=self.root_fanout,
                 landmark_mode=self.landmark_mode, landmark_count=self.landmark_count,
                 aggregation=self.aggregation, minimum_frames=0)
             self.split_count = len(stats)
@@ -763,6 +858,7 @@ class PreparedLandmarkTreeV2Permutation:
             group_size=self.group_size,
             fitting_samples=fitting,
             max_children=self.max_children,
+            fanout_mode=self.fanout_mode, final_fanout=self.final_fanout, root_fanout=self.root_fanout,
             landmark_mode=self.landmark_mode, landmark_count=self.landmark_count,
             aggregation=self.aggregation,
             minimum_frames=self.minimum_frames,
@@ -840,3 +936,11 @@ class PreparedLandmarkTreeV2Permutation:
             return self.replay()
         return self._compute(samples, inverse_norms)
 
+
+__all__ = [
+    "LandmarkTreeV2Result",
+    "LandmarkTreeV2SplitStats",
+    "PreparedLandmarkTreeV2Permutation",
+    "recursive_landmark_tree_v2_blocks",
+    "recursive_landmark_tree_v2_reference",
+]

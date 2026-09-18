@@ -46,32 +46,6 @@ class _NodeGroup:
     features: torch.Tensor | None = None
 
 
-def _child_leaf_budgets(leaves: int, children: int) -> tuple[int, ...]:
-    """Apply recursive left-ceil/right-floor splits to a power-of-two frontier."""
-
-    if leaves < 2 or children not in (2, 4, 8, 16, 32) or children > leaves:
-        raise ValueError("invalid recursive child budget request")
-    frontier = (int(leaves),)
-    for _ in range(int(math.log2(children))):
-        next_frontier: list[int] = []
-        for budget in frontier:
-            next_frontier.extend(((budget + 1) // 2, budget // 2))
-        frontier = tuple(next_frontier)
-    if len(frontier) != children or min(frontier) <= 0 or sum(frontier) != leaves:
-        raise RuntimeError("recursive capacity construction failed")
-    return frontier
-
-
-def _choose_children(leaves: int, default_children: int) -> int:
-    if default_children not in (2, 4, 8, 16, 32):
-        raise ValueError("default_children must be 2, 4, 8, 16, or 32")
-    return max(
-        children
-        for children in (32, 16, 8, 4, 2)
-        if children <= default_children and children <= leaves
-    )
-
-
 def _midpoint_positions(tokens: int, landmarks: int, device: torch.device) -> torch.Tensor:
     index = torch.arange(landmarks, device=device, dtype=torch.long)
     start = torch.div(index * tokens, landmarks, rounding_mode="floor")

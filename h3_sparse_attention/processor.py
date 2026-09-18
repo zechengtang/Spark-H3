@@ -6,6 +6,9 @@ video, text, and audio keys remain exact, and context queries run densely.
 from __future__ import annotations
 
 import math
+import os
+
+_SOL_LAYOUT_FAST = os.environ.get("H3_SOL_LAYOUT_FAST", "1") == "1"
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -51,10 +54,20 @@ class H3SparseAttentionConfig:
     landmark_tree_v2_moment_mode: Literal["raw", "unit"] = "raw"
     landmark_tree_v2_group_size: int | list[int] | tuple[int, ...] = 1
     landmark_tree_v2_children: int | list[int] | tuple[int, ...] = 8
+    landmark_tree_v2_fanout: int | list[int] | tuple[int, ...] | None = None
+    landmark_tree_v2_final_fanout: int | list[int] | tuple[int, ...] | None = None
+    landmark_tree_v2_root_fanout: int | None = None
     landmark_tree_v2_landmark_mode: Literal["mean", "midpoint"] = "midpoint"
     landmark_tree_v2_landmark_count: int = 32
     landmark_tree_v2_aggregation: Literal["linear", "max"] = "linear"
     rope_sol_key_ridge_epsilon: float = 1e-3
+
+    sol_route_global_weighted_mean: bool = False
+    sol_route_global_weighted_side: Literal["both", "query", "key"] = "both"
+    landmark_tree_v2_chunk_frames: int | None = None
+    landmark_tree_v2_fanout_mode: Literal[
+        "power_of_two_fanout", "arbitrary_fanout"
+    ] = "power_of_two_fanout"
 
     def __post_init__(self):
         if self.method != "sol":
@@ -83,6 +96,19 @@ class H3SparseAttentionConfig:
         if self.landmark_tree_v2_minimum_frames is not None and (
             type(self.landmark_tree_v2_minimum_frames) is not int or self.landmark_tree_v2_minimum_frames < 0):
             raise ValueError("landmark_tree_v2_minimum_frames must be None or a nonnegative integer")
+        if self.landmark_tree_v2_chunk_frames is not None and (
+            type(self.landmark_tree_v2_chunk_frames) is not int or self.landmark_tree_v2_chunk_frames < 0):
+            raise ValueError("landmark_tree_v2_chunk_frames must be None or a nonnegative integer")
+        if self.landmark_tree_v2_minimum_frames and self.landmark_tree_v2_chunk_frames:
+            raise ValueError("choose either minimum_frames or chunk_frames")
+        from .reblock_hierarchy import normalize_fanout_mode
+        object.__setattr__(self, "landmark_tree_v2_fanout_mode", normalize_fanout_mode(self.landmark_tree_v2_fanout_mode))
+        if type(self.sol_route_global_weighted_mean) is not bool:
+            raise TypeError("sol_route_global_weighted_mean must be bool")
+        if self.sol_route_global_weighted_side not in ("both", "query", "key"):
+            raise ValueError("sol_route_global_weighted_side must be both, query, or key")
+        if self.sol_route_global_weighted_mean and self.sol_route_topk_ratio is None:
+            raise ValueError("global weighted routing requires Top-K routing")
         if not math.isfinite(self.rope_sol_key_ridge_epsilon) or self.rope_sol_key_ridge_epsilon < 0:
             raise ValueError("rope_sol_key_ridge_epsilon must be finite and nonnegative")
         if self.sol_virtual_query_route_score not in ("native_mean", "mean", "weighted_k", "weighted_mass"):
@@ -110,21 +136,31 @@ class H3SparseAttentionConfig:
             ):
                 raise ValueError("virtual query blocks require 1 <= min <= target <= max")
         if virtual_query_enabled:
-            if not self.sol_landmark_preprocess or self.sol_landmark_preprocess_version != "v2" or self.sol_route_topk_ratio is None:
-                raise ValueError("virtual query summaries require LMv2 Sol preprocessing and fixed-budget routing")
+            if not self.sol_landmark_preprocess or self.sol_landmark_preprocess_version != "v2":
+                raise ValueError("virtual query summaries require LMv2 Sol preprocessing")
+            if self.sol_route_topk_ratio is None and self.sol_virtual_query_route_score != "native_mean":
+                raise ValueError("tau routing with virtual query summaries requires native_mean scores")
         if self.landmark_tree_v2_moment_mode not in ("raw", "unit"):
             raise ValueError("landmark_tree_v2_moment_mode must be raw or unit")
         if self.landmark_tree_v2_mean_mode not in ("raw", "input_unit", "metric_unit"):
             raise ValueError("landmark_tree_v2_mean_mode must be raw, input_unit or metric_unit")
         if self.landmark_tree_v2_mean_mode != "raw" and self.landmark_tree_v2_distance != "cosine":
             raise ValueError("input-unit means require cosine distance")
-        from .landmark_tree_v2 import _normalize_children, _normalize_group_size, _normalize_order_mode
+        from .reblock_hierarchy import normalize_final_fanout, resolve_root_fanout
+        from .landmark_tree_v2 import _normalize_fanout, _normalize_group_size, _normalize_order_mode
         from .landmark_initial_order import normalize_initial_order
 
         normalize_initial_order(self.landmark_tree_v2_initial_order)
 
         object.__setattr__(self, "landmark_tree_v2_children",
-                           _normalize_children(self.landmark_tree_v2_children))
+                           _normalize_fanout(self.landmark_tree_v2_children, self.landmark_tree_v2_fanout))
+        if self.landmark_tree_v2_fanout is not None:
+            object.__setattr__(self, "landmark_tree_v2_fanout", self.landmark_tree_v2_children)
+        if self.landmark_tree_v2_root_fanout is not None:
+            resolve_root_fanout(self.landmark_tree_v2_children, self.landmark_tree_v2_root_fanout)
+        if self.landmark_tree_v2_final_fanout is not None:
+            object.__setattr__(self, "landmark_tree_v2_final_fanout",
+                               normalize_final_fanout(self.landmark_tree_v2_final_fanout))
         if self.landmark_tree_v2_landmark_count not in (32, 128, 256):
             raise ValueError("landmark_tree_v2_landmark_count must be 32, 128, or 256")
         if self.landmark_tree_v2_landmark_mode not in ("mean", "midpoint"):
@@ -154,7 +190,7 @@ class H3SparseAttentionConfig:
 
     @classmethod
     def spark(cls, num_inference_steps: int = 20, **overrides) -> "H3SparseAttentionConfig":
-        """Sol TopK10 + minimum-10 LMv2 + target-189 query reweighting."""
+        """Sol TopK10 + minimum-10 fanout-16 LMv2 + target-189 reweighting."""
         defaults = dict(
             sol_route_topk_ratio=0.1,
             sol_route_topk_cutoff_mode="gemm_radix",
@@ -162,7 +198,8 @@ class H3SparseAttentionConfig:
             sol_landmark_preprocess=True,
             sol_landmark_preprocess_version="v2",
             landmark_tree_v2_minimum_frames=10,
-            landmark_tree_v2_children=(16, 16),
+            landmark_tree_v2_chunk_frames=0,
+            landmark_tree_v2_children=16,
             sol_virtual_query_target_blocks=SPARK_REWEIGHT_TARGET_BLOCKS,
             sol_virtual_query_levels_up=None,
             sol_virtual_query_min_blocks=SPARK_REWEIGHT_MIN_BLOCKS,
@@ -171,6 +208,8 @@ class H3SparseAttentionConfig:
         )
         if overrides.get("sol_virtual_query_levels_up") is not None and "sol_virtual_query_target_blocks" not in overrides:
             defaults["sol_virtual_query_target_blocks"] = None
+        if overrides.get("landmark_tree_v2_fanout") is not None and "landmark_tree_v2_children" not in overrides:
+            defaults.pop("landmark_tree_v2_children", None)
         defaults.update(overrides)
         return cls.sol(num_inference_steps, **defaults)
 
@@ -308,16 +347,18 @@ class _Controller:
                     sol_force_local_blocks=self.config.sol_local_blocks_enabled,
                     sol_landmark_preprocess=self.config.sol_landmark_preprocess,
                     landmark_tree_v2_minimum_frames=self.config.landmark_tree_v2_minimum_frames,
-                    landmark_tree_v2_children=self.config.landmark_tree_v2_children)
+                    landmark_tree_v2_children=self.config.landmark_tree_v2_children,
+                    landmark_tree_v2_chunk_frames=self.config.landmark_tree_v2_chunk_frames,
+                    landmark_tree_v2_fanout_mode=self.config.landmark_tree_v2_fanout_mode)
 
 
-def _sol_attention(controller, q, k, v, layout, layer):
+def _sol_attention(controller, q, k, v, layout, layer, *, return_bthd=False):
     from sol_attn import get_sol_attn_backend, sol_attn
 
     cfg = controller.config
     if cfg.sol_landmark_preprocess or cfg.sol_route_topk_ratio is not None:
         from .spark_integration import spark_attention
-        return spark_attention(controller, q, k, v, layout, layer)
+        return spark_attention(controller, q, k, v, layout, layer, return_bthd=return_bthd)
     q, k, v = (x.permute(0, 2, 1, 3).contiguous() for x in (q, k, v))
     sink_start = layout.video_tokens
     sink_tokens = layout.sequence_length - sink_start
@@ -332,7 +373,7 @@ def _sol_attention(controller, q, k, v, layout, layer):
             q[:, sink_start:].transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
             dropout_p=0.0, is_causal=False).transpose(1, 2)
         controller.counts["sol_dense_context_queries"] += 1
-    return output.permute(0, 2, 1, 3).contiguous()
+    return output if return_bthd else output.permute(0, 2, 1, 3).contiguous()
 
 
 class _H3SparseProcessor:
@@ -389,11 +430,16 @@ class _H3SparseProcessor:
 
         permutation = layout.permutation
         q, k, v = (
-            tensor.index_select(1, permutation).permute(0, 2, 1, 3).contiguous()
+            tensor.index_select(1, permutation).permute(0, 2, 1, 3)
             for tensor in (query, key, value)
         )
-        output = _sol_attention(controller, q, k, v, layout, self.layer)
-        output = output.permute(0, 2, 1, 3).index_select(1, layout.inverse_permutation)
+        if not _SOL_LAYOUT_FAST:
+            q, k, v = (tensor.contiguous() for tensor in (q, k, v))
+        output = _sol_attention(controller, q, k, v, layout, self.layer,
+                                return_bthd=_SOL_LAYOUT_FAST)
+        if not _SOL_LAYOUT_FAST:
+            output = output.permute(0, 2, 1, 3)
+        output = output.index_select(1, layout.inverse_permutation)
         output = output.flatten(2, 3).type_as(query)
         output = attn.to_out[0](output)
         output = attn.to_out[1](output)

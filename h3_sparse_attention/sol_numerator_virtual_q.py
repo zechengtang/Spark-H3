@@ -1,29 +1,43 @@
-"""Spark dependencies adapted from MiniMax-H3-Sparse; see PORT_MANIFEST.json."""
-from __future__ import annotations
+"""Shared nonuniform query-parent anchors; routing remains physical 64-token leaves.
 
-
+Validate CPU topology once with ``validate_virtual_layout`` before caching its
+CUDA int64 tensors. The hot path intentionally does not copy topology to CPU.
+Tilted K/V use BF16 probabilities/storage as in frozen iter02; the tangent
+lower-bound statement therefore applies to exact arithmetic, not rounded output.
+"""
 import operator
-
-
 import weakref
-
-
 import torch
-
-
 import triton
-
-
 import triton.language as tl
-
-
 from .sol_vaware_compensation import exact_attention
 
 
+# Keep the query-conditioned K/V summaries bounded at production sequence
+# lengths.  The old implementation materialized [B,P,H,N,128] for every P;
+# prev2 at 768p/10s therefore held about 16.2 GiB in AK/AV alone.
 _SUMMARY_WORKSPACE_BYTES = 1 << 30
-
-
 _HOST_RANGE_CACHE = {}
+
+
+def reduce_virtual_key_centroids(k):
+    """Use Sol's exact K reduction without constructing unused ordinary V sums.
+
+    The fused virtual-query kernel consumes weighted V summaries instead.
+    Reuse the official K kernel so routing and its rounding stay unchanged.
+    """
+    from sol_attn.preprocess import _reduce_kc_kernel
+    from triton.tools.tensor_descriptor import TensorDescriptor
+
+    batch, tokens, heads, dim = k.shape
+    blocks = triton.cdiv(tokens, 64)
+    tile = min(128, triton.next_power_of_2(dim))
+    centroids = torch.empty((batch, blocks, heads, dim),
+                            device=k.device, dtype=torch.bfloat16)
+    descriptor = TensorDescriptor.from_tensor(k, [1, 64, 1, tile])
+    _reduce_kc_kernel[(triton.cdiv(dim, tile), blocks, batch * heads)](
+        descriptor, centroids, tokens, heads, blocks, dim, 64, tile)
+    return centroids
 
 
 def validate_virtual_layout(virtual_ranges, leaf_to_virtual, total_tokens):
@@ -96,10 +110,60 @@ def _summaries(A,K,V,AK,AV,LM,T:tl.constexpr,H:tl.constexpr,N:tl.constexpr,P:tl.
     tl.store(LM+base,(maximum+tl.log2(den))*.6931471805599453-shift,rr<P)
 
 
+@triton.jit
+def _skip(Q,MAP,AK,AV,LM,R,O,L,T:tl.constexpr,H:tl.constexpr,N:tl.constexpr,P:tl.constexpr):
+    qb,bh=tl.program_id(0),tl.program_id(1);b,h=(bh//H).to(tl.int64),bh%H
+    parent=tl.load(MAP+qb).to(tl.int64)
+    rows=qb*64+tl.arange(0,64);d=tl.arange(0,128);jj=tl.arange(0,32)
+    abase=(b*P+parent)*H+h
+    q=tl.load(Q+((b*T+rows[:,None])*H+h)*128+d[None,:],(rows<T)[:,None],0)
+    acc=tl.zeros((64,128),tl.float32);den=tl.zeros((64,),tl.float32);mx=tl.full((64,),-float('inf'),tl.float32)
+    for start in range(0,N,32):
+        kb=start+jj;base=abase.to(tl.int64)*N+kb
+        exact=tl.load(R+((b*N+qb)*H+h)*N+kb,kb<N,1)!=0
+        tk=tl.load(AK+base[:,None]*128+d[None,:],(kb<N)[:,None],0)
+        tv=tl.load(AV+base[:,None]*128+d[None,:],(kb<N)[:,None],0)
+        score=tl.dot(q,tk.T)*(.08838834764831845*1.4426950408889634)+tl.load(LM+base,kb<N,0)[None,:]*1.4426950408889634
+        score=tl.where((kb<N)[None,:]&~exact[None,:],score,-float('inf'))
+        new=tl.maximum(mx,tl.max(score,1));safe=tl.where(new==-float('inf'),0.,new)
+        factor=tl.exp2(tl.where(mx==-float('inf'),-float('inf'),mx-safe));p=tl.exp2(score-safe[:,None])
+        acc=acc*factor[:,None]+tl.dot(p.to(tv.dtype),tv);den=den*factor+tl.sum(p,1);mx=new
+    valid=den>0
+    tl.store(O+((b*T+rows[:,None])*H+h)*128+d[None,:],tl.where(valid[:,None],acc/tl.maximum(den[:,None],1e-30),0.),(rows<T)[:,None])
+    tl.store(L+(b*T+rows)*H+h,tl.where(valid,(mx+tl.log2(tl.maximum(den,1e-30)))*.6931471805599453,-float('inf')),rows<T)
+
+
+@triton.jit
+def _anchor_parts(Q, PART, T:tl.constexpr, H:tl.constexpr, N:tl.constexpr):
+    block,bh=tl.program_id(0),tl.program_id(1)
+    b,h=(bh//H).to(tl.int64),bh%H
+    rows=block*64+tl.arange(0,64);d=tl.arange(0,128)
+    q=tl.load(Q+((b*T+rows[:,None])*H+h)*128+d[None,:],(rows<T)[:,None],0)
+    tl.store(PART+((b*N+block)*H+h)*128+d,tl.sum(q.to(tl.float32),0))
+
+
+@triton.jit
+def _anchors_from_parts(PART,RANGES,A,H:tl.constexpr,N:tl.constexpr,P:tl.constexpr):
+    parent,bh=tl.program_id(0),tl.program_id(1)
+    b,h=(bh//H).to(tl.int64),bh%H
+    start=tl.load(RANGES+parent*2);end=tl.load(RANGES+parent*2+1)
+    d=tl.arange(0,128);acc=tl.zeros((128,),tl.float32)
+    # Preserve the original sequential sum-of-64-row reduction order.
+    for offset in range(start,end,64):
+        acc+=tl.load(PART+((b*N+offset//64)*H+h)*128+d)
+    tl.store(A+((b*P+parent)*H+h)*128+d,acc/(end-start))
+
+
 def build_virtual_anchors(q, virtual_ranges):
     b,t,h,d=q.shape;p=virtual_ranges.shape[0]
     a=torch.empty((b,p,h,d),device=q.device,dtype=q.dtype)
-    _anchors[(p,b*h)](q,virtual_ranges,a,t,h,p,num_warps=4)
+    if t >= 8192 and p <= 32:
+        n=triton.cdiv(t,64)
+        parts=torch.empty((b,n,h,d),device=q.device,dtype=torch.float32)
+        _anchor_parts[(n,b*h)](q,parts,t,h,n,num_warps=4)
+        _anchors_from_parts[(p,b*h)](parts,virtual_ranges,a,h,n,p,num_warps=4)
+    else:
+        _anchors[(p,b*h)](q,virtual_ranges,a,t,h,p,num_warps=4)
     return a
 
 
@@ -139,6 +203,13 @@ def _host_ranges(virtual_ranges):
     ranges=tuple(tuple(int(x) for x in pair) for pair in virtual_ranges.detach().cpu().tolist())
     _HOST_RANGE_CACHE[key]=(weakref.ref(virtual_ranges),ranges)
     return ranges
+
+
+def skipped_virtual(q,leaf_to_virtual,ak,av,lm,route):
+    b,t,h,d=q.shape;n=triton.cdiv(t,64);p=ak.shape[1]
+    out=torch.empty_like(q,dtype=torch.float32);lse=torch.empty((b,t,h),device=q.device,dtype=torch.float32)
+    _skip[(n,b*h)](q,leaf_to_virtual,ak,av,lm,route,out,lse,t,h,n,p,num_warps=4,num_stages=1)
+    return out,lse
 
 
 @triton.jit(do_not_specialize=["P_START", "QB_START"])
@@ -208,7 +279,7 @@ def _streamed_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,route,exact_output,
 
 
 @torch.no_grad()
-def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=None,precomputed_summaries=None,key_centroids=None,value_sums=None,threshold=None,route=None,sink_start=None,sink_tokens=0,scale=None,force_local_blocks=True,**kwargs):
+def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=None,precomputed_summaries=None,key_centroids=None,value_sums=None,threshold=None,route=None,sink_start=None,sink_tokens=0,scale=None,force_local_blocks=True,_query_tokens=None,**kwargs):
     if q.ndim != 4 or q.shape[-1] != 128 or q.shape != k.shape or q.shape != v.shape:
         raise ValueError('requires matching BTH128')
     b,t,h,d=q.shape;n=triton.cdiv(t,64)
@@ -231,7 +302,7 @@ def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=N
     if virtual_q_backend(q) == 'sm120_fused_virtual_query':
         return _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,key_centroids,
                               threshold,route,sink_start,sink_tokens,precomputed_summaries,
-                              force_local_blocks=force_local_blocks)
+                              force_local_blocks=force_local_blocks,_query_tokens=_query_tokens)
     eo,el,actual=exact_attention(q,k,v,key_centroids,value_sums,threshold,route,d**-.5,sink_start,sink_tokens,force_local_blocks=force_local_blocks)
     return _streamed_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,actual,eo,el,
                              precomputed_summaries)
@@ -257,18 +328,28 @@ def virtual_q_backend(q):
 
 
 def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
-                   sink_start,sink_tokens,precomputed_summaries=None,*,export_route=False,force_local_blocks=True):
+                   sink_start,sink_tokens,precomputed_summaries=None,*,export_route=False,force_local_blocks=True,_query_tokens=None):
     """Bounded summaries plus the production mixed exact/approximate mainloop.
 
     Each query CTA reads one parent's summaries. Native centroid routing and
     exact block compaction stay inside Sol-Attn; no dense route export, exact
     output, skipped output or merge pass is required.
+
+    Internal caller-only _query_tokens omits a suffix that the caller must
+    overwrite densely before reading the output. The default computes all rows.
     """
     import cuda.bindings.driver as cuda
     import cutlass.cute as cute
     from sol_attn.common import to_cute_tensor
     from .spark_reweight_sm120 import SparkReweightForwardSm120
     b,t,h,d=q.shape;n=triton.cdiv(t,64);p=a.shape[1]
+    ranges=_host_ranges(virtual_ranges)
+    query_tokens=t if _query_tokens is None else operator.index(_query_tokens)
+    if not 0 < query_tokens <= t or (query_tokens != t and query_tokens % 64):
+        raise ValueError('_query_tokens must end at a physical query-block boundary')
+    active_parents=next(i+1 for i,(_,end) in enumerate(ranges) if end>=query_tokens)
+    if precomputed_summaries is None:
+        p=active_parents
     if kc is None:
         from sol_attn.preprocess import _reduce_kv
         kc,_=_reduce_kv(k,v)
@@ -285,7 +366,6 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
             route=route.clone()
     out=torch.empty_like(q)
     lse=torch.empty((b,t,h),device=q.device,dtype=torch.float32)
-    ranges=_host_ranges(virtual_ranges)
     # Keep all query tiles for a head together. Parent-major streaming reloads
     # that head's exact K/V working set for every parent chunk, defeating L2
     # reuse in the production mainloop. Head-major streaming retains locality.
@@ -313,14 +393,15 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     sink_last=triton.cdiv(sink_start+sink_tokens,64) if sink_tokens else sink_first
     for head_start in range(0,h,head_chunk):
         head_count=min(head_chunk,h-head_start)
-        for p_start in range(0,p,chunk):
-            p_end=min(p,p_start+chunk)
+        for p_start in range(0,active_parents,chunk):
+            p_end=min(active_parents,p_start+chunk)
             if precomputed_summaries is None:
-                _summaries[(triton.cdiv(p_end-p_start,32),n,b*head_chunk)](
+                block_p=16 if p_end-p_start<=16 else 32
+                _summaries[(triton.cdiv(p_end-p_start,block_p),n,b*head_chunk)](
                     a,k,v,ak,av,lm,t,head_chunk,n,chunk,a.stride(0),a.stride(1),
-                    p_start,p_end-p_start,32,h,head_start,num_warps=4)
+                    p_start,p_end-p_start,block_p,h,head_start,num_warps=4)
             qb_start=ranges[p_start][0]//64
-            qb_end=triton.cdiv(ranges[p_end-1][1],64)
+            qb_end=triton.cdiv(min(ranges[p_end-1][1],query_tokens),64)
             scalars=(qb_start,qb_end-qb_start,p_start,head_start,head_count,
                      d**-.5,sink_first,sink_last)
             if compiled is None:
@@ -329,4 +410,3 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
                 _FUSED_COMPILED[key]=compiled
             compiled(*args,*scalars,stream=stream)
     return (out,route,lse) if export_route else out
-

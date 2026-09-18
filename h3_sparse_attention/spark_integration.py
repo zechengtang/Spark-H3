@@ -282,9 +282,13 @@ def _landmark_tree_v2_combined_permutations(
     )
     plan_key = (
         "prepared_landmark_tree_v2_qk",
+        controller.config.landmark_tree_v2_chunk_frames if controller.config.landmark_tree_v2_chunk_frames is not None else int(os.environ.get("H3_TEMPORAL_CHUNK_FRAMES", "0")),
         controller.config.landmark_tree_v2_minimum_frames if controller.config.landmark_tree_v2_minimum_frames is not None else int(os.environ.get("H3_TEMPORAL_MIN_FRAMES", "0")),
         controller.config.landmark_tree_v2_initial_order,
         controller.config.landmark_tree_v2_children,
+        controller.config.landmark_tree_v2_fanout_mode,
+        controller.config.landmark_tree_v2_final_fanout,
+        controller.config.landmark_tree_v2_root_fanout,
         controller.config.landmark_tree_v2_landmark_mode,
         controller.config.landmark_tree_v2_landmark_count,
         controller.config.landmark_tree_v2_aggregation,
@@ -304,8 +308,12 @@ def _landmark_tree_v2_combined_permutations(
     if plan is None:
         plan = PreparedLandmarkTreeV2Permutation(
             minimum_frames=controller.config.landmark_tree_v2_minimum_frames,
+            chunk_frames=controller.config.landmark_tree_v2_chunk_frames,
             distance=controller.config.landmark_tree_v2_distance,
             max_children=controller.config.landmark_tree_v2_children,
+            fanout_mode=controller.config.landmark_tree_v2_fanout_mode,
+            final_fanout=controller.config.landmark_tree_v2_final_fanout,
+            root_fanout=controller.config.landmark_tree_v2_root_fanout,
             landmark_mode=controller.config.landmark_tree_v2_landmark_mode,
             landmark_count=controller.config.landmark_tree_v2_landmark_count,
             aggregation=controller.config.landmark_tree_v2_aggregation,
@@ -391,6 +399,7 @@ def _landmark_tree_v2_qk_block_permutations(
         "initial_order": controller.config.landmark_tree_v2_initial_order,
         "distance": controller.config.landmark_tree_v2_distance,
         "max_children": controller.config.landmark_tree_v2_children,
+        "fanout_mode": controller.config.landmark_tree_v2_fanout_mode,
         "aggregation": controller.config.landmark_tree_v2_aggregation,
         "mean_mode": controller.config.landmark_tree_v2_mean_mode,
         "mean_norm_space": ("transformed_token" if controller.config.landmark_tree_v2_mean_mode == "metric_unit" else "original_post_rope_token"),
@@ -405,6 +414,8 @@ def _landmark_tree_v2_qk_block_permutations(
         "group_size": controller.config.landmark_tree_v2_group_size,
         "root_children": (plan.max_children if isinstance(plan.max_children, int) else plan.max_children[0]),
         "later_children": (plan.max_children if isinstance(plan.max_children, int) else plan.max_children[min(1, len(plan.max_children) - 1)]),
+        "root_fanout": plan.root_fanout,
+        "final_fanout": plan.final_fanout,
         "proxy_iterations": 2,
         "remainder_policy": "largest_transformed_l2_norm_original_index_tie",
         "num_excluded": int(num_excluded),
@@ -443,7 +454,6 @@ def _landmark_tree_v2_qk_block_permutations(
     )
 
 
-
 def spark_attention(
     controller: _Controller,
     q: torch.Tensor,
@@ -451,6 +461,7 @@ def spark_attention(
     v: torch.Tensor,
     layout: PackedLayout,
     layer: int,
+    *, return_bthd: bool = False,
 ) -> torch.Tensor:
     """Run official Sol-Attn with exact H3 context K/V and dense context Q."""
 
@@ -547,7 +558,25 @@ def spark_attention(
         controller.counts["sol_landmark_preprocess_calls"] += 1
     if cfg.sol_route_topk_ratio is not None:
         output = _spark_topk_attention(controller, q_bthd, k_bthd, v_bthd,
-                                       layout, virtual_query_data)
+                                       layout, virtual_query_data,
+                                       _query_tokens=layout.video_tokens if virtual_query_data is not None and layout.video_tokens % 64 == 0 else None)
+    elif virtual_query_data is not None:
+        from sol_attn.preprocess import prepare
+        from .sol_numerator_virtual_q import virtual_q_attention, virtual_q_backend
+
+        kc, vs, threshold = prepare(q_bthd, k_bthd, v_bthd, tau=cfg.sol_tau,
+                                    scale=q_bthd.shape[-1] ** -0.5,
+                                    thresh_type=cfg.sol_thresh_type)
+        ranges, mapping, anchors = virtual_query_data
+        output = virtual_q_attention(
+            q_bthd, k_bthd, v_bthd, virtual_ranges=ranges, leaf_to_virtual=mapping,
+            virtual_anchors=anchors, key_centroids=kc, value_sums=vs,
+            threshold=threshold, sink_start=sink_start, sink_tokens=sink_tokens,
+            force_local_blocks=cfg.sol_local_blocks_enabled,
+            _query_tokens=layout.video_tokens if layout.video_tokens % 64 == 0 else None)
+        controller.sol_backend = virtual_q_backend(q_bthd)
+        controller.counts["sol_virtual_query_calls"] += 1
+        controller.counts["sol_tau_virtual_query_calls"] += 1
     else:
         output = sol_attn(q_bthd, k_bthd, v_bthd, tau=cfg.sol_tau,
                           thresh_type=cfg.sol_thresh_type, kv_splits=cfg.sol_kv_splits,
@@ -572,12 +601,12 @@ def spark_attention(
             query_inverse_permutation,
             video_tokens=layout.video_tokens,
         )
-    return output.permute(0, 2, 1, 3).contiguous()
+    return output if return_bthd else output.permute(0, 2, 1, 3).contiguous()
 
 
 @torch.compiler.disable
 @torch.no_grad()
-def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None):
+def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, _query_tokens=None):
     """Source Spark Top-K policy with native or query-conditioned summaries."""
     from sol_attn.preprocess import _reduce_kv
     from .rope_sol_kernel import (
@@ -587,12 +616,23 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None):
     from .sol_topk_cutoff import gemm_radix_topk_cutoff, triton_gaussian_moment_cutoff
 
     cfg = controller.config
-    kc, vs = _reduce_kv(k, v)
+    from .sol_numerator_virtual_q import virtual_q_backend, reduce_virtual_key_centroids
+    if virtual_query_data is not None and virtual_q_backend(q) == "sm120_fused_virtual_query":
+        kc, vs = reduce_virtual_key_centroids(k), None
+    else:
+        kc, vs = _reduce_kv(k, v)
     sink_tokens = layout.sequence_length - layout.video_tokens
     backend = sol_topk_threshold_backend(q.device)
     partial_video = sink_tokens == 0 and layout.video_tokens // 64 < math.ceil(q.shape[1] / 64)
     threshold = route = summaries = None
-    if virtual_query_data is not None and cfg.sol_virtual_query_route_score != "native_mean":
+    if cfg.sol_route_global_weighted_mean:
+        from .global_weighted_route import global_weighted_route
+        route, stats = global_weighted_route(q, k,
+            video_tokens=layout.video_tokens, sink_tokens=sink_tokens,
+            topk_ratio=cfg.sol_route_topk_ratio,
+            weighted_side=cfg.sol_route_global_weighted_side, key_centroids=kc)
+        controller.counts["sol_global_weighted_route_calls"] += 1
+    elif virtual_query_data is not None and cfg.sol_virtual_query_route_score != "native_mean":
         from .sol_numerator_virtual_q import build_virtual_anchors, virtual_summaries
         from .spark_route import reweighted_route
         ranges, mapping, anchors = virtual_query_data
@@ -630,7 +670,8 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None):
         output = virtual_q_attention(q, k, v, virtual_ranges=ranges, leaf_to_virtual=mapping,
             virtual_anchors=anchors, precomputed_summaries=summaries, key_centroids=kc,
             value_sums=vs, threshold=threshold, route=route, sink_start=layout.video_tokens,
-            sink_tokens=sink_tokens, force_local_blocks=cfg.sol_local_blocks_enabled)
+            sink_tokens=sink_tokens, force_local_blocks=cfg.sol_local_blocks_enabled,
+            _query_tokens=_query_tokens)
         controller.sol_backend = virtual_q_backend(q)
         controller.counts["sol_virtual_query_calls"] += 1
     elif route is None:

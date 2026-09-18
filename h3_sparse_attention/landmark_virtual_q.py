@@ -17,10 +17,12 @@ import math
 from .reblock_hierarchy import build_reblock_hierarchy
 
 
-def _frontiers_for_layout(video_tokens, children, grid_shape, minimum_frames, hierarchy=None):
+def _frontiers_for_layout(video_tokens, children, grid_shape, minimum_frames,
+                          fanout_mode, hierarchy=None):
     if hierarchy is None:
         hierarchy=build_reblock_hierarchy(video_tokens,children,grid_shape=grid_shape,
-                                          minimum_frames=minimum_frames)
+                                          minimum_frames=minimum_frames,
+                                          fanout_mode=fanout_mode)
     if hierarchy.video_tokens != video_tokens:
         raise ValueError('hierarchy and video token count differ')
     return hierarchy.levels,hierarchy.metadata(),hierarchy.children
@@ -51,10 +53,11 @@ def _layout_at_level(video_tokens,total_tokens,levels,selected,children,metadata
 
 
 @lru_cache(maxsize=128)
-def virtual_query_layout(video_tokens,total_tokens,levels_up,children=(8,4),*,grid_shape=None,minimum_frames=0,hierarchy=None):
+def virtual_query_layout(video_tokens,total_tokens,levels_up,children=(8,4),*,grid_shape=None,
+                         minimum_frames=0,fanout_mode='power_of_two_fanout',hierarchy=None):
     if not (64<=video_tokens<=total_tokens) or type(levels_up) is not int or levels_up < 0:
         raise ValueError('requires 64<=video_tokens<=total_tokens and nonnegative integer levels_up')
-    leaves=video_tokens//64;levels,hierarchy_metadata,children=_frontiers_for_layout(video_tokens,children,grid_shape,minimum_frames,hierarchy)
+    leaves=video_tokens//64;levels,hierarchy_metadata,children=_frontiers_for_layout(video_tokens,children,grid_shape,minimum_frames,fanout_mode,hierarchy)
     selected=max(0,len(levels)-1-levels_up)
     return _layout_at_level(video_tokens,total_tokens,levels,selected,children,dict(
         **hierarchy_metadata,
@@ -64,7 +67,7 @@ def virtual_query_layout(video_tokens,total_tokens,levels_up,children=(8,4),*,gr
 
 
 @lru_cache(maxsize=128, typed=True)
-def target_virtual_query_layout(video_tokens,total_tokens,target_blocks=SPARK_REWEIGHT_TARGET_BLOCKS,min_blocks=SPARK_REWEIGHT_MIN_BLOCKS,max_blocks=SPARK_REWEIGHT_MAX_BLOCKS,children=(8,4),*,grid_shape=None,minimum_frames=0,hierarchy=None):
+def target_virtual_query_layout(video_tokens,total_tokens,target_blocks=SPARK_REWEIGHT_TARGET_BLOCKS,min_blocks=SPARK_REWEIGHT_MIN_BLOCKS,max_blocks=SPARK_REWEIGHT_MAX_BLOCKS,children=(8,4),*,grid_shape=None,minimum_frames=0,fanout_mode='power_of_two_fanout',hierarchy=None):
     """Choose the global LMv2 frontier closest to a stable physical-block size."""
     if not 64<=video_tokens<=total_tokens:
         raise ValueError('requires 64<=video_tokens<=total_tokens')
@@ -72,7 +75,7 @@ def target_virtual_query_layout(video_tokens,total_tokens,target_blocks=SPARK_RE
         raise ValueError('target/min/max blocks must be integers')
     if not 1<=min_blocks<=target_blocks<=max_blocks:
         raise ValueError('requires 1<=min_blocks<=target_blocks<=max_blocks')
-    leaves=video_tokens//64;levels,hierarchy_metadata,children=_frontiers_for_layout(video_tokens,children,grid_shape,minimum_frames,hierarchy)
+    leaves=video_tokens//64;levels,hierarchy_metadata,children=_frontiers_for_layout(video_tokens,children,grid_shape,minimum_frames,fanout_mode,hierarchy)
     candidates=[]
     for selected,frontier in enumerate(levels):
         sizes=tuple(end-start for start,end in frontier)

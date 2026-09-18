@@ -77,12 +77,35 @@ Default Spark settings match the source:
 
 - Native mean Top-K routing with ratio `0.1` and `gemm_radix` cutoffs.
 - Landmark-v2 Q/K reblocking using opposite second moments, cosine distance,
-  `(16, 16)` children, 32 midpoint landmarks, and minimum 10-frame temporal groups.
+  fanout 16 with `power_of_two_fanout` scheduling, 32 midpoint landmarks, and minimum 10-frame temporal groups.
 - Query representatives selected from the reblocking hierarchy with target
   189 physical blocks and bounds 94–284. These are blocks per representative,
   not a fixed number of representatives; the hierarchy determines actual sizes.
 - Query-conditioned K/V and log-mass summaries merged with exact attention.
 - The positional local band is disabled after reblocking.
+
+The installer explicitly disables fixed temporal chunks (`landmark_tree_v2_chunk_frames=0`).
+To use fixed chunks, set `landmark_tree_v2_minimum_frames=0` and
+`landmark_tree_v2_chunk_frames` to the desired frame count and disable
+reweighting with `sol_virtual_query_target_blocks=None` and
+`sol_virtual_query_levels_up=None`. As in the source, fixed-chunk plans do not
+publish the hierarchy required by reweighting. Select
+`landmark_tree_v2_fanout_mode="arbitrary_fanout"` for balanced arbitrary child
+counts. `landmark_tree_v2_fanout` is an alias for `landmark_tree_v2_children`;
+`landmark_tree_v2_root_fanout` and `landmark_tree_v2_final_fanout` independently
+control the first nonfinal and final rounds. Both default to inheriting the
+ordinary fanout. Reweighting follows the actual reblocking hierarchy. Cosine scoring
+defaults to normalized FP16; `H3_LMV2_COS_PRECISION` selects other precision modes.
+
+Sol and Spark now avoid redundant Q/K/V layout copies. Set `H3_SOL_LAYOUT_FAST=0`
+before importing the package to use the comparison path. Optional
+`sol_route_global_weighted_mean=True` enables global weighted Top-K routing;
+`sol_route_global_weighted_side` selects `both`, `query`, or `key`.
+
+Set `sol_route_topk_ratio=None` to use native Sol tau routing with Spark
+reweighting (`sol_virtual_query_route_score="native_mean"`). SM120 reweighting
+now skips unused ordinary value sums and avoids computing context query rows
+that the integration replaces with dense attention.
 
 Configuration overrides are passed as keyword arguments, for example
 `sol_route_topk_ratio=0.2` or `sol_virtual_query_levels_up=2`. Setting levels-up
@@ -159,7 +182,7 @@ reweighting against explicit softmax (including partial blocks and strided
 anchors), exact Sol sinks, packed target selection, and H3 processor cleanup.
 CUDA graph replay and the Triton fallback are also covered.
 GPU tests require a CUDA device; H3 integration tests require H3 diffusers.
-All 28 tests passed on an RTX PRO 6000 Blackwell with PyTorch 2.12.1+cu130.
+Validation results for the current sync are recorded in `PORT_MANIFEST.json`.
 Spark tests additionally cover installer defaults, temporal topology, fused and
 streamed all-exact parity, and skipped-block reweighting against an explicit
 softmax oracle. A synthetic default-Spark case matched the updated source

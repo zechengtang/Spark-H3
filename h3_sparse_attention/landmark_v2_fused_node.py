@@ -95,29 +95,16 @@ def _proxy_split(center, unit, distance, weight, left_cap: tl.constexpr,
 
 
 @triton.jit
-def _route_key(score, original):
-    """Order-preserving int64 key: score bits in the high word, token id low."""
-    bits = score.to(tl.int32, bitcast=True).to(tl.int64) & 0xFFFFFFFF
-    negative = (bits & 0x80000000) != 0
-    ordered = tl.where(negative, (~bits) & 0xFFFFFFFF, bits ^ 0x80000000)
-    return (ordered - 0x80000000) * 0x100000000 + original
-
-
-@triton.jit
-def _kth_smallest(key, k: tl.constexpr, positions):
-    ordered = tl.sort(key, dim=0, descending=False)
-    return tl.sum(tl.where(positions == k - 1, ordered, 0), axis=0)
-
-
-@triton.jit
 def _fused_node_split_kernel(
     source, global_indices, row_batch, scratch, output, tokens,
     N: tl.constexpr, BLOCK_N: tl.constexpr, MAX_LEN: tl.constexpr,
     LANDMARKS: tl.constexpr, CHILDREN: tl.constexpr, INTERNAL: tl.constexpr,
-    CAP0: tl.constexpr, CAP1: tl.constexpr, CAP2: tl.constexpr, CAP3: tl.constexpr,
+    CHILD_OFFSETS: tl.constexpr,
     BLOCK_T: tl.constexpr, ROWS_PER_STEP: tl.constexpr, MODE: tl.constexpr,
     FP8: tl.constexpr,
     MIDPOINT: tl.constexpr = False,
+    SPLIT_TREE: tl.constexpr = (),
+    INDEX_BITS: tl.constexpr = 0,
 ):
     parent = tl.program_id(0)
     dims = tl.arange(0, 128)
@@ -159,18 +146,16 @@ def _fused_node_split_kernel(
     unit = center / tl.maximum(libdevice.sqrt_rn(tl.sum(center * center, axis=1)), 1.0e-12)[:, None]
     distance = 1.0 - tl.dot(unit, tl.trans(unit), input_precision="ieee")
     weight = length.to(tl.int32)
-    if CHILDREN == 2:
-        direction0, _, _ = _proxy_split(center, unit, distance, weight, CAP0, CAP1, LANDMARKS, 2)
-    else:
-        direction0, left_weight, right_weight = _proxy_split(
-            center, unit, distance, weight, CAP0 + CAP1, CAP2 + CAP3, LANDMARKS, 2)
-        direction1, _, _ = _proxy_split(center, unit, distance, left_weight, CAP0, CAP1, LANDMARKS, 2)
-        direction2, _, _ = _proxy_split(center, unit, distance, right_weight, CAP2, CAP3, LANDMARKS, 2)
+    # Fit the landmarks once. A branch's proxy weights stop at one child;
+    # only internal branches get directions and enter subsequent depths.
+    weight_nodes = (weight,)
     columns = tl.arange(0, 16)
-    directions = tl.where((columns == 0)[:, None], direction0[None, :], 0.0)
-    if CHILDREN == 4:
-        directions = tl.where((columns == 1)[:, None], direction1[None, :], directions)
-        directions = tl.where((columns == 2)[:, None], direction2[None, :], directions)
+    directions = tl.full((16,128),0.0,tl.float32)
+    for node in tl.static_range(INTERNAL):
+        direction, lw, rw = _proxy_split(center,unit,distance,
+            weight_nodes[SPLIT_TREE[node][0]],SPLIT_TREE[node][1],SPLIT_TREE[node][2],LANDMARKS,2)
+        weight_nodes += (lw,rw)
+        directions = tl.where((columns == node)[:,None],direction[None,:],directions)
 
     # 3. Cosine proxy scores for every token, tile by tile.
     scratch_base = scratch + parent.to(tl.int64) * N * INTERNAL
@@ -211,35 +196,31 @@ def _fused_node_split_kernel(
     global_ids = tl.load(base + positions, mask=valid, other=0)
     original = global_ids - tl.load(row_batch + parent) * tokens
     infinite = tl.full((BLOCK_N,), 9223372036854775807, tl.int64)
-    score0 = tl.load(scratch_base + positions * INTERNAL, mask=valid, other=0.0)
-    key0 = tl.where(valid, _route_key(score0, original), infinite)
-    if CHILDREN == 2:
-        threshold0 = _kth_smallest(key0, CAP0, positions)
-        left = valid & (key0 <= threshold0)
-        label = tl.where(left, 0, 1)
-    else:
-        threshold0 = _kth_smallest(key0, CAP0 + CAP1, positions)
-        left = valid & (key0 <= threshold0)
-        right = valid & (key0 > threshold0)
-        score1 = tl.load(scratch_base + positions * INTERNAL + 1, mask=valid, other=0.0)
-        score2 = tl.load(scratch_base + positions * INTERNAL + 2, mask=valid, other=0.0)
-        key1 = _route_key(tl.where(left, score1, score2), original)
-        threshold1 = _kth_smallest(tl.where(left, key1, infinite), CAP0, positions)
-        threshold2 = _kth_smallest(tl.where(right, key1, infinite), CAP2, positions)
-        label = tl.where(left, (key1 > threshold1).to(tl.int32),
-                         2 + (key1 > threshold2).to(tl.int32))
+    tag = tl.zeros((BLOCK_N,),tl.int32)
+    # One sort per binary depth, not one sort per internal node. Pack
+    # (node, ordered FP32 score, original id) into an exact int64 key.
+    for depth in tl.static_range(SPLIT_TREE[-1][5]+1):
+        active = valid & (tag >= 0)
+        score = tl.load(scratch_base + positions*INTERNAL + tl.maximum(tag,0),mask=active,other=0.0)
+        bits = score.to(tl.int32,bitcast=True).to(tl.int64) & 0xFFFFFFFF
+        ordered_bits = tl.where((bits & 0x80000000)!=0,(~bits)&0xFFFFFFFF,bits^0x80000000)
+        key = (tag.to(tl.int64) << (32+INDEX_BITS)) | (ordered_bits << INDEX_BITS) | original
+        ordered = tl.sort(tl.where(active,key,infinite),dim=0,descending=False)
+        offset = 0
+        next_tag = tag
+        for node in tl.static_range(INTERNAL):
+            if SPLIT_TREE[node][5] == depth:
+                cutoff = tl.sum(tl.where(positions==offset+SPLIT_TREE[node][1]-1,ordered,0),axis=0)
+                next_tag = tl.where(active & (tag==node),
+                    tl.where(key<=cutoff,SPLIT_TREE[node][3],SPLIT_TREE[node][4]),next_tag)
+                offset += SPLIT_TREE[node][1]+SPLIT_TREE[node][2]
+        tag = next_tag
+    label = -1-tag
 
     # 5. Stable partition into children, writing original token ids.
     out_base = output + parent.to(tl.int64) * N
     for child in tl.static_range(CHILDREN):
-        if child == 0:
-            child_offset = 0
-        elif child == 1:
-            child_offset = CAP0
-        elif child == 2:
-            child_offset = CAP0 + CAP1
-        else:
-            child_offset = CAP0 + CAP1 + CAP2
+        child_offset = CHILD_OFFSETS[child]
         member = valid & (label == child)
         rank = tl.cumsum(member.to(tl.int32), axis=0) - 1
         tl.store(out_base + child_offset + rank, original, mask=member)
@@ -273,6 +254,7 @@ def fused_node_split(
     fp8: bool = False,
     midpoint: bool = False,
     landmarks: int = 32,
+    terminal: bool = False,
 ) -> torch.Tensor:
     """Split every node in ``global_indices`` and return original ids in child order.
 
@@ -280,6 +262,8 @@ def fused_node_split(
     the ``[parents, N]`` int64 rows of each node in current order,
     ``row_batch`` the ``[parents]`` batch row of each node and ``tokens`` the
     per-row token count, so original ids are ``global - row_batch * tokens``.
+    Any 2..16 positive child capacities are supported. ``terminal`` is retained
+    for caller compatibility; it no longer selects a separate algorithm.
     """
     expected_dtypes = (torch.uint8,) if fp8 else (torch.float16, torch.bfloat16)
     if not (source.is_cuda and source.ndim == 2 and source.shape[1] == 128
@@ -290,15 +274,22 @@ def fused_node_split(
         raise ValueError("global_indices must be int64 [parents, tokens]")
     parents, n = global_indices.shape
     children = len(child_capacities)
-    if children not in (2, 4) or sum(child_capacities) != n or min(child_capacities) <= 0:
-        raise ValueError("child capacities must be two or four positive counts summing to N")
+    if not 2 <= children <= 16 or min(child_capacities) <= 0:
+        raise ValueError("expected 2 to 16 positive child capacities")
+    if sum(child_capacities) != n:
+        raise ValueError("child capacities must sum to N")
     if landmarks not in (16, 32, 64, 128) or not landmarks <= n <= FUSED_NODE_MAX_TOKENS:
         raise ValueError("node size outside the fused range")
     if row_batch.shape != (parents,) or row_batch.dtype != torch.long:
         raise ValueError("row_batch must be int64 [parents]")
     if mode not in ("fp16", "fp16x3", "bf16", "tf32", "tf32x3"):
         raise ValueError("unsupported score precision")
-    caps = tuple(int(value) for value in child_capacities) + (0,) * (4 - children)
+    from .landmark_v2_terminal import split_topology
+    split_tree = split_topology(tuple(child_capacities))
+    child_offsets = tuple(sum(child_capacities[:i]) for i in range(children))
+    index_bits = max(1,(int(tokens)-1).bit_length())
+    if index_bits + 32 + (children-2).bit_length() > 63:
+        raise ValueError("routing key exceeds int64 capacity")
     global_indices = global_indices.contiguous()
     row_batch = row_batch.contiguous()
     scratch = torch.empty((parents, n, children - 1), device=source.device, dtype=torch.float32)
@@ -307,10 +298,11 @@ def fused_node_split(
         source, global_indices, row_batch, scratch, output, int(tokens),
         N=n, BLOCK_N=triton.next_power_of_2(n), MAX_LEN=triton.cdiv(n, landmarks),
         LANDMARKS=landmarks, CHILDREN=children, INTERNAL=children - 1,
-        CAP0=caps[0], CAP1=caps[1], CAP2=caps[2], CAP3=caps[3],
+        CHILD_OFFSETS=child_offsets,
         BLOCK_T=_default_block_t(n) if block_t is None else block_t,
         ROWS_PER_STEP=_default_rows_per_step(n) if rows_per_step is None else rows_per_step,
         MODE=mode, FP8=fp8, MIDPOINT=midpoint,
+        SPLIT_TREE=split_tree, INDEX_BITS=index_bits,
         num_warps=(16 if landmarks >= 128 else 8 if landmarks == 64 else _default_warps(n)) if num_warps is None else num_warps,
     )
     return output

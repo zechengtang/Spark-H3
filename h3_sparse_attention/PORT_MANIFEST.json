@@ -16,17 +16,17 @@
     "h3_sparse_attention/landmark_tree_clustering.py": {
       "source": "h3_sparse_attention/landmark_tree_clustering.py",
       "source_sha256": "3ed8aa561f4573cec7113fc91cc6173b162aa2666334118878adabb27097e339",
-      "ported_sha256": "7f669d8da583b9c66c8426c9afbd4c8658c3c242dc1cb210a4c0190322a587b9"
+      "ported_sha256": "094d913ead497e3c85eb9c733583dc2bdac451078e7c9c4187bb695675963ae2"
     },
     "h3_sparse_attention/landmark_tree_triton.py": {
       "source": "h3_sparse_attention/landmark_tree_triton.py",
-      "source_sha256": "b01656d27a8e910fb084872360c7b0ae1d3a5f419c141bd24c335c4b3bdd8e87",
-      "ported_sha256": "0806cc05867e42f50dacf17275e2b10dd25b80c19c7347fdb32d9285ad5f2af2"
+      "source_sha256": "51f7ce3cd84f54ba2caa31e0469282311b8b9be22c16968c9037de99e2927c66",
+      "ported_sha256": "6c2c3c336d72054fddc690988b33a0079d5f4cb2d03009b1c9ded6d8936af95e"
     },
     "h3_sparse_attention/landmark_tree_v2.py": {
       "source": "h3_sparse_attention/landmark_tree_v2.py",
-      "source_sha256": "c0bcd920c76f0874f3aca1397b50f246f30059b314f21092b916df7223a7d382",
-      "ported_sha256": "b96901fb1a756d4b4a3d8570cea892f6a22eec9412d4779bfac21ee862765424"
+      "source_sha256": "3a3c8212c6d622359dac6d5cb9667b37ea47cb25ef2d54aca68fe69f7822d6eb",
+      "ported_sha256": "3a3c8212c6d622359dac6d5cb9667b37ea47cb25ef2d54aca68fe69f7822d6eb"
     },
     "h3_sparse_attention/landmark_tree_v2_triton.py": {
       "source": "h3_sparse_attention/landmark_tree_v2_triton.py",
@@ -40,8 +40,8 @@
     },
     "h3_sparse_attention/landmark_v2_cosine_fast.py": {
       "source": "h3_sparse_attention/landmark_v2_cosine_fast.py",
-      "source_sha256": "897efe80b24ac3b4e999cc483bd3a8e6efc8464214539c186e611bb8094b3cf2",
-      "ported_sha256": "8461b9858675d6af311fc8b987fb1cb44acc76af2ec18e9ea733ef9588a6e670"
+      "source_sha256": "933f1a5bbf793a714a7efbe4a4ced77cc1c4d7edaa8dddae20b02b366ae6fa21",
+      "ported_sha256": "54f11d630adf7e7b022504e028d85f25aacca00a05de3c6a763957fcb7131756"
     },
     "h3_sparse_attention/landmark_v2_cosine_triton.py": {
       "source": "h3_sparse_attention/landmark_v2_cosine_triton.py",
@@ -55,8 +55,8 @@
     },
     "h3_sparse_attention/landmark_v2_fused_node.py": {
       "source": "h3_sparse_attention/landmark_v2_fused_node.py",
-      "source_sha256": "a90be08a32530f7d3785d5f6f7d9d056b85daa78413a9cf2f1fbab66cf23f483",
-      "ported_sha256": "a17eb7fe16b28225e6bf1ee1d25c0e5b165ff389eea789afceda2a7e1e4e8afd"
+      "source_sha256": "e8a7acfb7d7a1ea3f5d58ac0c07b6cf2fa77499718e4870bc4a23dec3bdd1971",
+      "ported_sha256": "9d8979aae389217b1a22f3e28d226d6317225ec85cc8107d039f4ad318b774b9"
     },
     "h3_sparse_attention/landmark_v2_max.py": {
       "source": "h3_sparse_attention/landmark_v2_max.py",
@@ -65,8 +65,8 @@
     },
     "h3_sparse_attention/landmark_v2_order.py": {
       "source": "h3_sparse_attention/landmark_v2_order.py",
-      "source_sha256": "015b98bcc9b9812acca7fcbdf14a3a95c55fb359719c484e700a219977e19345",
-      "ported_sha256": "a1a08a22acf0c973cc8584dc3d8255102ce14c00b23dd013dc3ce8aa191ef9cb"
+      "source_sha256": "93164daf03dc6c247e7ee17c4722c4e8d6f26af591d6eb3c09507188b2bde39a",
+      "ported_sha256": "f83f845da11d845b0c6e11398608f5623a2b5f64dd3611b12abf720035f171c8"
     },
     "h3_sparse_attention/mahalanobis_kmeans.py": {
       "source": "h3_sparse_attention/mahalanobis_kmeans.py",
@@ -75,13 +75,13 @@
     },
     "h3_sparse_attention/reblock_hierarchy.py": {
       "source": "h3_sparse_attention/reblock_hierarchy.py",
-      "source_sha256": "f4a0cb8928f47c252fefa0148e898ce52411426361dd3e439eefaf5fee2ae2c3",
-      "ported_sha256": "3b3410b8d1060c68cbff3866aab353834192486542f3b470b96735a15d341e4a"
+      "source_sha256": "5638de1d60b5e508aed1ec6e53edb2bfc06a57f449ad2f2affaddbae6f2d0132",
+      "ported_sha256": "5638de1d60b5e508aed1ec6e53edb2bfc06a57f449ad2f2affaddbae6f2d0132"
     },
     "h3_sparse_attention/sol_numerator_virtual_q.py": {
       "source": "h3_sparse_attention/sol_numerator_virtual_q.py",
-      "source_sha256": "47ce0adc46aa4836aaa19cc5ada210cb7355e8b549a8349444129ad34878e176",
-      "ported_sha256": "59893eb668f26b2155f2c98562d8286f6ebb13d6ffa4af0a6d828fbbc392053a"
+      "source_sha256": "66be33bf60d452fce5c46a0405fbee2478cf5a6451c9cc71a935f6c7f9c85a01",
+      "ported_sha256": "66be33bf60d452fce5c46a0405fbee2478cf5a6451c9cc71a935f6c7f9c85a01"
     },
     "sol_attn/THIRD_PARTY_NOTICES.md": {
       "source": "sol_attn/THIRD_PARTY_NOTICES.md",
@@ -340,13 +340,13 @@
     },
     "h3_sparse_attention/processor.py": {
       "source": "h3_sparse_attention/processor.py",
-      "source_sha256": "3dd909a8cc220c9c28b75a91977d89c86eb4385a984774c5b9b8ea9b18ece801",
-      "ported_sha256": "16c3da5bb045dc4e8500c2a4424e69a53faba5a37e2d48f9697f1baa097733f3"
+      "source_sha256": "9f860c3f160722cd4dfefe0d0190b7ce342e99409f18a9d08c720d4eeb1caa1f",
+      "ported_sha256": "e3033aea1e9839f8a50a160f37458b1468bab27bdd581b7cd257f4e0a57387b9"
     },
     "h3_sparse_attention/spark.py": {
       "source": "h3_sparse_attention/spark.py",
-      "source_sha256": "d4547f907e158b0d3bdcba4002fed2aa849e17f99dcfb595a041add8e737d71d",
-      "ported_sha256": "d4547f907e158b0d3bdcba4002fed2aa849e17f99dcfb595a041add8e737d71d"
+      "source_sha256": "95c88eb775bd6e2d110bf7ac767676f662fc997fc8c63846b9965ea865b29c88",
+      "ported_sha256": "95c88eb775bd6e2d110bf7ac767676f662fc997fc8c63846b9965ea865b29c88"
     },
     "h3_sparse_attention/landmark_direction.py": {
       "source": "h3_sparse_attention/landmark_direction.py",
@@ -355,13 +355,13 @@
     },
     "h3_sparse_attention/landmark_virtual_q.py": {
       "source": "h3_sparse_attention/landmark_virtual_q.py",
-      "source_sha256": "3cdf357c20c0bf75bbc2b3a1ce022c5ab665e7bcd5a6c153e9d8f1026381c1dc",
-      "ported_sha256": "5dd56e1e45b51406b7c034cc4d7172fcfc7dbea6b4680ba5a0aa3327be1e3465"
+      "source_sha256": "013ced625ed0ed9bc747f8f9463bfc54597bc4e60dd20e1bd68f1419f52c0456",
+      "ported_sha256": "10edb0e509c84839550752f60bc716a4ed8dbb9fd1b5ec3ca4ee0c0f56e11c00"
     },
     "h3_sparse_attention/spark_integration.py": {
       "source": "h3_sparse_attention/processor.py",
-      "source_sha256": "3dd909a8cc220c9c28b75a91977d89c86eb4385a984774c5b9b8ea9b18ece801",
-      "ported_sha256": "c83f5325863ece2e97989ebd2606c3d68b1cef0b26ea02a1d02a11d01cc4d5dd"
+      "source_sha256": "9f860c3f160722cd4dfefe0d0190b7ce342e99409f18a9d08c720d4eeb1caa1f",
+      "ported_sha256": "70029fda4d5c310d1f511993d4ec2feb2b0ec98dd63b68f7582f571a17fe8087"
     },
     "h3_sparse_attention/rope_sol_kernel.py": {
       "source": "h3_sparse_attention/rope_sol_kernel.py",
@@ -375,8 +375,8 @@
     },
     "h3_sparse_attention/sol_topk_cutoff.py": {
       "source": "h3_sparse_attention/sol_topk_cutoff.py",
-      "source_sha256": "c81574edeeb728d36e2a9e8e08c5bf835a5d5968b8e41b167c1761aae822019e",
-      "ported_sha256": "49d6925369879ba21bc86a158a6980e9343754474e1cb72a3ff688859f199647"
+      "source_sha256": "9c2270e64028c199a074655e34bbff8bc40aa1dcc7d0a8fd62b070a467dfd195",
+      "ported_sha256": "9c2270e64028c199a074655e34bbff8bc40aa1dcc7d0a8fd62b070a467dfd195"
     },
     "h3_sparse_attention/sol_vaware_compensation.py": {
       "source": "h3_sparse_attention/sol_vaware_compensation.py",
@@ -390,8 +390,8 @@
     },
     "h3_sparse_attention/spark_reweight_sm120.py": {
       "source": "h3_sparse_attention/spark_reweight_sm120.py",
-      "source_sha256": "50219d130de10c5d709f2bfb1811112e98c84642877345a2150f2fd00762517c",
-      "ported_sha256": "03a4f8147d7a8111c99670f1a9f3eb38b5843b5cf00ff57101110b452cdcffbb"
+      "source_sha256": "49d6e179e5809177bf6bb78b8cca642ebfa50bc3820873fdd98b9030fd2d2073",
+      "ported_sha256": "49d6e179e5809177bf6bb78b8cca642ebfa50bc3820873fdd98b9030fd2d2073"
     },
     "h3_sparse_attention/topk_sol_kernel.py": {
       "source": "h3_sparse_attention/topk_sol_kernel.py",
@@ -412,10 +412,116 @@
       "source": "h3_sparse_attention/__init__.py",
       "source_sha256": "5f8b2a84157cb8a2abe0271f0e11373c8d47987e796b0be78b03a1783651ec75",
       "ported_sha256": "547b321e9b24c55c12ad7f7906a572941bed1939d68936a4c7081594bf8fc18c"
+    },
+    "h3_sparse_attention/global_weighted_route.py": {
+      "source": "h3_sparse_attention/global_weighted_route.py",
+      "source_sha256": "c755df2c4fc63312588bf89efe9d5ddc90326ce8b65f7efccc7c1c6fddf4a9fc",
+      "ported_sha256": "59d68fc0f1cfe3abeb004f76a632b2759e34563b7f0c7a15130eae4d999d2b5f"
+    },
+    "h3_sparse_attention/landmark_v2_route.py": {
+      "source": "h3_sparse_attention/landmark_v2_route.py",
+      "source_sha256": "9b11506a64e81e00217981c0ad2884eda5e41b2c8d10c6e47f832b96c468bd36",
+      "ported_sha256": "6528fd980071c9ae0b620630a91cc4a4dd8315c3e30e3967a6ff65762ec654c4"
+    },
+    "h3_sparse_attention/landmark_v2_terminal.py": {
+      "source": "h3_sparse_attention/landmark_v2_terminal.py",
+      "source_sha256": "71af5343f371b299392158b789b844e9d45fbb516d5a39cef02c5783429a31a9",
+      "ported_sha256": "ecad59e435408ef1f44c481e8cc4d0825047176b4d8b3f28e71d6b45f9548c97"
+    },
+    "tests/test_balanced_node_split.py": {
+      "source": "h3_sparse_attention/tests/test_balanced_node_split.py",
+      "source_sha256": "763df25208c200343be0561a45a6309765037aae0e27e8982c8da01527464a61",
+      "ported_sha256": "763df25208c200343be0561a45a6309765037aae0e27e8982c8da01527464a61"
+    },
+    "tests/test_landmark_v2_route.py": {
+      "source": "h3_sparse_attention/tests/test_landmark_v2_route.py",
+      "source_sha256": "d56fb980158fd815d74becfcfd035a189f8e47bab12f8570aaf972ec652b3e31",
+      "ported_sha256": "d56fb980158fd815d74becfcfd035a189f8e47bab12f8570aaf972ec652b3e31"
+    },
+    "tests/test_landmark_v2_small_proxy.py": {
+      "source": "h3_sparse_attention/tests/test_landmark_v2_small_proxy.py",
+      "source_sha256": "02a071bd570ec0953e3e2ae4ab366d32069f7430172b3eded9dcb929b62c3fc2",
+      "ported_sha256": "02a071bd570ec0953e3e2ae4ab366d32069f7430172b3eded9dcb929b62c3fc2"
+    },
+    "tests/test_landmark_v2_terminal.py": {
+      "source": "h3_sparse_attention/tests/test_landmark_v2_terminal.py",
+      "source_sha256": "0e7dffe347c22b0bb5ac251fcb02b1ddb039dae2e81b52aaaf82bf5be8a7fa0f",
+      "ported_sha256": "f1659edbc039d9ede526c884fe7973583f1e43cecf8f3225182b62618e99daf7"
+    },
+    "tests/test_landmark_chunk.py": {
+      "source": "h3_sparse_attention/tests/test_landmark_chunk.py",
+      "source_sha256": "9435c49673059337c0b7ca18a467e82520b181658c72261ee6ab37cf65de46a3",
+      "ported_sha256": "9435c49673059337c0b7ca18a467e82520b181658c72261ee6ab37cf65de46a3"
+    },
+    "tests/test_global_weighted_route.py": {
+      "source": "h3_sparse_attention/tests/test_global_weighted_route.py",
+      "source_sha256": "dc642d2f28b4f46219e955839d848056e024d7d8fc787992fee6daa69e330877",
+      "ported_sha256": "dc642d2f28b4f46219e955839d848056e024d7d8fc787992fee6daa69e330877"
+    },
+    "tests/test_sol_layout.py": {
+      "source": "h3_sparse_attention/tests/test_sol_layout.py",
+      "source_sha256": "7bf5665824a2b7fbf9d70b00d92238adab3269b07c4b6b2fb86b2bba3d5ea415",
+      "ported_sha256": "eeaac26ad7f98c0d1986f51ac7855efcb371dc3100466fd9fbb69058110cdfd5"
+    },
+    "h3_sparse_attention/README.md": {
+      "source": "h3_sparse_attention/README.md",
+      "source_sha256": "df1f8ca7912c1b913e888e7a81a2cb522af28441b2b2297605ad67f253e23184",
+      "ported_sha256": "9e4d0ba3869d6336af318e1a3501a14548f99bb094117685e21635c31e271783"
+    },
+    "tests/test_spark_installer.py": {
+      "source": "h3_sparse_attention/tests/test_spark_installer.py",
+      "source_sha256": "aeacf9bed47d2dc09d746b0867eaee5b96dad257da4123c7d466fbef8b52429a",
+      "ported_sha256": "938022acd8cb288eb793b190f07307989553c10eb4db0a91d5805c0baa3d8c91"
+    },
+    "tests/test_final_fanout.py": {
+      "source": "h3_sparse_attention/tests/test_final_fanout.py",
+      "source_sha256": "7a1e3d97c719986cece867f1f3cfce5f234c92650e27423f01e6e85c118c81cc",
+      "ported_sha256": "714e1e8b608e2f9a596574dea19a942f208907b02d9bf1d668e477fc4653c938"
+    },
+    "tests/test_root_fanout.py": {
+      "source": "h3_sparse_attention/tests/test_root_fanout.py",
+      "source_sha256": "bc66e9bf2cfc3c4d0579e5c5bc96ef04a20672a155ecb1739352dfd8f823e617",
+      "ported_sha256": "ab8f94e7f70e8ee49895587f43a143f268c197c618f7b053a688ff81995a9803"
+    },
+    "tests/test_topk_host_synchronization.py": {
+      "source": "h3_sparse_attention/tests/test_topk_host_synchronization.py",
+      "source_sha256": "9407dc3051156803fbe4db064d2cff5e807fc933a11fa71abd9d7690274ead9a",
+      "ported_sha256": "9407dc3051156803fbe4db064d2cff5e807fc933a11fa71abd9d7690274ead9a"
+    },
+    "tests/test_virtual_query_unused_value_sums.py": {
+      "source": "h3_sparse_attention/tests/test_virtual_query_unused_value_sums.py",
+      "source_sha256": "5d88873acedcc4ca370fed817b2f479a17fb1473e66e75784f6a3d3968648682",
+      "ported_sha256": "deaa8939b6760921c2c650e6410204cb8f32b6d841051278a81e407c7a29e32d"
+    },
+    "tests/test_spark_reweight_prefetch.py": {
+      "source": "tests/test_spark_reweight_prefetch.py",
+      "source_sha256": "34501b2124596bf68da40f57d37e9277dd3a5c7ece5569873557b34ff2fb7495",
+      "ported_sha256": "34501b2124596bf68da40f57d37e9277dd3a5c7ece5569873557b34ff2fb7495"
+    },
+    "tests/test_global_reweight_followup.py": {
+      "source": "tests/test_global_reweight_followup.py",
+      "source_sha256": "455319fe451daf13f0d0fd02d32b69764655c5779ef419e09133365de9d3cb65",
+      "ported_sha256": "952ce987c3d5d79a26711ec3835de97c5b1e40aa3af212281283d31e8f110a38"
     }
   },
   "spark_installer_update": "Source working tree at ca44a1780eba8bfd9d2cbdc4a9ff813bd8c38277; file hashes include uncommitted updates.",
-  "validation": {
+  "sync_date": "2026-09-18",
+  "source_working_tree": true,
+  "known_source_limitations": [
+    "Fixed temporal chunks do not publish a reweighting hierarchy; disable virtual-query reweighting when using chunk_frames."
+  ],
+  "spark_sync_update": {
+    "features": [
+      "Independent root and final fanout controls and fanout alias",
+      "Native tau routing with virtual-query reweighting",
+      "SM120 weighted-key prefetch and shared log mass",
+      "Parallel global-anchor reduction and context-query prefix optimization",
+      "K-only reduction for fused virtual-query attention",
+      "Top-K routing without host synchronization"
+    ],
+    "scope": "Spark runtime dependencies and adapted integration/tests; existing local changes retained"
+  },
+  "previous_validation": {
     "spark_source_parity": {
       "seed": 131,
       "dtype": "bfloat16",
@@ -435,10 +541,61 @@
       "environment": {
         "H3_SPARK_REWEIGHT_FUSED": "0"
       },
-      "result": "bitwise equal to updated MiniMax-H3-Sparse _sol_attention"
+      "result": "bitwise equal to source working tree on 2026-09-17"
     },
     "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
     "torch": "2.12.1+cu130",
+    "full_video_generation": false,
+    "relative_import_symbols": "passed",
+    "excluded_backends": "No SVG2, SVOO, SVG-EAR or vbench benchmark code imported",
+    "optional_source_parity": {
+      "configuration": "arbitrary fanout 8, no temporal partition, global weighted routing, target-189 reweighting",
+      "result": "bitwise equal",
+      "seed": 131,
+      "qkv_shape_bhtd": [
+        1,
+        2,
+        1159,
+        128
+      ]
+    },
+    "chunk_source_parity": {
+      "configuration": "12-frame chunks, arbitrary fanout 8, global weighted routing, reweighting disabled",
+      "result": "bitwise equal",
+      "seed": 131,
+      "qkv_shape_bhtd": [
+        1,
+        2,
+        1159,
+        128
+      ]
+    },
+    "test_scope": "CPU and CUDA source regressions plus port integration; direct fused-node terminal tests cover production dispatch (2/4 children).",
+    "pytest": {
+      "command": "OMP_NUM_THREADS=1 python -m pytest tests -q",
+      "passed": 159,
+      "warnings": 2,
+      "seconds": 49.71
+    }
+  },
+  "validation": {
+    "date": "2026-09-18",
+    "pytest": {
+      "command": "OMP_NUM_THREADS=1 python -m pytest tests -q --disable-warnings --maxfail=5",
+      "passed": 273,
+      "warnings": 2,
+      "seconds": 170.45
+    },
+    "tau_and_installer_regression": {
+      "command": "OMP_NUM_THREADS=1 python -m pytest tests/test_spark_installer.py -q --disable-warnings",
+      "passed": 7,
+      "warnings": 2,
+      "seconds": 103.74
+    },
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition (SM120)",
+    "torch": "2.12.1+cu130",
+    "relative_import_symbols": "passed",
+    "git_diff_check": "passed",
     "full_video_generation": false
   }
 }

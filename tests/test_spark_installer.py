@@ -16,7 +16,7 @@ def test_installer_defaults_and_target_frontier(monkeypatch):
     assert cfg.sol_landmark_preprocess and cfg.sol_landmark_preprocess_version=='v2'
     assert cfg.sol_virtual_query_target_blocks==189 and cfg.sol_virtual_query_levels_up is None
     assert not cfg.sol_local_blocks_enabled
-    assert cfg.landmark_tree_v2_children==(16,16) and cfg.landmark_tree_v2_landmark_mode=='midpoint'
+    assert cfg.landmark_tree_v2_children==16 and cfg.landmark_tree_v2_landmark_mode=='midpoint'
     assert cfg.landmark_tree_v2_landmark_count==32 and cfg.landmark_tree_v2_minimum_frames==10
     assert os.environ['H3_TEMPORAL_MIN_FRAMES']=='99'
     h=build_reblock_hierarchy(72576,cfg.landmark_tree_v2_children,grid_shape=(72,24,42),minimum_frames=cfg.landmark_tree_v2_minimum_frames)
@@ -90,7 +90,8 @@ def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
-def test_spark_default_routes_merge_with_reweight(monkeypatch):
+@pytest.mark.parametrize("topk_ratio", [0.1, None])
+def test_spark_default_routes_merge_with_reweight(monkeypatch, topk_ratio):
     from h3_sparse_attention.processor import _Controller, _packed_layout, _sol_attention
     from h3_sparse_attention.sol_numerator_virtual_q import (
         build_virtual_anchors, virtual_summaries,
@@ -108,7 +109,8 @@ def test_spark_default_routes_merge_with_reweight(monkeypatch):
                                             torch.arange(4, device='cuda'),
                                             torch.arange(4, device='cuda'))
     layout = _packed_layout(tags, positions)
-    cfg = H3SparseAttentionConfig.spark(3, warmup_percent=0, sol_dense_layers=0)
+    cfg = H3SparseAttentionConfig.spark(3, warmup_percent=0, sol_dense_layers=0,
+                                        sol_route_topk_ratio=topk_ratio)
     controller = _Controller(cfg)
     # Capture the source's exact branch route; use it to build the independent oracle.
     import h3_sparse_attention.sol_numerator_virtual_q as virtual

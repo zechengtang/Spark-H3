@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 
+import os
+
+
 import torch
 
 
@@ -117,6 +120,7 @@ def _cosine_proxy_node(
     left_capacity,
     right_capacity,
     directions,
+    weight_slots,
     landmarks: tl.constexpr,
     dim: tl.constexpr,
     internal_nodes: tl.constexpr,
@@ -131,6 +135,7 @@ def _cosine_proxy_node(
     local_node = tl.program_id(0)
     batch = tl.program_id(1)
     node = node_offset + local_node
+    weight_node = tl.load(weight_slots + node)
     landmark = tl.arange(0, BLOCK_K)
     dims = tl.arange(0, BLOCK_D)
     landmark_mask = landmark < landmarks
@@ -138,7 +143,7 @@ def _cosine_proxy_node(
     weight = tl.load(
         active_weight
         + batch * internal_nodes * landmarks
-        + node * landmarks
+        + weight_node * landmarks
         + landmark,
         mask=landmark_mask,
         other=0,
@@ -219,7 +224,7 @@ def _cosine_proxy_node(
         sorted_weight = tl.load(
             active_weight
             + batch * internal_nodes * landmarks
-            + node * landmarks
+            + weight_node * landmarks
             + sorted_landmark,
             mask=sorted_landmark < landmarks,
             other=0,
@@ -270,6 +275,9 @@ def _cosine_proxy_node(
 _CAPACITY_CACHE = {}
 
 
+_ARBITRARY_PROXY_MAX_REGISTERS = 64
+
+
 def build_cosine_directions(centers, weights, child_capacities, *, return_partition=False):
     """Bound large-landmark pairwise scratch to 128 parent nodes per batch."""
     if centers.shape[1] <= 128 or centers.shape[0] <= 128:
@@ -288,36 +296,51 @@ def _build_cosine_directions_unbatched(centers,weights,child_capacities, *, retu
     from .landmark_v2_cosine_triton import fused_unit128
     batch,landmarks,dim=centers.shape
     children=len(child_capacities);internal=children-1
-    assert 16 <= landmarks <= 256 and dim==128 and children in (2,4,8,16,32)
+    assert 16 <= landmarks <= 256 and dim==128 and 2 <= children <= 32
     normalized=fused_unit128(centers)
     if landmarks > 128:
         distance=torch.bmm(normalized,normalized.transpose(1,2))
         torch.sub(1, distance, out=distance)
     else:
         distance=1-torch.bmm(normalized,normalized.transpose(1,2))
-    storage_nodes = 2*children-1 if return_partition else internal
+    storage_nodes = 2*children-1
     active=torch.empty((batch,storage_nodes,landmarks),device=centers.device,dtype=torch.int32)
     active[:,0].copy_(weights)
     key=(centers.device,tuple(child_capacities))
+    from .landmark_v2_terminal import split_topology
+    topology = split_topology(tuple(child_capacities))
     if key not in _CAPACITY_CACHE:
-        left=[];right=[];ranges=[(0,children)]
-        while ranges:
-            next_ranges=[]
-            for a,b in ranges:
-                m=(a+b)//2;left.append(sum(child_capacities[a:m]));right.append(sum(child_capacities[m:b]))
-                if m-a>1:next_ranges.append((a,m))
-                if b-m>1:next_ranges.append((m,b))
-            ranges=next_ranges
-        _CAPACITY_CACHE[key]=(torch.tensor(left,device=centers.device,dtype=torch.int32),
-                              torch.tensor(right,device=centers.device,dtype=torch.int32))
-    lc,rc=_CAPACITY_CACHE[key]
+        _CAPACITY_CACHE[key] = tuple(torch.tensor(values,device=centers.device,dtype=torch.int32)
+            for values in ([row[1] for row in topology], [row[2] for row in topology],
+                           [row[0] for row in topology]))
+    lc,rc,slots=_CAPACITY_CACHE[key]
     directions=torch.empty((batch,storage_nodes,dim),device=centers.device,dtype=torch.float32)
-    for level in range(children.bit_length()-1):
-        nodes=1<<level
-        _cosine_proxy_node[(nodes,batch)](centers,distance,active,lc,rc,directions,
-            landmarks=landmarks,dim=dim,internal_nodes=storage_nodes,node_offset=nodes-1,
-            BLOCK_K=triton.next_power_of_2(landmarks),BLOCK_D=128,ITERATIONS=2,WRITE_CHILDREN=return_partition or nodes*2<children,num_warps=16 if landmarks > 128 else 8)
+    # Tiny proxy trees spend more time coordinating eight warps than computing.
+    # One warp changes FP32 reduction order (and potentially near-tied routes).
+    # Keep the legacy arithmetic available for reproducibility-sensitive runs.
+    small_proxy_fast = (
+        os.environ.get("H3_LMV2_SMALL_PROXY_FAST", "1") == "1"
+        and landmarks == 32 and centers.dtype == torch.bfloat16
+        and children in (14, 15, 16) and sum(child_capacities) <= 1024
+        and torch.cuda.get_device_capability(centers.device) == (12, 0)
+    )
+    proxy_warps = 1 if small_proxy_fast else (16 if landmarks > 128 else 8)
+    proxy_launch_options = {}
+    if (not small_proxy_fast and _ARBITRARY_PROXY_MAX_REGISTERS is not None and landmarks == 32
+            and batch >= 1024 and children in (14, 15)
+            and torch.cuda.get_device_capability(centers.device) == (12, 0)):
+        proxy_launch_options['maxnreg'] = _ARBITRARY_PROXY_MAX_REGISTERS
+    offset=0
+    for level in range(topology[-1][5]+1):
+        nodes=sum(row[5]==level for row in topology)
+        _cosine_proxy_node[(nodes,batch)](centers,distance,active,lc,rc,directions,slots,
+            landmarks=landmarks,dim=dim,internal_nodes=storage_nodes,node_offset=offset,
+            BLOCK_K=triton.next_power_of_2(landmarks),BLOCK_D=128,ITERATIONS=2,
+            WRITE_CHILDREN=(not small_proxy_fast or return_partition
+                            or level < topology[-1][5]),num_warps=proxy_warps,
+            **proxy_launch_options)
+        offset+=nodes
     if return_partition:
         return directions[:, :internal], normalized, active
-    return directions
+    return directions[:, :internal].contiguous()
 

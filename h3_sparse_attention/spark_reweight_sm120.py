@@ -1,56 +1,43 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
+"""Fused Sol-Attn forward kernel for GeForce Blackwell SM120.
 
+The warp-MMA/TMA execution skeleton and online-softmax helpers are adapted
+from NVIDIA cuDNN Frontend's SM120 block-sparse-attention kernel.  Sol-specific
+routing, CTA-local exact-index compaction, approximate block mass, and the
+mixed approximate/exact mainloop are implemented here.
 
-"""Spark dependencies adapted from MiniMax-H3-Sparse; see PORT_MANIFEST.json."""
+Repository-local Spark specialization of the installed production Sol-Attn
+mainloop (source snapshot recorded in the optimization report). Native KC
+routing and exact TMA/warp-MMA are retained; approximate K/V and log mass are
+query-parent conditioned, and both branches share one online softmax/output.
+The installed sol_attn package is not modified.
+"""
+
 from __future__ import annotations
-
 
 import operator
 
-
 import cuda.bindings.driver as cuda
-
-
 import cutlass
-
-
 import cutlass.cute as cute
-
-
 import cutlass.pipeline as pipeline
-
-
 import cutlass.utils as utils
-
-
 import cutlass.utils.hopper_helpers as sm90_utils
 
-
 from sol_attn._vendor.flash_attn.cute import utils as kernel_utils
-
-
 from sol_attn.common import layout_utils
-
-
-from sol_attn.common.selector import sol_attn_popc_b32
+from sol_attn.common.selector import (
+    sol_attn_popc_b32,
+    sol_attn_route_is_exact,
+)
 
 
 M = 64
-
-
 N = 64
-
-
 D = 128
-
-
 DV = 128
-
-
 THREADS = 128
-
-
 STAGES = 1
 
 
@@ -68,6 +55,8 @@ class SparkReweightForwardSm120:
         exact_only: bool = False,
         export_route: bool = False,
         force_local_blocks: bool = True,
+        prefetch_approx_k: bool = True,
+        shared_log_mass: bool = True,
     ):
         self.dtype = cutlass.BFloat16
         self.acc_dtype = cutlass.Float32
@@ -84,6 +73,8 @@ class SparkReweightForwardSm120:
         self.exact_only = exact_only
         self.export_route = export_route
         self.force_local_blocks = force_local_blocks
+        self.prefetch_approx_k = prefetch_approx_k and not exact_only
+        self.shared_log_mass = shared_log_mass
 
     @cute.kernel
     def kernel(
@@ -453,6 +444,20 @@ class SparkReweightForwardSm120:
             K_pipeline.consumer_release(K_consumer)
             K_consumer.advance()
 
+            # The route scores are now in registers. Fetch weighted keys into
+            # the released K stage while the CTA reduces and compacts routes.
+            # Speculative loads must also be drained for all-exact groups.
+            if cutlass.const_expr(self.prefetch_approx_k):
+                if warp == 0:
+                    K_pipeline.producer_acquire(K_producer)
+                    cute.copy(
+                        tma_atom_AK, tAKgK[None, route_group],
+                        tAKsK[None, K_producer.index],
+                        tma_bar_ptr=K_pipeline.producer_get_barrier(K_producer),
+                    )
+                    K_pipeline.producer_commit(K_producer)
+                    K_producer.advance()
+
             if cutlass.const_expr(not self.external_route):
                 reduce_route_columns(
                     tSrS,
@@ -538,6 +543,14 @@ class SparkReweightForwardSm120:
                         if (exact or not valid)
                         else cutlass.Float32(0.0)
                     )
+                    if cutlass.const_expr(self.shared_log_mass):
+                        if valid and not exact:
+                            # One load/scale per block, broadcast through the
+                            # existing column-mask scratch to all query rows.
+                            column_masks[off] = (
+                                mLM[batch_idx, parent_idx, summary_head, group_start + off]
+                                * 1.4426950408889634 / scale_softmax_log2e
+                            )
                     rank = preceding + sol_attn_popc_b32(
                         ballot & lane_mask_lt
                     )
@@ -567,7 +580,7 @@ class SparkReweightForwardSm120:
             if has_approx:
                 # Routing has consumed native KC. Reuse its shared-memory stage
                 # for query-conditioned keys before prefetching the exact K.
-                if warp == 0:
+                if warp == 0 and cutlass.const_expr(not self.prefetch_approx_k):
                     K_pipeline.producer_acquire(K_producer)
                     cute.copy(
                         tma_atom_AK, tAKgK[None, route_group],
@@ -584,9 +597,15 @@ class SparkReweightForwardSm120:
                 )
                 K_pipeline.consumer_release(K_consumer)
                 K_consumer.advance()
-                add_virtual_log_mass(tArS, tScS, mLM, batch_idx, parent_idx,
-                                     summary_head, group_start, num_blocks,
-                                     scale_softmax_log2e)
+                if cutlass.const_expr(not self.shared_log_mass):
+                    add_virtual_log_mass(tArS, tScS, mLM, batch_idx, parent_idx,
+                                         summary_head, group_start, num_blocks,
+                                         scale_softmax_log2e)
+            elif cutlass.const_expr(self.prefetch_approx_k):
+                ak_wait = K_pipeline.consumer_try_wait(K_consumer)
+                K_pipeline.consumer_wait(K_consumer, ak_wait)
+                K_pipeline.consumer_release(K_consumer)
+                K_consumer.advance()
             if cutlass.const_expr(self.prefetch_first_exact_k):
                 # Once routing identifies the first exact block, the route KC
                 # stage is free.  Refill it before the approximate softmax/PV
@@ -1189,6 +1208,63 @@ def online_softmax(
 
 
 @cute.jit
+def online_softmax_route(
+    scores: cute.Tensor,
+    coords: cute.Tensor,
+    row_max: cute.Tensor,
+    row_sum: cute.Tensor,
+    scale_log2e: cutlass.Float32,
+    group_start: cutlass.Int32,
+    token_count: cutlass.Int32,
+):
+    scores_mn = layout_utils.reshape_acc_to_mn(scores)
+    coords_mn = layout_utils.reshape_acc_to_mn(coords)
+    row_scale = cute.make_rmem_tensor_like(row_max, cutlass.Float32)
+    for m in cutlass.range_constexpr(cute.size(row_max)):
+        score_row = scores_mn[m, None].load()
+        current_max = kernel_utils.fmax_reduce(
+            score_row, init_val=row_max[m], arch=80
+        )
+        current_max = cute.arch.warp_reduction_max(
+            current_max, threads_in_group=4
+        )
+        previous_max = row_max[m]
+        row_max[m] = current_max
+        safe_max = (
+            cutlass.Float32(0.0)
+            if current_max == -cutlass.Float32.inf
+            else current_max
+        )
+        probabilities = cute.math.exp2(
+            score_row * scale_log2e - safe_max * scale_log2e,
+            fastmath=True,
+        )
+        row_scale[m] = cute.math.exp2(
+            (previous_max - safe_max) * scale_log2e, fastmath=True
+        )
+        masses = cute.make_rmem_tensor_like(
+            scores_mn[m, None], cutlass.Float32
+        )
+        for n in cutlass.range_constexpr(cute.size(masses)):
+            block = group_start + coords_mn[m, n][1]
+            length = token_count - block * cutlass.Int32(N)
+            if length > N:
+                length = cutlass.Int32(N)
+            if length < 0:
+                length = cutlass.Int32(0)
+            masses[n] = cutlass.Float32(probabilities[n]) * cutlass.Float32(
+                length
+            )
+        row_sum[m] = kernel_utils.fadd_reduce(
+            masses.load(),
+            init_val=row_sum[m] * row_scale[m],
+            arch=80,
+        )
+        scores_mn[m, None].store(probabilities)
+    return row_scale
+
+
+@cute.jit
 def finalize_softmax(
     row_max: cute.Tensor,
     row_sum: cute.Tensor,
@@ -1227,6 +1303,9 @@ def rescale_o_for_next_acc(
         )
 
 
+__all__ = ["SparkReweightForwardSm120"]
+
+
 @cute.jit
 def add_virtual_log_mass(scores: cute.Tensor, coords: cute.Tensor,
                          lm: cute.Tensor, batch: cutlass.Int32,
@@ -1244,4 +1323,3 @@ def add_virtual_log_mass(scores: cute.Tensor, coords: cute.Tensor,
                 # the original block-count multiplier must not be applied.
                 scores_mn[m, n] += (lm[batch, parent, head, block]
                                     * 1.4426950408889634 / scale_log2e)
-

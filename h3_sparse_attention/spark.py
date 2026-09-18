@@ -4,8 +4,11 @@ Usage::
 
     from h3_sparse_attention.spark import spark_reblock, spark_reweight
 
-``spark_reblock`` is the landmark-tree-v2 block builder, with its original
-arguments and result type (including permutation and inverse permutation).
+``spark_reblock`` is the landmark-tree-v2 block builder. For arbitrary
+scheduling, ``root_fanout=None`` and ``final_fanout=None`` both inherit
+``fanout`` (default8). Set either explicitly to change the first nonfinal
+or final round. ``max_children`` remains a compatibility alias.
+The result includes the permutation and inverse permutation.
 
 ``spark_reweight(a, k, v)`` consumes query representatives ``a[B,P,H,D]``
 and keys/values ``k,v[B,T,H,D]``. It returns query-conditioned weighted
@@ -15,7 +18,7 @@ attention branch, or merge attention outputs.
 
 The two tensor functions are direct aliases, not wrappers.
 `install_h3_spark_attn` is the model-level context-manager installer; its
-configuration defaults to minimum-10 reblock and target-189 reweight.
+configuration defaults to minimum-10, power-of-two fanout-16 reblock and target-189 reweight.
 See docs/SPARK_INSTALLER.md.
 
 For the tensor aliases, Original names, signatures, internal
