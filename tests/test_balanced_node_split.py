@@ -13,6 +13,21 @@ def test_seventeen_blocks_use_two_balanced_children():
     assert len(h.levels) == 3
 
 
+def test_default_is_strict_fanout16_with_child_reconstruction():
+    from h3_sparse_attention import H3SparseAttentionConfig
+    for config in (H3SparseAttentionConfig.sol(20), H3SparseAttentionConfig.spark(20)):
+        assert config.landmark_tree_v2_children == 16
+        assert config.landmark_tree_v2_fanout_mode == 'power_of_two_fanout'
+    strict = build_reblock_hierarchy(3 * 64)
+    assert strict.fanout == strict.root_fanout == strict.final_fanout == 16
+    assert strict.budgets(0, 3) == (2, 1)
+    assert strict.budgets(1, 2) == (1, 1)
+    hybrid = build_reblock_hierarchy(3 * 64, fanout_mode='power_of_two_arbitrary_final')
+    assert hybrid.budgets(0, 3) == (1, 1, 1)
+    with pytest.raises(ValueError, match='separate final_fanout'):
+        build_reblock_hierarchy(3 * 64, final_fanout=8)
+
+
 @pytest.mark.parametrize('leaves,fanout,root', [(33,16,(11,11,11)), (17,16,(9,8)), (5,8,(1,)*5)])
 def test_arbitrary_fanout_with_matching_final_fanout(leaves, fanout, root):
     h = build_reblock_hierarchy(leaves*64,(fanout,),final_fanout=fanout,fanout_mode='arbitrary_fanout')
@@ -48,6 +63,21 @@ def test_named_fanout_modes_control_the_complete_hierarchy():
     assert power.metadata()['fanout_mode'] == 'power_of_two_fanout'
     assert arbitrary.metadata()['fanout_mode'] == 'arbitrary_fanout'
     assert arbitrary.final_fanout == 16
+
+
+@pytest.mark.parametrize('final', [3, 8, 16])
+def test_power_of_two_nonfinal_rounds_and_arbitrary_terminal_round(final):
+    h = build_reblock_hierarchy(1134*64, fanout=8, root_fanout=16,
+                                final_fanout=final, fanout_mode='power_of_two_arbitrary_final')
+    for depth, round_ in enumerate(h.split_budgets):
+        for leaves, capacities in round_:
+            if leaves <= final:
+                assert capacities == (1,) * leaves
+            else:
+                count = len(capacities)
+                assert count & (count-1) == 0
+                assert count <= (16 if depth == 0 else 8)
+    assert h.levels[-1] == tuple((i,i+1) for i in range(1134))
 
 
 @pytest.mark.parametrize('bad', [None, '', 'power2', 'balanced', True])

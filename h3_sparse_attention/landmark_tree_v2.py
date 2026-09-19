@@ -245,7 +245,7 @@ def _normalize_children(children):
 
 def _normalize_fanout(max_children, fanout):
     if fanout is not None:
-        if max_children != 8 and _normalize_children(max_children) != _normalize_children(fanout):
+        if max_children != 16 and _normalize_children(max_children) != _normalize_children(fanout):
             raise ValueError("use fanout or legacy max_children, not conflicting values")
         max_children = fanout
     return _normalize_children(max_children)
@@ -283,7 +283,7 @@ def _recursive_landmark_tree_v2(
     order_mode: str = "parent_order",
     group_size: int | list[int] | tuple[int, ...] = 1,
     fitting_samples: torch.Tensor | None = None,
-    max_children: int | list[int] | tuple[int, ...] = 8,
+    max_children: int | list[int] | tuple[int, ...] = 16,
     fanout_mode: str = "power_of_two_fanout",
     fanout: int | list[int] | tuple[int, ...] | None = None,
     final_fanout: int | list[int] | tuple[int, ...] | None = None,
@@ -422,6 +422,8 @@ def _recursive_landmark_tree_v2(
                 source, group_size, distance, aggregation)
             node_landmarks = min(landmark_count, node_tokens // group_size)
             final_round = all(budget == 1 for budget in child_budgets)
+            split_mode = ("arbitrary_fanout" if final_round and fanout_mode != "power_of_two_fanout"
+                          else fanout_mode)
             fused_node = (node_landmarks <= 128 and (node_landmarks & (node_landmarks - 1)) == 0 and indexed_group1 and direct_partition and distance == "cosine"
                           and aggregation == "linear"
                           and _use_fused_node(node_tokens, children, dim))
@@ -436,7 +438,7 @@ def _recursive_landmark_tree_v2(
                     mode=FAST_PRECISION, fp8=fp8_source is not None,
                     midpoint=landmark_mode == "midpoint", landmarks=node_landmarks)
                 landmarks_used = node_landmarks
-            elif (fanout_mode == "arbitrary_fanout" and indexed_group1
+            elif (split_mode == "arbitrary_fanout" and indexed_group1
                   and distance == "cosine" and aggregation == "linear"):
                 from .landmark_tree_v2_triton import indexed_interval_means
                 from .landmark_v2_terminal import partition_scores
@@ -457,7 +459,7 @@ def _recursive_landmark_tree_v2(
                     order = scalar_tree_order(scores, group.indices, child_group_capacities)
                     mapped = group.indices.gather(1, order)
                 landmarks_used = centers.shape[1]
-            elif fanout_mode == "arbitrary_fanout" and (final_round or children & (children-1)):
+            elif split_mode == "arbitrary_fanout" and (final_round or children & (children-1)):
                 from .landmark_v2_terminal import node_split_reference
                 representatives, centers, weights = _block_mean_landmarks(
                     source, global_indices, group_size, optimized_means=optimized_means,
@@ -653,7 +655,7 @@ def recursive_landmark_tree_v2_reference(
     order_mode: str = "parent_order",
     group_size: int | list[int] | tuple[int, ...] = 1,
     fitting_samples: torch.Tensor | None = None,
-    max_children: int | list[int] | tuple[int, ...] = 8,
+    max_children: int | list[int] | tuple[int, ...] = 16,
     fanout_mode: str = "power_of_two_fanout",
     fanout: int | list[int] | tuple[int, ...] | None = None,
     final_fanout: int | list[int] | tuple[int, ...] | None = None,
@@ -694,7 +696,7 @@ def recursive_landmark_tree_v2_blocks(
     order_mode: str = "parent_order",
     group_size: int | list[int] | tuple[int, ...] = 1,
     fitting_samples: torch.Tensor | None = None,
-    max_children: int | list[int] | tuple[int, ...] = 8,
+    max_children: int | list[int] | tuple[int, ...] = 16,
     fanout_mode: str = "power_of_two_fanout",
     fanout: int | list[int] | tuple[int, ...] | None = None,
     final_fanout: int | list[int] | tuple[int, ...] | None = None,
@@ -707,15 +709,18 @@ def recursive_landmark_tree_v2_blocks(
     """Return strict 64-token leaves; defaults are single tokens, eight children and midpoint landmarks.
 
     group_size (1/2/4/8) and max_children (2/4/8/16/32) each accept a scalar or
-    per-level list/tuple. Defaults are group_size=1, max_children=8 and landmark_mode="midpoint"; levels
+    per-level list/tuple. Defaults are group_size=1, max_children=16 and landmark_mode="midpoint"; levels
     beyond a sequence's length reuse its last value. The schedules are independent.
     fanout_mode="power_of_two_fanout" selects maximum-first power-of-two
-    scheduling and its complete binary splitter. "arbitrary_fanout" selects
+    scheduling for all rounds. "arbitrary_fanout" selects
     the minimum-depth balanced scheduler and early-stopping arbitrary-count
-    splitter. fanout (legacy alias: max_children) bounds nonfinal rounds;
+    splitter. "power_of_two_arbitrary_final" keeps power-of-two nonfinal
+    rounds but finishes small nodes with arbitrary fanout.
+    fanout (legacy alias: max_children) bounds nonfinal rounds;
     root_fanout bounds the first nonfinal round; final_fanout bounds the
-    final round in arbitrary mode. Both default to None, inheriting fanout.
-    A one-round tree uses final_fanout. For example,
+    final round in the arbitrary modes. Both default to None, inheriting fanout.
+    Strict power-of-two requires final_fanout to inherit or equal fanout.
+    In the arbitrary modes a one-round tree uses final_fanout. For example,
     fanout=8, final_fanout=16 permits up to 16 final children.
     fanout=8, final_fanout=8 uses a strict eight-child bound throughout.
     parent_order preserves the relative order inherited from each parent.
@@ -761,7 +766,7 @@ class PreparedLandmarkTreeV2Permutation:
         group_size: int | list[int] | tuple[int, ...] = 1,
         input_unit_means: bool = False,
         metric_unit_means: bool = False,
-        max_children: int | list[int] | tuple[int, ...] = 8,
+        max_children: int | list[int] | tuple[int, ...] = 16,
         fanout_mode: str = "power_of_two_fanout",
         fanout: int | list[int] | tuple[int, ...] | None = None,
         final_fanout: int | list[int] | tuple[int, ...] | None = None,

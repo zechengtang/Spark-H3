@@ -6,9 +6,6 @@ video, text, and audio keys remain exact, and context queries run densely.
 from __future__ import annotations
 
 import math
-import os
-
-_SOL_LAYOUT_FAST = os.environ.get("H3_SOL_LAYOUT_FAST", "1") == "1"
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -53,7 +50,7 @@ class H3SparseAttentionConfig:
     landmark_tree_v2_mean_mode: Literal["raw", "input_unit", "metric_unit"] = "raw"
     landmark_tree_v2_moment_mode: Literal["raw", "unit"] = "raw"
     landmark_tree_v2_group_size: int | list[int] | tuple[int, ...] = 1
-    landmark_tree_v2_children: int | list[int] | tuple[int, ...] = 8
+    landmark_tree_v2_children: int | list[int] | tuple[int, ...] = 16
     landmark_tree_v2_fanout: int | list[int] | tuple[int, ...] | None = None
     landmark_tree_v2_final_fanout: int | list[int] | tuple[int, ...] | None = None
     landmark_tree_v2_root_fanout: int | None = None
@@ -66,7 +63,7 @@ class H3SparseAttentionConfig:
     sol_route_global_weighted_side: Literal["both", "query", "key"] = "both"
     landmark_tree_v2_chunk_frames: int | None = None
     landmark_tree_v2_fanout_mode: Literal[
-        "power_of_two_fanout", "arbitrary_fanout"
+        "power_of_two_fanout", "arbitrary_fanout", "power_of_two_arbitrary_final"
     ] = "power_of_two_fanout"
 
     def __post_init__(self):
@@ -433,12 +430,8 @@ class _H3SparseProcessor:
             tensor.index_select(1, permutation).permute(0, 2, 1, 3)
             for tensor in (query, key, value)
         )
-        if not _SOL_LAYOUT_FAST:
-            q, k, v = (tensor.contiguous() for tensor in (q, k, v))
         output = _sol_attention(controller, q, k, v, layout, self.layer,
-                                return_bthd=_SOL_LAYOUT_FAST)
-        if not _SOL_LAYOUT_FAST:
-            output = output.permute(0, 2, 1, 3)
+                                return_bthd=True)
         output = output.index_select(1, layout.inverse_permutation)
         output = output.flatten(2, 3).type_as(query)
         output = attn.to_out[0](output)

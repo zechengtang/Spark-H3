@@ -28,9 +28,18 @@ def test_sol_layout_roundtrip_exact(monkeypatch,fused,context,reblock):
     attn=types.SimpleNamespace(heads=heads,fused_projections=fused,to_qkv=linear(3*hidden),to_q=linear(hidden),to_k=linear(hidden),to_v=linear(hidden),norm_q=nn.Identity(),norm_k=nn.Identity(),to_out=[linear(hidden),nn.Identity()])
     processor=proc._H3SparseProcessor(0,None,controller)
     x=torch.randn(1,n,hidden,dtype=torch.bfloat16)
+    native_attention = proc._sol_attention
+    def checked_attention(controller, q, k, v, layout, layer, *, return_bthd=False):
+        assert return_bthd
+        assert all(t.permute(0,2,1,3).is_contiguous() for t in (q,k,v))
+        return native_attention(controller,q,k,v,layout,layer,return_bthd=True)
     with torch.no_grad():
-        monkeypatch.setattr(proc,'_SOL_LAYOUT_FAST',False)
-        before=processor(attn,x)
-        monkeypatch.setattr(proc,'_SOL_LAYOUT_FAST',True)
+        query,key,value = attn.to_qkv(x).chunk(3,-1) if fused else (attn.to_q(x),attn.to_k(x),attn.to_v(x))
+        q,k,v = [t.unflatten(-1,(heads,-1)).index_select(1,perm).permute(0,2,1,3).contiguous()
+                 for t in (query,key,value)]
+        expected = native_attention(controller,q,k,v,layout,0).permute(0,2,1,3)
+        expected = attn.to_out[1](attn.to_out[0](expected.index_select(1,inverse).flatten(2,3)))
+        monkeypatch.setattr(proc,'_sol_attention',checked_attention)
+        monkeypatch.setenv('H3_SOL_LAYOUT_FAST','0')
         after=processor(attn,x)
-    assert torch.equal(before,after)
+    assert torch.equal(expected,after)

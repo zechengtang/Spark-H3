@@ -36,7 +36,8 @@ def use_fused_node(node_tokens: int, children: int, dim: int) -> bool:
     return (
         FUSED_NODE_ENABLED
         and dim == 128
-        and children in (2, 4)
+        # Eight-child fusion wins for small nodes; larger shapes regress.
+        and (children in (2, 4) or (children == 8 and node_tokens <= 512))
         and _LANDMARKS <= node_tokens <= FUSED_NODE_MAX_TOKENS
     )
 
@@ -306,4 +307,3 @@ def fused_node_split(
         num_warps=(16 if landmarks >= 128 else 8 if landmarks == 64 else _default_warps(n)) if num_warps is None else num_warps,
     )
     return output
-

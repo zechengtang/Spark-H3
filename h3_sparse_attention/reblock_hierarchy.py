@@ -33,7 +33,7 @@ def resolve_final_fanout(children, final_fanout=None, *,
     if fanout_mode == 'power_of_two_fanout':
         inherited = normalize_final_fanout(children)
         if final_fanout is not None and normalize_final_fanout(final_fanout) != inherited:
-            raise ValueError('a separate final_fanout requires arbitrary_fanout mode')
+            raise ValueError('a separate final_fanout requires arbitrary_fanout or power_of_two_arbitrary_final mode')
         return inherited
     if final_fanout is not None:
         return normalize_final_fanout(final_fanout)
@@ -58,16 +58,16 @@ def _at_depth(schedule, depth):
 def _fanout_alias(children, fanout):
     if fanout is None:
         return children
-    if children != (8, 4) and children != fanout:
+    if children != (16,) and children != fanout:
         raise ValueError('use fanout or legacy children, not conflicting values')
     return fanout
 
-FANOUT_MODES = ('power_of_two_fanout', 'arbitrary_fanout')
+FANOUT_MODES = ('power_of_two_fanout', 'arbitrary_fanout', 'power_of_two_arbitrary_final')
 
 
 def normalize_fanout_mode(mode):
     if mode not in FANOUT_MODES:
-        raise ValueError('fanout_mode must be power_of_two_fanout or arbitrary_fanout')
+        raise ValueError(f'fanout_mode must be one of {FANOUT_MODES}')
     return mode
 
 def temporal_leaf_roots(grid_shape, minimum_frames):
@@ -130,7 +130,7 @@ def balanced_child_budgets(leaves, children, depth=0, final_fanout=None, *, root
 
 
 def power_of_two_child_budgets(leaves, children, depth=0, *, root_fanout=None):
-    """Legacy maximum-first power-of-two scheduler and complete splitter."""
+    """Maximum-first power-of-two budgets, also used for strict final rounds."""
     if leaves < 2:
         return (1,)
     limit = resolve_root_fanout(children, root_fanout) if depth == 0 else children[min(depth, len(children)-1)]
@@ -145,7 +145,7 @@ def power_of_two_child_budgets(leaves, children, depth=0, *, root_fanout=None):
 
 
 @lru_cache(maxsize=64)
-def tree_frontiers(leaves, children=(8,4), roots=None,
+def tree_frontiers(leaves, children=(16,), roots=None,
                    final_fanout=None, fanout_mode='power_of_two_fanout', *,
                    fanout=None, root_fanout=None, terminal_leaf_blocks=None):
     fanout_mode = normalize_fanout_mode(fanout_mode)
@@ -170,9 +170,14 @@ def tree_frontiers(leaves, children=(8,4), roots=None,
             if size==1:
                 next_level.append((start,end));continue
             offset=start
-            budgets = (power_of_two_child_budgets(size, children, depth, root_fanout=root_fanout)
-                       if fanout_mode == 'power_of_two_fanout'
-                       else balanced_child_budgets(size, children, depth, final_fanout, root_fanout=root_fanout))
+            # Only the arbitrary modes finish non-power-of-two nodes directly.
+            # Strict mode revisits unfinished children with fresh landmarks.
+            if fanout_mode != 'power_of_two_fanout' and size <= _at_depth(final_fanout, depth):
+                budgets = (1,) * size
+            elif fanout_mode in ('power_of_two_fanout', 'power_of_two_arbitrary_final'):
+                budgets = power_of_two_child_budgets(size, children, depth, root_fanout=root_fanout)
+            else:
+                budgets = balanced_child_budgets(size, children, depth, final_fanout, root_fanout=root_fanout)
             for count in budgets:
                 next_level.append((offset,offset+count));offset+=count
             assert offset==end
@@ -221,7 +226,7 @@ class ReblockHierarchy:
 
 
 @lru_cache(maxsize=128)
-def build_reblock_hierarchy(video_tokens, children=(8,4), *, grid_shape=None, minimum_frames=0,
+def build_reblock_hierarchy(video_tokens, children=(16,), *, grid_shape=None, minimum_frames=0,
                             final_fanout=None, fanout_mode='power_of_two_fanout',
                             fanout=None, root_fanout=None, terminal_leaf_blocks=None):
     fanout_mode = normalize_fanout_mode(fanout_mode)

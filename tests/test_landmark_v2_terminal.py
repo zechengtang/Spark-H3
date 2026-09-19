@@ -6,12 +6,54 @@ from h3_sparse_attention.landmark_tree_v2 import recursive_landmark_tree_v2_refe
 from h3_sparse_attention.reblock_hierarchy import build_reblock_hierarchy
 
 
+def test_eight_child_fusion_dispatch_limits(monkeypatch):
+    from h3_sparse_attention import landmark_v2_fused_node as fused
+    monkeypatch.setattr(fused, 'FUSED_NODE_ENABLED', True)
+    monkeypatch.setattr(fused, 'FUSED_NODE_MAX_TOKENS', 1024)
+    assert fused.use_fused_node(512, 8, 128)
+    assert not fused.use_fused_node(576, 8, 128)
+    assert not fused.use_fused_node(1024, 16, 128)
+    assert fused.use_fused_node(1024, 4, 128)
+    monkeypatch.setattr(fused, 'FUSED_NODE_MAX_TOKENS', 256)
+    assert not fused.use_fused_node(512, 8, 128)
+    monkeypatch.setattr(fused, 'FUSED_NODE_ENABLED', False)
+    assert not fused.use_fused_node(256, 4, 128)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
+def test_eight_child_fusion_graph_matches_unfused(monkeypatch):
+    from h3_sparse_attention import landmark_tree_v2 as tree
+    from h3_sparse_attention import landmark_v2_fused_node as fused
+    monkeypatch.setattr(fused, 'FUSED_NODE_ENABLED', True)
+    monkeypatch.setattr(fused, 'FUSED_NODE_MAX_TOKENS', 1024)
+    torch.manual_seed(42)
+    n = 512 + 17
+    samples = torch.randn(8, n, 128, device='cuda', dtype=torch.bfloat16)
+    plans = []
+    for enabled in (False, True):
+        monkeypatch.setattr(tree, '_use_fused_node', fused.use_fused_node if enabled else lambda *args: False)
+        plan = tree.PreparedLandmarkTreeV2Permutation(
+            batch=8, tokens=n, dim=128, grid_shape=(1,1,n), device='cuda', fanout=16)
+        plan.run(samples)
+        plan.run(samples)
+        assert plan.graph_active
+        plans.append(plan)
+    for values in (samples, torch.randn_like(samples), torch.zeros_like(samples)):
+        outputs = []
+        for plan in plans:
+            perm, inv = plan.run(values)
+            assert torch.equal(perm.gather(1, inv), torch.arange(n, device='cuda')[None].expand_as(perm))
+            outputs.append(perm.clone())
+        assert torch.equal(*outputs)
+
+
 @pytest.mark.parametrize('leaves',range(1,17))
-def test_small_node_finishes_in_one_outer_round(leaves):
+@pytest.mark.parametrize('mode', ['power_of_two_arbitrary_final', 'arbitrary_fanout'])
+def test_small_node_finishes_in_one_outer_round(leaves, mode):
     n=leaves*64
     result=recursive_landmark_tree_v2_reference(
         torch.zeros(1,n,4),grid_shape=(1,1,n),max_children=8,
-        fanout_mode='arbitrary_fanout', final_fanout=16)
+        fanout_mode=mode, final_fanout=16)
     assert len(result.split_stats)==int(leaves>1)
     if leaves>1:
         assert result.split_stats[0].children==leaves
@@ -46,8 +88,29 @@ def test_temporal_hierarchy_publishes_finished_small_nodes():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(),reason='CUDA required')
-# Production dispatch fuses only two- and four-child nodes.
-@pytest.mark.parametrize('leaves',[2,4])
+@pytest.mark.parametrize('leaves', [3, 6, 12])
+def test_power_terminal_graph_matches_arbitrary_split(leaves):
+    from h3_sparse_attention.landmark_tree_v2 import PreparedLandmarkTreeV2Permutation
+    torch.manual_seed(42)
+    n=leaves*64+17
+    samples=torch.randn(1,n,128,device='cuda',dtype=torch.bfloat16)
+    outputs=[]
+    for mode in ('power_of_two_arbitrary_final', 'arbitrary_fanout'):
+        plan=PreparedLandmarkTreeV2Permutation(
+            batch=1,tokens=n,dim=128,grid_shape=(1,1,n),device='cuda',
+            fanout=8,final_fanout=16,fanout_mode=mode)
+        plan.run(samples)
+        perm,inv=plan.run(samples)
+        assert plan.graph_active
+        assert plan.hierarchy.budgets(0,leaves)==(1,)*leaves
+        assert torch.equal(perm.gather(1,inv),torch.arange(n,device='cuda')[None])
+        outputs.append(perm.clone())
+    assert torch.equal(*outputs)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(),reason='CUDA required')
+# Production dispatch also fuses eight-child nodes up to 512 tokens.
+@pytest.mark.parametrize('leaves',[2,4,8])
 def test_fused_terminal_ties_and_stable_parent_order(leaves):
     from h3_sparse_attention.landmark_v2_fused_node import fused_node_split
     n=leaves*64;tokens=n+67

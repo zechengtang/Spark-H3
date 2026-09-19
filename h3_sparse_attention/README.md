@@ -94,11 +94,23 @@ publish the hierarchy required by reweighting. Select
 counts. `landmark_tree_v2_fanout` is an alias for `landmark_tree_v2_children`;
 `landmark_tree_v2_root_fanout` and `landmark_tree_v2_final_fanout` independently
 control the first nonfinal and final rounds. Both default to inheriting the
-ordinary fanout. Reweighting follows the actual reblocking hierarchy. Cosine scoring
+ordinary fanout (16 by default). The default `power_of_two_fanout` uses the
+original strict power-of-two policy in every round, including final nodes;
+its final fanout must inherit or equal the ordinary fanout (16/16/16 by default).
+Select `power_of_two_arbitrary_final` explicitly for power-of-two nonfinal
+rounds followed by arbitrary final splits. `arbitrary_fanout` uses balanced
+arbitrary child counts throughout. Both arbitrary modes allow a separate final fanout.
+Arbitrary final splits can change the resulting token grouping compared with the former
+strictly power-of-two tree; it is not a bitwise-equivalent kernel optimization.
+Small-node kernel fusion remains available to all three modes.
+Automatic fusion includes eight-child splits up to 512 tokens, alongside
+two-/four-child splits up to the configured fused-node size limit (1024 by
+default). The fusion enable switch and size limit still apply to every case.
+Reweighting follows the actual reblocking hierarchy. Cosine scoring
 defaults to normalized FP16; `H3_LMV2_COS_PRECISION` selects other precision modes.
 
-Sol and Spark now avoid redundant Q/K/V layout copies. Set `H3_SOL_LAYOUT_FAST=0`
-before importing the package to use the comparison path. Optional
+Sol and Spark always avoid redundant Q/K/V layout copies; the former
+`H3_SOL_LAYOUT_FAST` comparison switch is no longer used. Optional
 `sol_route_global_weighted_mean=True` enables global weighted Top-K routing;
 `sol_route_global_weighted_side` selects `both`, `query`, or `key`.
 
