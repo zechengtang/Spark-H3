@@ -51,11 +51,10 @@ The approximation branch is the same as Sol-Attn's mean-pooled approximation. Th
 
 The first 4 of 19 denoising steps and the first attention layer use dense attention. We then replace only the baseline's fixed block partitioning with Spark-Reblock using 8-way recursive splitting, keeping all other settings unchanged.
 
-| Method | 1 - sparsity ↓ | Attention-mass recall ↑ | PSNR dB ↑ | SSIM ↑ | LPIPS ↓ |
+| Method | density ↓ | Attention-mass recall ↑ | PSNR dB ↑ | SSIM ↑ | LPIPS ↓ |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | BSA | 10.00% | 68.61% | 17.68 | 0.64 | 0.30 |
 | BSA + Reblock | 10.00% | 82.69% | 21.03 | 0.74 | 0.19 |
-
 At a Top-K attention budget of **10%**, Spark-Reblock increases attention-mass recall by **14.08 percentage points**. It also improves mean PSNR by **3.35 dB** and mean SSIM by **0.10**, and reduces mean LPIPS by **0.12**. These results demonstrate the benefits of adaptive block partitioning over fixed block partitioning at the same attention budget.
 
 ## Spark-Reweight
@@ -113,26 +112,28 @@ V1 Dense + Spark-H3 uses 90% sparsity. All examples use 1344×768 resolution, an
 
 ## Benchmark Results
 
-We compare Dense, Sol-Attn, Sol-Attn + Reblock + Reweight, and Spark-H3. Quality is evaluated on vbench prompts using 19 denoising steps, 1344×768 resolution and 240 frames at 24 fps. Sol-Attn uses official setting. Sol-Attn + Reblock + Reweight uses global reweight; Spark-H3 uses 90% sparse BSA plus reblock and global reweight.
+We compare Dense, Sol-Attn, Sol-Attn + Reblock + Reweight, and two Spark-H3 variants. Quality is evaluated on vbench prompts using 19 denoising steps, 1344×768 resolution and 240 frames at 24 fps. Sol-Attn uses official setting. Sol-Attn + Reblock + Reweight uses global reweight; Spark-H3-10pct uses 90% sparse BSA plus reblock and global reweight, and Spark-H3-20pct uses an 80% sparse budget with the same reblock and global reweight. Paired metrics are computed against dense references regenerated on September 20, 2026 after a provenance audit; denoising times for Dense, Sol-H3, Spark-H3-10pct and Spark-H3-20pct are warmup-excluded synchronized means over the same 35 prompts.
 
-| Method | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ | Attn<br>speedup ↑ | DiT<br>speedup ↑ | 1 - sparsity ↓ | Denoising<br>time (s) ↓ |
+| Method | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ | Attn<br>speedup ↑ | DiT<br>speedup ↑ | density ↓ | Denoising<br>time (s) ↓ |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Dense | ∞ | 1.00 | 0.00 | 1.00× | 1.00× | 100.00% | 578.22 |
-| Sol-H3 | 19.64 | 0.69 | 0.23 | 3.64× | 1.63× | — | 354.21 |
-| Sol-H3 + Reblock + Reweight | 23.55 | 0.80 | 0.14 | 2.75× | 1.48× | — | 391.54 |
-| Spark-H3 | 21.91 | 0.76 | 0.17 | 4.12× | 1.69× | 10% | 342.62 |
+| Dense | ∞ | 1.00 | 0.00 | 1.00× | 1.00× | 100.00% | 582.05 |
+| Sol-H3 | 20.36 | 0.71 | 0.20 | 3.64× | 1.59× | — | 364.93 |
+| Sol-H3 + Reblock + Reweight | 25.92 | 0.86 | 0.09 | 2.75× | 1.49× | — | 391.54 |
+| Spark-H3-10pct | 23.30 | 0.80 | 0.14 | 4.12× | 1.70× | 10% | 341.71 |
+| Spark-H3-20pct | 25.38 | 0.85 | 0.09 | — | 1.54× | 20% | 378.21 |
 
 | Method | Subject<br>consistency ↑ | Background<br>consistency ↑ | Motion<br>smoothness ↑ | Imaging<br>quality ↑ | Aesthetic<br>quality ↑ |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Dense | 90.52 | 94.01 | 99.02 | 72.12 | 67.89 |
-| Sol-H3 | 90.47 | 94.18 | 98.96 | 72.15 | 67.53 |
+| Dense | 90.75 | 93.88 | 99.02 | 72.14 | 67.59 |
+| Sol-H3 | 91.14 | 94.10 | 98.96 | 72.12 | 67.49 |
 | Sol-H3 + Reblock + Reweight | 90.83 | 94.09 | 99.02 | 72.03 | 67.92 |
-| Spark-H3 | 90.64 | 93.91 | 99.02 | 71.76 | 68.12 |
+| Spark-H3-10pct | 90.77 | 94.24 | 99.01 | 71.81 | 68.22 |
+| Spark-H3-20pct | 90.92 | 94.25 | 99.01 | 72.08 | 67.73 |
 
 
 ## Visual Comparisons
 
-Dense and Spark-H3 use matching prompts and seeds. These examples use the same Spark-H3 configuration and generation run as the benchmark tables above. Each video shows its own measured denoising time, that is, the time of DiT computation.
+Dense and Spark-H3-10pct use matching prompts and seeds. These examples use the same Spark-H3-10pct configuration and generation run as the benchmark tables above. Each video shows its own measured denoising time, that is, the time of DiT computation.
 
 <!-- VIDEO_GALLERY -->
 

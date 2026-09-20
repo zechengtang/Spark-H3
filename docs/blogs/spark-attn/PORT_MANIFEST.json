@@ -8,7 +8,8 @@
       "source": "docs/blogs/landmark_tree_v2/README.md",
       "destination": "docs/blogs/spark-attn/README.md",
       "source_sha256": "318c516ec967bb3ded1061bc97366bf0459dda010995dd688a6de6476debb76f",
-      "adapted_sha256": "318c516ec967bb3ded1061bc97366bf0459dda010995dd688a6de6476debb76f"
+      "adapted_sha256": "2b81617e93e80fe4de9a98c20ca2322cb437357a12674508136d073597883329",
+      "note": "Diverged intentionally on 2026-09-21: corrected benchmark tables (regenerated dense references, Spark-H3-10pct/20pct rename, density column)."
     },
     {
       "source": "docs/blogs/landmark_tree_v2/preview.py",
@@ -26,7 +27,8 @@
       "source": "docs/blogs/landmark_tree_v2/gallery.json",
       "destination": "docs/blogs/spark-attn/gallery.json",
       "source_sha256": "b57cfc0ba406d27077ab6d6a2fa91771ec8bfdca53d52ee481d23459db2b7ac1",
-      "adapted_sha256": "9262c49616ea55118f4ee5acf95fc7c18b932b75f9dc66dbdb8013f0faa79069"
+      "adapted_sha256": "959d15d1df2e5bc400dede91eaf18a7e17d5aa8b9b7049a0c22f8fb310c7ec86",
+      "note": "Rebuilt 2026-09-21: ours side now the 2026-09-20 Spark-H3-10pct run; dense case 23 re-encoded from the regenerated archive."
     },
     {
       "source": "docs/blogs/landmark_tree_v2/results_50prompt.json",
@@ -123,6 +125,12 @@
       "destination": ".github/workflows/deploy-blog.yml",
       "source_sha256": "7eedac5e3105962ffebf3def3159d23c835cba514d4f5dcc67ba468ea1db7d30",
       "adapted_sha256": "7eedac5e3105962ffebf3def3159d23c835cba514d4f5dcc67ba468ea1db7d30"
+    },
+    {
+      "source": "(local addition, adapted from MiniMax-H3-Sparse docs/blogs/landmark_tree_v2/prepare_gallery.py)",
+      "destination": "docs/blogs/spark-attn/prepare_gallery.py",
+      "source_sha256": null,
+      "adapted_sha256": "522e8d863862e17fabcc7601a749823bf70a09a32fc07b8dca6ebf5d2edcc59c"
     }
   ],
   "adaptations": [

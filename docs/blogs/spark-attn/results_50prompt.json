@@ -18,11 +18,11 @@
     },
     "dense_manifest": {
       "path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/generation_manifest.json",
-      "sha256": "314efba9734f19421ab39e07d6be9c5f7457a6c9b557fe514486df2e624c567b"
+      "sha256": "448c34053a9d0dc5b4449b9bcd88b90ad2064de1eeae4490195e2791c17e96ce"
     },
     "sol_manifest": {
       "path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/sol/generation_manifest.json",
-      "sha256": "b719781a2ceafd61a4157d8c9005a56f37d7f31f40dca908e1a05246b035e776"
+      "sha256": "6781f46038ee1d424ae9bcf893c3b9246aaaaae8b8164508af26db1e143263f7"
     },
     "reblock_manifest": {
       "path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/sol_lmv2_dir_raw_raw/generation_manifest.json",
@@ -63,6 +63,30 @@
     "tau1_reweight_protocol": {
       "path": "/autodl-fs/data/h3_repos/MiniMax-H3-Sparse/reports/tau1_global_reweight_fanout16_16_8_50prompt_20260918/protocol.json",
       "sha256": "b99e73bc654446d8bffc2f1e548c35f9ff69e778028594a9392262821771e005"
+    },
+    "spark50_results": {
+      "path": "/autodl-fs/data/h3_experiments/topk_reblock_reweight_50prompt_20260920/results.json",
+      "sha256": "4d6ddac4a0ce899c9e2fbcce1e05221d69848ba3b956186089a4fe46554de244"
+    },
+    "spark50_quality": {
+      "path": "/autodl-fs/data/h3_experiments/topk_reblock_reweight_50prompt_20260920/quality_results.json",
+      "sha256": "93f6f7af3c8a0df31275e301329165b540aa5666e2e58dbbbf49b43368c45283"
+    },
+    "spark50_vbench": {
+      "path": "/autodl-fs/data/h3_experiments/topk_reblock_reweight_50prompt_20260920/vbench/results.json",
+      "sha256": "74418024c9406c60bda09b3845b128240ac202c9292c36cc1abc4dfb3bafef67"
+    },
+    "matched_35case_timing": {
+      "path": "/autodl-fs/data/h3_experiments/topk_reblock_reweight_50prompt_20260920/timing_35case.json",
+      "sha256": "ee35ca287418c8eb2ead1cfa9cbbf316fb445800f730455cd13857df7901bb7b"
+    },
+    "solrr_quality_rescore": {
+      "path": "/autodl-fs/data/h3_experiments/topk_reblock_reweight_50prompt_20260920/solrr_quality_work/sol_reblock_reweight_quality_results.json",
+      "sha256": "5262df4e7e8a0122457b0313170d092bde379b46b2feb98ec81d21571df3b1f9"
+    },
+    "sol_quality_rescore": {
+      "path": "/autodl-fs/data/h3_experiments/topk_reblock_reweight_50prompt_20260920/sol_quality_work/sol_quality_results.json",
+      "sha256": "9ed565b6a17a6f5e865007d6c0edb6caf2f46b0da76ed68b5f0fe2fcf5e8fd22"
     }
   },
   "prompt_count": 50,
@@ -78,49 +102,49 @@
   "rows": [
     {
       "method": "dense",
-      "denoise_seconds": 578.2155293717888,
+      "denoise_seconds": 582.05,
       "psnr_db": null,
       "ssim": 1.0,
       "lpips": 0.0,
       "sampled_exact_ratio": 1.0,
       "vbench_percent": {
-        "subject_consistency": 90.51701131733819,
-        "background_consistency": 94.00763656011569,
-        "motion_smoothness": 99.01531262174242,
-        "imaging_quality": 72.1241820184808,
-        "aesthetic_quality": 67.88951895738903
+        "subject_consistency": 90.7546,
+        "background_consistency": 93.8801,
+        "motion_smoothness": 99.0236,
+        "imaging_quality": 72.137,
+        "aesthetic_quality": 67.5914
       },
       "display_speedup_vs_dense": 1.0,
       "v2v_retained_ratio": 1.0,
-      "label": "Dense"
+      "label": "Dense",
+      "timing_scope": "Matched 35-prompt warmup-excluded synchronized denoising mean (2026-09-20/21 runs); 25 cases regenerated 2026-09-20 after the provenance audit."
     },
     {
       "method": "sol",
-      "denoise_seconds": 354.20700885762926,
-      "psnr_db": 19.63528906529246,
-      "ssim": 0.6890547980840007,
-      "lpips": 0.22946012938581406,
+      "denoise_seconds": 364.93,
+      "psnr_db": 20.3641,
+      "ssim": 0.712337,
+      "lpips": 0.20378,
       "sampled_exact_ratio": 0.2631689104437828,
       "vbench_percent": {
-        "subject_consistency": 90.46741504237743,
-        "background_consistency": 94.17724308931209,
-        "motion_smoothness": 98.96456783101252,
-        "imaging_quality": 72.14763348395364,
-        "aesthetic_quality": 67.52510274711409
+        "subject_consistency": 91.14,
+        "background_consistency": 94.1019,
+        "motion_smoothness": 98.9553,
+        "imaging_quality": 72.1197,
+        "aesthetic_quality": 67.4864
       },
-      "display_speedup_vs_dense": 1.632422608566162,
+      "display_speedup_vs_dense": 1.595,
       "v2v_retained_ratio": null,
-      "denoise_prompt_count": 6,
       "attention_speedup": 3.642199290358263,
-      "timing_scope": "Warmed six-prompt denoising; single-input full-attention benchmark across six GPUs. Quality retained from historical 50-prompt run.",
-      "label": "Sol-H3"
+      "label": "Sol-H3",
+      "timing_scope": "Matched 35-prompt warmup-excluded synchronized denoising mean; 25 cases regenerated 2026-09-20; quality re-scored video-to-video against the regenerated dense references."
     },
     {
       "method": "global_tau1_16_16_8",
       "denoise_seconds": 391.54366650380194,
-      "psnr_db": 23.553085693521126,
-      "ssim": 0.7955206055045128,
-      "lpips": 0.14129274449800142,
+      "psnr_db": 25.9154,
+      "ssim": 0.858375,
+      "lpips": 0.088782,
       "vbench_percent": {
         "subject_consistency": 90.82575503779043,
         "background_consistency": 94.0906792240955,
@@ -132,29 +156,51 @@
       "v2v_retained_ratio": null,
       "sampled_exact_ratio": null,
       "label": "Sol-H3 + Reblock + Reweight",
-      "display_speedup_vs_dense": 1.4767587343062647
+      "display_speedup_vs_dense": 1.4866,
+      "timing_scope": "Original 2026-09-18 50-prompt run; videos unchanged. Quality re-scored 2026-09-21 against the regenerated dense references (previous paired metrics were deflated by stale Sept-1-generation references)."
     },
     {
-      "method": "global_16_16_8",
-      "denoise_seconds": 342.61837459929285,
-      "psnr_db": 21.911723136882074,
-      "ssim": 0.7553254066854715,
-      "lpips": 0.17466397655103355,
+      "method": "topk10_reblock_global_reweight",
+      "denoise_seconds": 341.71,
+      "psnr_db": 23.3006,
+      "ssim": 0.795121,
+      "lpips": 0.139424,
       "sampled_exact_ratio": null,
       "vbench_percent": {
-        "subject_consistency": 90.63997106839281,
-        "background_consistency": 93.9125701355987,
-        "motion_smoothness": 99.02231230910935,
-        "imaging_quality": 71.75998016658582,
-        "aesthetic_quality": 68.12474241382198
+        "subject_consistency": 90.7668,
+        "background_consistency": 94.2406,
+        "motion_smoothness": 99.0147,
+        "imaging_quality": 71.8083,
+        "aesthetic_quality": 68.2241
       },
-      "display_speedup_vs_dense": 1.6876372437643985,
+      "display_speedup_vs_dense": 1.7033,
       "attention_speedup": 4.12086129940047,
       "v2v_retained_ratio": 0.09964726631393298,
-      "label": "Spark-H3"
+      "label": "Spark-H3-10pct",
+      "timing_scope": "Matched 35-prompt subset of the 2026-09-20 50-prompt warmup-excluded run."
+    },
+    {
+      "method": "topk20_reblock_global_reweight",
+      "denoise_seconds": 378.21,
+      "psnr_db": 25.3828,
+      "ssim": 0.851586,
+      "lpips": 0.09372,
+      "sampled_exact_ratio": null,
+      "vbench_percent": {
+        "subject_consistency": 90.9184,
+        "background_consistency": 94.2537,
+        "motion_smoothness": 99.0125,
+        "imaging_quality": 72.0817,
+        "aesthetic_quality": 67.7257
+      },
+      "display_speedup_vs_dense": 1.539,
+      "attention_speedup": null,
+      "v2v_retained_ratio": 0.2,
+      "label": "Spark-H3-20pct",
+      "timing_scope": "Matched 35-prompt subset of the 2026-09-20 50-prompt warmup-excluded run."
     }
   ],
-  "speedup_definition": "Historical Dense mean denoise seconds divided by each method\u2019s measured denoise seconds; cross-run comparison.",
+  "speedup_definition": "Dense matched 35-prompt mean denoise seconds (582.05) divided by each method's measured denoise seconds; Sol-H3 + Reblock + Reweight keeps its 2026-09-18 50-prompt timing.",
   "additional_vbench_rows": [
     {
       "method": "global_16_16_8",
@@ -189,5 +235,6 @@
       "display_speedup_vs_dense": 1.6070280917227802
     }
   ],
-  "display_density_definition": "Retained video-to-video block ratio excluding context, dense warmup and dense layers. Historical packed ratios are not substituted for missing v2v measurements."
+  "display_density_definition": "Retained video-to-video block ratio excluding context, dense warmup and dense layers. Historical packed ratios are not substituted for missing v2v measurements.",
+  "correction_note": "2026-09-21: dense/sol references for 25 remapped cases (Sept-1 code generation, unreproducible) were regenerated with the Sept-13 snapshot pipeline; all paired metrics re-scored against them. Previous PSNR/SSIM/LPIPS values were deflated by the generation drift of the stale references. Spark-H3 renamed to Spark-H3-10pct; Spark-H3-20pct added; the \"1 - sparsity\" column is now \"density\"."
 }
