@@ -114,10 +114,12 @@
         "imaging_quality": 72.137,
         "aesthetic_quality": 67.5914
       },
-      "display_speedup_vs_dense": 1.0,
       "v2v_retained_ratio": 1.0,
       "label": "Dense",
-      "timing_scope": "Matched 35-prompt warmup-excluded synchronized denoising mean (2026-09-20/21 runs); 25 cases regenerated 2026-09-20 after the provenance audit."
+      "timing_scope": "Matched 35-prompt warmup-excluded synchronized denoising mean (2026-09-20/21 runs); 25 cases regenerated 2026-09-20 after the provenance audit.",
+      "nfe": 19,
+      "seconds_per_nfe": 30.63,
+      "per_nfe_dit_speedup": 1.0
     },
     {
       "method": "sol",
@@ -133,11 +135,13 @@
         "imaging_quality": 72.1197,
         "aesthetic_quality": 67.4864
       },
-      "display_speedup_vs_dense": 1.595,
       "v2v_retained_ratio": null,
       "attention_speedup": 3.642199290358263,
       "label": "Sol-H3",
-      "timing_scope": "Matched 35-prompt warmup-excluded synchronized denoising mean; 25 cases regenerated 2026-09-20; quality re-scored video-to-video against the regenerated dense references."
+      "timing_scope": "Matched 35-prompt warmup-excluded synchronized denoising mean; 25 cases regenerated 2026-09-20; quality re-scored video-to-video against the regenerated dense references.",
+      "nfe": 19,
+      "seconds_per_nfe": 19.21,
+      "per_nfe_dit_speedup": 1.595
     },
     {
       "method": "topk10_reblock_global_reweight",
@@ -153,11 +157,13 @@
         "imaging_quality": 71.8083,
         "aesthetic_quality": 68.2241
       },
-      "display_speedup_vs_dense": 1.7033,
       "attention_speedup": 4.12086129940047,
       "v2v_retained_ratio": 0.09964726631393298,
       "label": "Spark-H3-10pct",
-      "timing_scope": "Matched 35-prompt subset of the 2026-09-20 50-prompt warmup-excluded run."
+      "timing_scope": "Matched 35-prompt subset of the 2026-09-20 50-prompt warmup-excluded run.",
+      "nfe": 19,
+      "seconds_per_nfe": 17.98,
+      "per_nfe_dit_speedup": 1.7033
     },
     {
       "method": "topk20_reblock_global_reweight",
@@ -173,14 +179,16 @@
         "imaging_quality": 72.0817,
         "aesthetic_quality": 67.7257
       },
-      "display_speedup_vs_dense": 1.539,
       "attention_speedup": null,
       "v2v_retained_ratio": 0.2,
       "label": "Spark-H3-20pct",
-      "timing_scope": "Matched 35-prompt subset of the 2026-09-20 50-prompt warmup-excluded run."
+      "timing_scope": "Matched 35-prompt subset of the 2026-09-20 50-prompt warmup-excluded run.",
+      "nfe": 19,
+      "seconds_per_nfe": 19.91,
+      "per_nfe_dit_speedup": 1.539
     }
   ],
-  "speedup_definition": "Dense matched 35-prompt mean denoise seconds (582.05) divided by each method's measured denoise seconds.",
+  "speedup_definition": "per-NFE DiT speedup (OpenVDN convention): all methods run the same 19 NFE (20 requested steps), so the speedup equals the per-NFE latency ratio; dense mean 582.05s / 19 NFE = 30.63 s/NFE over the matched 35-prompt set.",
   "additional_vbench_rows": [
     {
       "method": "global_16_16_8",
@@ -216,5 +224,5 @@
     }
   ],
   "display_density_definition": "Retained video-to-video block ratio excluding context, dense warmup and dense layers. Historical packed ratios are not substituted for missing v2v measurements.",
-  "correction_note": "2026-09-21: dense/sol references for 25 remapped cases (Sept-1 code generation, unreproducible) were regenerated with the Sept-13 snapshot pipeline; all paired metrics re-scored against them. Previous PSNR/SSIM/LPIPS values were deflated by the generation drift of the stale references. Spark-H3 renamed to Spark-H3-10pct; Spark-H3-20pct added; the \"1 - sparsity\" column is now \"density\". The Sol-H3 + Reblock + Reweight row was dropped from the tables on 2026-09-21; its rescore remains in sources (solrr_quality_rescore)."
+  "correction_note": "2026-09-21: dense/sol references for 25 remapped cases (Sept-1 code generation, unreproducible) were regenerated with the Sept-13 snapshot pipeline; all paired metrics re-scored against them. Previous PSNR/SSIM/LPIPS values were deflated by the generation drift of the stale references. Spark-H3 renamed to Spark-H3-10pct; Spark-H3-20pct added; the \"1 - sparsity\" column is now \"density\". The Sol-H3 + Reblock + Reweight row was dropped from the tables on 2026-09-21; its rescore remains in sources (solrr_quality_rescore). DiT speedup renamed to per-NFE DiT speedup with s/NFE values added (OpenVDN-style NFE normalization)."
 }
