@@ -8,7 +8,7 @@
       "source": "docs/blogs/landmark_tree_v2/README.md",
       "destination": "docs/blogs/spark-attn/README.md",
       "source_sha256": "318c516ec967bb3ded1061bc97366bf0459dda010995dd688a6de6476debb76f",
-      "adapted_sha256": "b311792daffacf3398ae1add5107b683291c4f1602dc3f59848a28b0627d0edd",
+      "adapted_sha256": "bb04a192e4191d6fa10389336866995e416cab638f0a4319f9b5015d7555e14c",
       "note": "Diverged intentionally on 2026-09-21: corrected benchmark tables (regenerated dense references, Spark-H3-10pct/20pct rename, density column)."
     },
     {

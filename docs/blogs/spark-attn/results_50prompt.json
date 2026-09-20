@@ -119,7 +119,7 @@
       "timing_scope": "Matched 35-prompt warmup-excluded synchronized denoising mean (2026-09-20/21 runs); 25 cases regenerated 2026-09-20 after the provenance audit.",
       "nfe": 19,
       "seconds_per_nfe": 30.63,
-      "per_nfe_dit_speedup": 1.0
+      "dit_speedup": 1.0
     },
     {
       "method": "sol",
@@ -141,7 +141,7 @@
       "timing_scope": "Matched 35-prompt warmup-excluded synchronized denoising mean; 25 cases regenerated 2026-09-20; quality re-scored video-to-video against the regenerated dense references.",
       "nfe": 19,
       "seconds_per_nfe": 19.21,
-      "per_nfe_dit_speedup": 1.595
+      "dit_speedup": 1.595
     },
     {
       "method": "topk10_reblock_global_reweight",
@@ -163,7 +163,7 @@
       "timing_scope": "Matched 35-prompt subset of the 2026-09-20 50-prompt warmup-excluded run.",
       "nfe": 19,
       "seconds_per_nfe": 17.98,
-      "per_nfe_dit_speedup": 1.7033
+      "dit_speedup": 1.7033
     },
     {
       "method": "topk20_reblock_global_reweight",
@@ -185,10 +185,10 @@
       "timing_scope": "Matched 35-prompt subset of the 2026-09-20 50-prompt warmup-excluded run.",
       "nfe": 19,
       "seconds_per_nfe": 19.91,
-      "per_nfe_dit_speedup": 1.539
+      "dit_speedup": 1.539
     }
   ],
-  "speedup_definition": "per-NFE DiT speedup (OpenVDN convention): all methods run the same 19 NFE (20 requested steps), so the speedup equals the per-NFE latency ratio; dense mean 582.05s / 19 NFE = 30.63 s/NFE over the matched 35-prompt set.",
+  "speedup_definition": "DiT speedup: ratio of total denoising wall times at identical NFE (19 actual evaluations = 20 requested steps for every method). With equal NFE the evaluation count cancels, so this equals the NFE-normalized per-step speedup in the OpenVDN convention. Dense reference: 582.05 s matched 35-prompt mean.",
   "additional_vbench_rows": [
     {
       "method": "global_16_16_8",
@@ -224,6 +224,6 @@
     }
   ],
   "display_density_definition": "Retained video-to-video block ratio excluding context, dense warmup and dense layers. Historical packed ratios are not substituted for missing v2v measurements.",
-  "correction_note": "2026-09-21: dense/sol references for 25 remapped cases (Sept-1 code generation, unreproducible) were regenerated with the Sept-13 snapshot pipeline; all paired metrics re-scored against them. Previous PSNR/SSIM/LPIPS values were deflated by the generation drift of the stale references. Spark-H3 renamed to Spark-H3-10pct; Spark-H3-20pct added; the \"1 - sparsity\" column is now \"density\". The Sol-H3 + Reblock + Reweight row was dropped from the tables on 2026-09-21; its rescore remains in sources (solrr_quality_rescore). DiT speedup renamed to per-NFE DiT speedup with s/NFE values added (OpenVDN-style NFE normalization).",
+  "correction_note": "2026-09-21: dense/sol references for 25 remapped cases (Sept-1 code generation, unreproducible) were regenerated with the Sept-13 snapshot pipeline; all paired metrics re-scored against them. Previous PSNR/SSIM/LPIPS values were deflated by the generation drift of the stale references. Spark-H3 renamed to Spark-H3-10pct; Spark-H3-20pct added; the \"1 - sparsity\" column is now \"density\". The Sol-H3 + Reblock + Reweight row was dropped from the tables on 2026-09-21; its rescore remains in sources (solrr_quality_rescore). DiT speedup column keeps its name; the text now states its equivalence to OpenVDN's NFE-normalized per-step speedup and lists s/NFE latencies.",
   "nfe_convention": "Actual model evaluations. The MiniMax-H3 scheduler builds N sigma grid points (terminal zero included) and drives N-1 denoiser forwards, so requested-step labels are off by one: OpenVDN's \"50-NFE\" dense baseline runs the standard 50-step schedule = 49 forwards; our 19 NFE = 20 requested steps."
 }
