@@ -77,20 +77,14 @@ Default Spark settings match the source:
 
 - Native mean Top-K routing with ratio `0.1` and `gemm_radix` cutoffs.
 - Landmark-v2 Q/K reblocking using opposite second moments, cosine distance,
-  fanout 16 with `power_of_two_fanout` scheduling, 32 midpoint landmarks, and minimum 10-frame temporal groups.
+  fanout 16 with `power_of_two_fanout` scheduling, 32 midpoint landmarks, and no temporal grouping.
 - Query representatives selected from the reblocking hierarchy with target
   189 physical blocks and bounds 94–284. These are blocks per representative,
   not a fixed number of representatives; the hierarchy determines actual sizes.
 - Query-conditioned K/V and log-mass summaries merged with exact attention.
 - The positional local band is disabled after reblocking.
 
-The installer explicitly disables fixed temporal chunks (`landmark_tree_v2_chunk_frames=0`).
-To use fixed chunks, set `landmark_tree_v2_minimum_frames=0` and
-`landmark_tree_v2_chunk_frames` to the desired frame count and disable
-reweighting with `sol_virtual_query_target_blocks=None` and
-`sol_virtual_query_levels_up=None`. As in the source, fixed-chunk plans do not
-publish the hierarchy required by reweighting. Select
-`landmark_tree_v2_fanout_mode="arbitrary_fanout"` for balanced arbitrary child
+Select `landmark_tree_v2_fanout_mode="arbitrary_fanout"` for balanced arbitrary child
 counts. `landmark_tree_v2_fanout` is an alias for `landmark_tree_v2_children`;
 `landmark_tree_v2_root_fanout` and `landmark_tree_v2_final_fanout` independently
 control the first nonfinal and final rounds. Both default to inheriting the
@@ -121,11 +115,8 @@ that the integration replaces with dense attention.
 
 Configuration overrides are passed as keyword arguments, for example
 `sol_route_topk_ratio=0.2` or `sol_virtual_query_levels_up=2`. Setting levels-up
-automatically clears the default target-block setting; specifying both is an
-error. Small synthetic grids or grids that cannot form whole-frame,
-64-token-aligned temporal groups can explicitly use
-`landmark_tree_v2_minimum_frames=0`. The production default requires a compatible
-temporal grid, as in the source implementation.
+automatically clears the default target-block setting; specifying both is an error.
+
 
 SM120 BF16 uses fused reweighting automatically above 8192 packed tokens;
 smaller inputs use the streamed exact/skipped implementation.

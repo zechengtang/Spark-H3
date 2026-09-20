@@ -291,7 +291,6 @@ def _recursive_landmark_tree_v2(
     landmark_mode: str = "midpoint",
     landmark_count: int = 32,
     aggregation: str = "linear",
-    minimum_frames: int | None = None,
 ) -> LandmarkTreeV2Result:
     max_children = _normalize_fanout(max_children, fanout)
     fanout_mode = normalize_fanout_mode(fanout_mode)
@@ -344,20 +343,7 @@ def _recursive_landmark_tree_v2(
         )
     ]
     hierarchy = build_reblock_hierarchy(tokens, tuple(children_schedule), grid_shape=tuple(grid_shape),
-        minimum_frames=int(os.environ.get("H3_TEMPORAL_MIN_FRAMES", "0")) if minimum_frames is None else minimum_frames,
         final_fanout=final_fanout, root_fanout=root_fanout, fanout_mode=fanout_mode)
-    if hierarchy.minimum_frames:
-        if num_excluded or reuse_group4 or any(g != 1 for g in group_sizes):
-            raise ValueError("Temporal roots require complete video blocks and group size 1")
-        frontier = []
-        for start, end in hierarchy.roots:
-            if end-start == 1:
-                blocks[:,start] = active_root[:,start*64:end*64]
-            else:
-                frontier.append(_NodeGroup(
-                    indices=active_root[:,start*64:end*64].contiguous(), rows=rows,
-                    leaf_starts=torch.full_like(rows,start), leaf_budget=end-start,
-                    features=None))
     if active_leaves == 1:
         blocks[:, 0] = active_root
         frontier = []
@@ -663,7 +649,6 @@ def recursive_landmark_tree_v2_reference(
     landmark_mode: str = "midpoint",
     landmark_count: int = 32,
     aggregation: str = "linear",
-    minimum_frames: int | None = None,
 ) -> LandmarkTreeV2Result:
     """Direct PyTorch mean implementation used as the v2 correctness oracle."""
 
@@ -680,7 +665,6 @@ def recursive_landmark_tree_v2_reference(
         fanout_mode=fanout_mode, fanout=fanout, final_fanout=final_fanout, root_fanout=root_fanout,
         landmark_mode=landmark_mode, landmark_count=landmark_count,
         aggregation=aggregation,
-        minimum_frames=minimum_frames,
         distance=distance,
         order_mode=order_mode,
     )
@@ -704,7 +688,6 @@ def recursive_landmark_tree_v2_blocks(
     landmark_mode: str = "midpoint",
     landmark_count: int = 32,
     aggregation: str = "linear",
-    minimum_frames: int | None = None,
 ) -> LandmarkTreeV2Result:
     """Return strict 64-token leaves; defaults are single tokens, eight children and midpoint landmarks.
 
@@ -743,7 +726,6 @@ def recursive_landmark_tree_v2_blocks(
         fanout_mode=fanout_mode, fanout=fanout, final_fanout=final_fanout, root_fanout=root_fanout,
         landmark_mode=landmark_mode, landmark_count=landmark_count,
         aggregation=aggregation,
-        minimum_frames=minimum_frames,
         distance=distance,
         order_mode=order_mode,
     )
@@ -774,19 +756,9 @@ class PreparedLandmarkTreeV2Permutation:
         landmark_mode: str = "midpoint",
     landmark_count: int = 32,
         aggregation: str = "linear",
-        minimum_frames: int | None = None,
-        chunk_frames: int | None = None,
     ) -> None:
         if input_unit_means and metric_unit_means:
             raise ValueError("select only one unit-mean space")
-        self.minimum_frames = int(os.environ.get("H3_TEMPORAL_MIN_FRAMES", "0")) if minimum_frames is None else minimum_frames
-        if type(self.minimum_frames) is not int or self.minimum_frames < 0:
-            raise ValueError("minimum_frames must be a nonnegative integer")
-        self.chunk_frames = int(os.environ.get("H3_TEMPORAL_CHUNK_FRAMES", "0")) if chunk_frames is None else chunk_frames
-        if type(self.chunk_frames) is not int or self.chunk_frames < 0:
-            raise ValueError("chunk_frames must be a nonnegative integer")
-        if self.chunk_frames and self.minimum_frames:
-            raise ValueError("chunk and minimum temporal splitting are mutually exclusive")
         self.max_children = _normalize_fanout(max_children, fanout)
         self.fanout = self.max_children
         self.fanout_mode = normalize_fanout_mode(fanout_mode)
@@ -832,25 +804,6 @@ class PreparedLandmarkTreeV2Permutation:
         elif self.metric_unit_means:
             x = samples.float()
             fitting = (x / x.norm(dim=-1, keepdim=True).clamp_min(1e-12)).to(samples.dtype)
-        chunk_frames = self.chunk_frames
-        if chunk_frames:
-            if self.minimum_frames:
-                raise ValueError("chunk and minimum temporal splitting are mutually exclusive")
-            if self.initial_order != "flat":
-                raise ValueError("chunk splitting requires flat initial order")
-            from .landmark_chunk import chunk_permutation
-            permutation, inverse, stats, metadata = chunk_permutation(
-                samples, chunk_frames=chunk_frames, grid_shape=self.grid_shape,
-                fitting_samples=fitting, validate=False, optimized_means=True,
-                reuse_group4=False, distance=self.distance, order_mode=self.order_mode,
-                group_size=self.group_size, max_children=self.max_children,
-                fanout_mode=self.fanout_mode, final_fanout=self.final_fanout, root_fanout=self.root_fanout,
-                landmark_mode=self.landmark_mode, landmark_count=self.landmark_count,
-                aggregation=self.aggregation, minimum_frames=0)
-            self.split_count = len(stats)
-            self.hierarchy = None
-            self.chunk_metadata = metadata
-            return permutation, inverse
         result = _recursive_landmark_tree_v2(
             samples,
             grid_shape=self.grid_shape,
@@ -866,7 +819,6 @@ class PreparedLandmarkTreeV2Permutation:
             fanout_mode=self.fanout_mode, final_fanout=self.final_fanout, root_fanout=self.root_fanout,
             landmark_mode=self.landmark_mode, landmark_count=self.landmark_count,
             aggregation=self.aggregation,
-            minimum_frames=self.minimum_frames,
         )
         self.split_count = len(result.split_stats)
         self.hierarchy = result.hierarchy

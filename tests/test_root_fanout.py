@@ -44,13 +44,6 @@ def test_final_round_has_precedence_for_one_round_tree():
     assert h.budgets(0,14) == (1,)*14
 
 
-def test_root_applies_to_each_temporal_tree():
-    h = build_reblock_hierarchy(6*65*64, fanout=8, root_fanout=2,
-        grid_shape=(6,1,65*64), minimum_frames=1, fanout_mode='arbitrary_fanout')
-    assert len(h.roots)==6
-    assert h.budgets(0,65)==(33,32)
-
-
 @pytest.mark.parametrize('bad', [0,1,3,64,True,'8',()])
 def test_invalid_root_is_rejected(bad):
     with pytest.raises(ValueError,match='root_fanout'):
@@ -61,14 +54,13 @@ def test_configuration_defaults_and_roundtrip():
     cfg = H3SparseAttentionConfig.sol(20)
     assert cfg.landmark_tree_v2_root_fanout is None
     assert cfg.landmark_tree_v2_final_fanout is None
-    cfg = dataclasses.replace(cfg,landmark_tree_v2_fanout=8,
+    cfg = dataclasses.replace(cfg,landmark_tree_v2_children=None,landmark_tree_v2_fanout=8,
         landmark_tree_v2_root_fanout=16,landmark_tree_v2_fanout_mode='arbitrary_fanout')
     assert H3SparseAttentionConfig(**dataclasses.asdict(cfg)) == cfg
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(),reason='CUDA required')
-@pytest.mark.parametrize('chunk', [0,1])
-def test_processor_and_graph_forward_root_override(chunk):
+def test_processor_and_graph_forward_root_override():
     from types import SimpleNamespace
     import h3_sparse_attention.processor as proc
     import h3_sparse_attention.spark_integration as integration
@@ -77,11 +69,11 @@ def test_processor_and_graph_forward_root_override(chunk):
     layout=SimpleNamespace(grid=(1,1,n),video_tokens=n,sequence_length=n)
     cfg=H3SparseAttentionConfig.sol(20,sol_landmark_preprocess=True,
         sol_landmark_preprocess_version='v2',landmark_tree_v2_fanout=8,
-        landmark_tree_v2_root_fanout=16,landmark_tree_v2_chunk_frames=chunk,
+        landmark_tree_v2_root_fanout=16,
         landmark_tree_v2_fanout_mode='arbitrary_fanout')
     ctrl=proc._Controller(cfg)
     for _ in range(3):
         plan,_,perm,inv=integration._landmark_tree_v2_combined_permutations(ctrl,x,x,layout)
     assert plan.graph_active and plan.root_fanout==16 and plan.final_fanout==8
-    if not chunk:assert plan.hierarchy.budgets(0,65)==(8,8)+(7,)*7
+    assert plan.hierarchy.budgets(0,65)==(8,8)+(7,)*7
     assert torch.equal(perm.gather(1,inv),torch.arange(n,device='cuda').expand_as(perm))

@@ -1,14 +1,11 @@
-import os
 import pytest
 import torch
 from h3_sparse_attention import H3SparseAttentionConfig, install_h3_spark_attn
-from h3_sparse_attention.landmark_tree_v2 import PreparedLandmarkTreeV2Permutation
 from h3_sparse_attention.landmark_virtual_q import target_virtual_query_layout
 from h3_sparse_attention.reblock_hierarchy import build_reblock_hierarchy
 
 
-def test_installer_defaults_and_target_frontier(monkeypatch):
-    monkeypatch.setenv('H3_TEMPORAL_MIN_FRAMES','99')
+def test_installer_defaults_and_target_frontier():
     plugin=install_h3_spark_attn(object(),num_inference_steps=20)
     cfg=plugin.config
     assert cfg.method=='sol' and cfg.total_evaluations==19
@@ -17,11 +14,11 @@ def test_installer_defaults_and_target_frontier(monkeypatch):
     assert cfg.sol_virtual_query_target_blocks==189 and cfg.sol_virtual_query_levels_up is None
     assert not cfg.sol_local_blocks_enabled
     assert cfg.landmark_tree_v2_children==16 and cfg.landmark_tree_v2_landmark_mode=='midpoint'
-    assert cfg.landmark_tree_v2_landmark_count==32 and cfg.landmark_tree_v2_minimum_frames==10
-    assert os.environ['H3_TEMPORAL_MIN_FRAMES']=='99'
-    h=build_reblock_hierarchy(72576,cfg.landmark_tree_v2_children,grid_shape=(72,24,42),minimum_frames=cfg.landmark_tree_v2_minimum_frames)
+    assert cfg.landmark_tree_v2_landmark_count==32
+    h=build_reblock_hierarchy(72576,cfg.landmark_tree_v2_children,grid_shape=(72,24,42))
     layout=target_virtual_query_layout(72576,73565,hierarchy=h)
-    assert layout['metadata']['active_size_counts']=={12096:6}
+    assert h.roots==((0,1134),)
+    assert layout['metadata']['active_size_counts']=={4480:2,4544:14}
 
 
 def test_overrides_and_plain_sol_opt_in():
@@ -31,24 +28,6 @@ def test_overrides_and_plain_sol_opt_in():
     assert H3SparseAttentionConfig.sol(20).sol_virtual_query_target_blocks is None
     with pytest.raises(ValueError,match='choose either'):
         H3SparseAttentionConfig.spark(sol_virtual_query_levels_up=2,sol_virtual_query_target_blocks=189)
-    for bad in [-1,True,2.5]:
-        with pytest.raises(ValueError,match='minimum_frames'):
-            H3SparseAttentionConfig.spark(landmark_tree_v2_minimum_frames=bad)
-
-
-def test_prepared_minimum_is_per_instance(monkeypatch):
-    monkeypatch.setenv('H3_TEMPORAL_MIN_FRAMES','0')
-    monkeypatch.setenv('H3_TEMPORAL_CHUNK_FRAMES','0')
-    kwargs=dict(batch=1,tokens=1152,dim=4,grid_shape=(72,4,4),device=torch.device('cpu'),distance='euclidean')
-    temporal=PreparedLandmarkTreeV2Permutation(**kwargs,minimum_frames=10)
-    plain=PreparedLandmarkTreeV2Permutation(**kwargs,minimum_frames=0)
-    x=torch.randn(1,1152,4)
-    a,inv=temporal._compute(x);plain._compute(x)
-    assert len(temporal.hierarchy.roots)==6 and len(plain.hierarchy.roots)==1
-    assert torch.equal(a.gather(1,inv),torch.arange(1152)[None])
-    assert os.environ['H3_TEMPORAL_MIN_FRAMES']=='0'
-
-
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
 @pytest.mark.parametrize('fused', ['0', '1'])
 def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused):
@@ -68,8 +47,7 @@ def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused)
     with torch.no_grad():
         expected = model(x)
         with install_h3_spark_attn(model, num_inference_steps=3, warmup_percent=0,
-                                   sol_dense_layers=0, sol_route_topk_ratio=1.0,
-                                   landmark_tree_v2_minimum_frames=0) as plugin:
+                                   sol_dense_layers=0, sol_route_topk_ratio=1.0) as plugin:
             actual = model(x, token_tags=tags, position_ids=pos)
             torch.testing.assert_close(actual, expected, atol=.008, rtol=.025)
             stats = plugin.summary()

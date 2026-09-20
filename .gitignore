@@ -7,3 +7,5 @@ build/
 dist/
 /.claude/
 /.agents/
+reports/
+.ipynb_checkpoints/

@@ -5,9 +5,6 @@ from __future__ import annotations
 import math
 
 
-import os
-
-
 from typing import Any
 
 
@@ -282,8 +279,6 @@ def _landmark_tree_v2_combined_permutations(
     )
     plan_key = (
         "prepared_landmark_tree_v2_qk",
-        controller.config.landmark_tree_v2_chunk_frames if controller.config.landmark_tree_v2_chunk_frames is not None else int(os.environ.get("H3_TEMPORAL_CHUNK_FRAMES", "0")),
-        controller.config.landmark_tree_v2_minimum_frames if controller.config.landmark_tree_v2_minimum_frames is not None else int(os.environ.get("H3_TEMPORAL_MIN_FRAMES", "0")),
         controller.config.landmark_tree_v2_initial_order,
         controller.config.landmark_tree_v2_children,
         controller.config.landmark_tree_v2_fanout_mode,
@@ -307,8 +302,6 @@ def _landmark_tree_v2_combined_permutations(
     plan = controller.rope_sol_key_clustering_static.get(plan_key)
     if plan is None:
         plan = PreparedLandmarkTreeV2Permutation(
-            minimum_frames=controller.config.landmark_tree_v2_minimum_frames,
-            chunk_frames=controller.config.landmark_tree_v2_chunk_frames,
             distance=controller.config.landmark_tree_v2_distance,
             max_children=controller.config.landmark_tree_v2_children,
             fanout_mode=controller.config.landmark_tree_v2_fanout_mode,

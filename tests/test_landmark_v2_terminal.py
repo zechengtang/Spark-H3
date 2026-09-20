@@ -75,18 +75,6 @@ def test_unequal_branches_stop_without_empty_or_repeated_splits():
     assert all(t[1]+t[2]>=128 for t in tree)
 
 
-def test_temporal_hierarchy_publishes_finished_small_nodes():
-    h=build_reblock_hierarchy(72576,(16,16),grid_shape=(72,28,36),minimum_frames=10,fanout_mode='arbitrary_fanout')
-    assert h.budgets(1,16)==(1,)*16
-    assert h.budgets(1,15)==(1,)*15
-    assert len(h.levels)==4  # global root, six temporal roots, 15/16-block nodes, leaves
-    from h3_sparse_attention.landmark_virtual_q import virtual_query_layout
-    data=virtual_query_layout(72576,73565,1,hierarchy=h)
-    assert data['metadata']['active_size_counts']=={960:18,1024:54}
-    assert data['metadata']['final_fanout']==16
-    assert data['metadata']['fanout_mode']=='arbitrary_fanout'
-
-
 @pytest.mark.skipif(not torch.cuda.is_available(),reason='CUDA required')
 @pytest.mark.parametrize('leaves', [3, 6, 12])
 def test_power_terminal_graph_matches_arbitrary_split(leaves):

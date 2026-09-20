@@ -34,7 +34,6 @@ class H3SparseAttentionConfig:
     sol_log_density: bool = True
     sol_landmark_preprocess: bool = False
     sol_landmark_preprocess_version: Literal["v1", "v2"] = "v1"
-    landmark_tree_v2_minimum_frames: int | None = None
     sol_virtual_query_levels_up: int | None = None
     sol_virtual_query_target_blocks: int | None = None
     sol_virtual_query_min_blocks: int = 4
@@ -50,7 +49,7 @@ class H3SparseAttentionConfig:
     landmark_tree_v2_mean_mode: Literal["raw", "input_unit", "metric_unit"] = "raw"
     landmark_tree_v2_moment_mode: Literal["raw", "unit"] = "raw"
     landmark_tree_v2_group_size: int | list[int] | tuple[int, ...] = 1
-    landmark_tree_v2_children: int | list[int] | tuple[int, ...] = 16
+    landmark_tree_v2_children: int | list[int] | tuple[int, ...] | None = None
     landmark_tree_v2_fanout: int | list[int] | tuple[int, ...] | None = None
     landmark_tree_v2_final_fanout: int | list[int] | tuple[int, ...] | None = None
     landmark_tree_v2_root_fanout: int | None = None
@@ -61,7 +60,6 @@ class H3SparseAttentionConfig:
 
     sol_route_global_weighted_mean: bool = False
     sol_route_global_weighted_side: Literal["both", "query", "key"] = "both"
-    landmark_tree_v2_chunk_frames: int | None = None
     landmark_tree_v2_fanout_mode: Literal[
         "power_of_two_fanout", "arbitrary_fanout", "power_of_two_arbitrary_final"
     ] = "power_of_two_fanout"
@@ -90,14 +88,6 @@ class H3SparseAttentionConfig:
             raise ValueError("invalid sol_route_topk_cutoff_mode")
         if self.sol_landmark_preprocess and self.sol_landmark_preprocess_version != "v2":
             raise ValueError("this port supports landmark preprocessing version 'v2' only")
-        if self.landmark_tree_v2_minimum_frames is not None and (
-            type(self.landmark_tree_v2_minimum_frames) is not int or self.landmark_tree_v2_minimum_frames < 0):
-            raise ValueError("landmark_tree_v2_minimum_frames must be None or a nonnegative integer")
-        if self.landmark_tree_v2_chunk_frames is not None and (
-            type(self.landmark_tree_v2_chunk_frames) is not int or self.landmark_tree_v2_chunk_frames < 0):
-            raise ValueError("landmark_tree_v2_chunk_frames must be None or a nonnegative integer")
-        if self.landmark_tree_v2_minimum_frames and self.landmark_tree_v2_chunk_frames:
-            raise ValueError("choose either minimum_frames or chunk_frames")
         from .reblock_hierarchy import normalize_fanout_mode
         object.__setattr__(self, "landmark_tree_v2_fanout_mode", normalize_fanout_mode(self.landmark_tree_v2_fanout_mode))
         if type(self.sol_route_global_weighted_mean) is not bool:
@@ -149,8 +139,18 @@ class H3SparseAttentionConfig:
 
         normalize_initial_order(self.landmark_tree_v2_initial_order)
 
+        if self.landmark_tree_v2_fanout is not None:
+            if self.landmark_tree_v2_children is not None and (
+                    _normalize_fanout(self.landmark_tree_v2_children, None)
+                    != _normalize_fanout(self.landmark_tree_v2_fanout, None)):
+                raise ValueError("use landmark_tree_v2_fanout or landmark_tree_v2_children, not conflicting values")
+            children = self.landmark_tree_v2_fanout
+        elif self.landmark_tree_v2_children is None:
+            children = 16
+        else:
+            children = self.landmark_tree_v2_children
         object.__setattr__(self, "landmark_tree_v2_children",
-                           _normalize_fanout(self.landmark_tree_v2_children, self.landmark_tree_v2_fanout))
+                           _normalize_fanout(children, None))
         if self.landmark_tree_v2_fanout is not None:
             object.__setattr__(self, "landmark_tree_v2_fanout", self.landmark_tree_v2_children)
         if self.landmark_tree_v2_root_fanout is not None:
@@ -187,15 +187,13 @@ class H3SparseAttentionConfig:
 
     @classmethod
     def spark(cls, num_inference_steps: int = 20, **overrides) -> "H3SparseAttentionConfig":
-        """Sol TopK10 + minimum-10 fanout-16 LMv2 + target-189 reweighting."""
+        """Sol TopK10 + ungrouped fanout-16 LMv2 + target-189 reweighting."""
         defaults = dict(
             sol_route_topk_ratio=0.1,
             sol_route_topk_cutoff_mode="gemm_radix",
             sol_force_local_blocks=False,
             sol_landmark_preprocess=True,
             sol_landmark_preprocess_version="v2",
-            landmark_tree_v2_minimum_frames=10,
-            landmark_tree_v2_chunk_frames=0,
             landmark_tree_v2_children=16,
             sol_virtual_query_target_blocks=SPARK_REWEIGHT_TARGET_BLOCKS,
             sol_virtual_query_levels_up=None,
@@ -343,9 +341,7 @@ class _Controller:
                     sol_virtual_query_layout=self.sol_virtual_query_layout,
                     sol_force_local_blocks=self.config.sol_local_blocks_enabled,
                     sol_landmark_preprocess=self.config.sol_landmark_preprocess,
-                    landmark_tree_v2_minimum_frames=self.config.landmark_tree_v2_minimum_frames,
                     landmark_tree_v2_children=self.config.landmark_tree_v2_children,
-                    landmark_tree_v2_chunk_frames=self.config.landmark_tree_v2_chunk_frames,
                     landmark_tree_v2_fanout_mode=self.config.landmark_tree_v2_fanout_mode)
 
 
@@ -519,7 +515,7 @@ def install_h3_sol_attn(
 def install_h3_spark_attn(
     transformer, num_inference_steps: int = 20, **config_overrides
 ) -> H3SparseAttentionPlugin:
-    """Return the Spark plugin: Sol TopK10, minimum-10, target-189 reweight."""
+    """Return the Spark plugin: Sol TopK10, ungrouped LMv2, target-189 reweight."""
     return install_h3_sparse_attention(
         transformer,
         H3SparseAttentionConfig.spark(num_inference_steps, **config_overrides),

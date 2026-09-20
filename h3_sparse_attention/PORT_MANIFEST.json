@@ -3,11 +3,6 @@
   "sol_commit": "fc6554c14ae409dd5f53b4e27d86a367960be555",
   "sol_source": "Sana-sol-engine/techniques/sparse_backends/sol_attn (working tree used by MiniMax-H3-Sparse, including local patches)",
   "files": {
-    "h3_sparse_attention/landmark_chunk.py": {
-      "source": "h3_sparse_attention/landmark_chunk.py",
-      "source_sha256": "1170630719651275aa6b55b98b6403dd99a4aeb31111ac548ba83fb2bf0c09a6",
-      "ported_sha256": "dacdd356f793bf525c0f8d3d7eb11dd64591a06042c0d987590a3c4c1b3c2556"
-    },
     "h3_sparse_attention/landmark_initial_order.py": {
       "source": "h3_sparse_attention/landmark_initial_order.py",
       "source_sha256": "d90533f3b9334b0312b455885e7933130e966b55f66d9b9ca43e3015ca7d47f4",
@@ -448,11 +443,6 @@
       "source_sha256": "0e7dffe347c22b0bb5ac251fcb02b1ddb039dae2e81b52aaaf82bf5be8a7fa0f",
       "ported_sha256": "f1659edbc039d9ede526c884fe7973583f1e43cecf8f3225182b62618e99daf7"
     },
-    "tests/test_landmark_chunk.py": {
-      "source": "h3_sparse_attention/tests/test_landmark_chunk.py",
-      "source_sha256": "9435c49673059337c0b7ca18a467e82520b181658c72261ee6ab37cf65de46a3",
-      "ported_sha256": "9435c49673059337c0b7ca18a467e82520b181658c72261ee6ab37cf65de46a3"
-    },
     "tests/test_global_weighted_route.py": {
       "source": "h3_sparse_attention/tests/test_global_weighted_route.py",
       "source_sha256": "dc642d2f28b4f46219e955839d848056e024d7d8fc787992fee6daa69e330877",
@@ -507,9 +497,7 @@
   "spark_installer_update": "Source working tree at ca44a1780eba8bfd9d2cbdc4a9ff813bd8c38277; file hashes include uncommitted updates.",
   "sync_date": "2026-09-18",
   "source_working_tree": true,
-  "known_source_limitations": [
-    "Fixed temporal chunks do not publish a reweighting hierarchy; disable virtual-query reweighting when using chunk_frames."
-  ],
+  "known_source_limitations": [],
   "spark_sync_update": {
     "features": [
       "Independent root and final fanout controls and fanout alias",
@@ -550,17 +538,6 @@
     "excluded_backends": "No SVG2, SVOO, SVG-EAR or vbench benchmark code imported",
     "optional_source_parity": {
       "configuration": "arbitrary fanout 8, no temporal partition, global weighted routing, target-189 reweighting",
-      "result": "bitwise equal",
-      "seed": 131,
-      "qkv_shape_bhtd": [
-        1,
-        2,
-        1159,
-        128
-      ]
-    },
-    "chunk_source_parity": {
-      "configuration": "12-frame chunks, arbitrary fanout 8, global weighted routing, reweighting disabled",
       "result": "bitwise equal",
       "seed": 131,
       "qkv_shape_bhtd": [
