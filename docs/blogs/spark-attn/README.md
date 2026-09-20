@@ -116,7 +116,7 @@ We compare Dense, Sol-Attn, and two Spark-H3 variants. Quality is evaluated on v
 
 | Method | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ | Attn<br>speedup ↑ | DiT<br>speedup ↑ | density ↓ | Denoising<br>time (s, 19 NFE) ↓ |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Dense | ∞ | 1.00 | 0.00 | 1.00× | 1.00× | 100.00% | 582.1 |
+| Dense | ∞ | 1.00 | 0.00 | 1.00× | 1.00× | 100% | 582.1 |
 | Sol-H3 | 20.36 | 0.71 | 0.20 | 3.64× | 1.59× | — | 364.9 |
 | Spark-H3-10pct | 23.30 | 0.80 | 0.14 | 4.12× | 1.70× | 10% | 341.7 |
 | Spark-H3-20pct | 25.38 | 0.85 | 0.09 | — | 1.54× | 20% | 378.2 |
