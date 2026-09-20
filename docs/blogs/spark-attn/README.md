@@ -116,12 +116,12 @@ We compare Dense, Sol-Attn, and two Spark-H3 variants. Quality is evaluated on v
 
 | Method | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ | Attn<br>speedup ↑ | DiT<br>speedup ↑ | density ↓ | Denoising<br>time (s, 19 NFE) ↓ |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Dense | ∞ | 1.00 | 0.00 | 1.00× | 1.00× | 100.00% | 582.05 |
-| Sol-H3 | 20.36 | 0.71 | 0.20 | 3.64× | 1.59× | — | 364.93 |
-| Spark-H3-10pct | 23.30 | 0.80 | 0.14 | 4.12× | 1.70× | 10% | 341.71 |
-| Spark-H3-20pct | 25.38 | 0.85 | 0.09 | — | 1.54× | 20% | 378.21 |
+| Dense | ∞ | 1.00 | 0.00 | 1.00× | 1.00× | 100.00% | 582.1 |
+| Sol-H3 | 20.36 | 0.71 | 0.20 | 3.64× | 1.59× | — | 364.9 |
+| Spark-H3-10pct | 23.30 | 0.80 | 0.14 | 4.12× | 1.70× | 10% | 341.7 |
+| Spark-H3-20pct | 25.38 | 0.85 | 0.09 | — | 1.54× | 20% | 378.2 |
 
-All methods run the same number of function evaluations (NFE), so our DiT speedup — the ratio of total denoising wall times — corresponds exactly to the NFE-normalized per-step speedup reported by [OpenVDN](https://openvdn.github.io/): with identical NFE on both sides, the evaluation count cancels in the ratio, leaving the ratio of mean per-evaluation latencies. Per-NFE latencies are 30.63 s for Dense, 19.21 s for Sol-H3, 17.98 s for Spark-H3-10pct and 19.91 s for Spark-H3-20pct. No step reduction is used; these speedups come from cheaper evaluations, not fewer steps. The first 4 of 19 steps and the first attention layer stay dense in all sparse methods, so per-step cost varies within each run, but the ratio of totals is identical to the ratio of mean per-NFE latencies. Note on convention: the MiniMax-H3 scheduler builds N sigma grid points (terminal zero included) and drives N − 1 model evaluations, so NFE labels that quote requested steps are off by one from actual evaluations — OpenVDN's "50-NFE" dense baseline, for instance, runs the standard 50-step schedule, i.e. 49 denoiser forwards. We always count actual evaluations.
+All methods run the same number of function evaluations (NFE), so our DiT speedup — the ratio of total denoising wall times — corresponds exactly to the NFE-normalized per-step speedup reported by [OpenVDN](https://openvdn.github.io/): with identical NFE on both sides, the evaluation count cancels in the ratio, leaving the ratio of mean per-evaluation latencies. Per-NFE latencies are 30.6 s for Dense, 19.2 s for Sol-H3, 18.0 s for Spark-H3-10pct and 19.9 s for Spark-H3-20pct. No step reduction is used; these speedups come from cheaper evaluations, not fewer steps. The first 4 of 19 steps and the first attention layer stay dense in all sparse methods, so per-step cost varies within each run, but the ratio of totals is identical to the ratio of mean per-NFE latencies. Note on convention: the MiniMax-H3 scheduler builds N sigma grid points (terminal zero included) and drives N − 1 model evaluations, so NFE labels that quote requested steps are off by one from actual evaluations — OpenVDN's "50-NFE" dense baseline, for instance, runs the standard 50-step schedule, i.e. 49 denoiser forwards. We always count actual evaluations.
 
 | Method | Subject<br>consistency ↑ | Background<br>consistency ↑ | Motion<br>smoothness ↑ | Imaging<br>quality ↑ | Aesthetic<br>quality ↑ |
 | --- | ---: | ---: | ---: | ---: | ---: |
