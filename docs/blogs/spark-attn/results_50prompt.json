@@ -140,26 +140,6 @@
       "timing_scope": "Matched 35-prompt warmup-excluded synchronized denoising mean; 25 cases regenerated 2026-09-20; quality re-scored video-to-video against the regenerated dense references."
     },
     {
-      "method": "global_tau1_16_16_8",
-      "denoise_seconds": 391.54366650380194,
-      "psnr_db": 25.9154,
-      "ssim": 0.858375,
-      "lpips": 0.088782,
-      "vbench_percent": {
-        "subject_consistency": 90.82575503779043,
-        "background_consistency": 94.0906792240955,
-        "motion_smoothness": 99.01543533640928,
-        "imaging_quality": 72.03473247645195,
-        "aesthetic_quality": 67.91704140211407
-      },
-      "attention_speedup": 2.7489880391240855,
-      "v2v_retained_ratio": null,
-      "sampled_exact_ratio": null,
-      "label": "Sol-H3 + Reblock + Reweight",
-      "display_speedup_vs_dense": 1.4866,
-      "timing_scope": "Original 2026-09-18 50-prompt run; videos unchanged. Quality re-scored 2026-09-21 against the regenerated dense references (previous paired metrics were deflated by stale Sept-1-generation references)."
-    },
-    {
       "method": "topk10_reblock_global_reweight",
       "denoise_seconds": 341.71,
       "psnr_db": 23.3006,
@@ -200,7 +180,7 @@
       "timing_scope": "Matched 35-prompt subset of the 2026-09-20 50-prompt warmup-excluded run."
     }
   ],
-  "speedup_definition": "Dense matched 35-prompt mean denoise seconds (582.05) divided by each method's measured denoise seconds; Sol-H3 + Reblock + Reweight keeps its 2026-09-18 50-prompt timing.",
+  "speedup_definition": "Dense matched 35-prompt mean denoise seconds (582.05) divided by each method's measured denoise seconds.",
   "additional_vbench_rows": [
     {
       "method": "global_16_16_8",
@@ -236,5 +216,5 @@
     }
   ],
   "display_density_definition": "Retained video-to-video block ratio excluding context, dense warmup and dense layers. Historical packed ratios are not substituted for missing v2v measurements.",
-  "correction_note": "2026-09-21: dense/sol references for 25 remapped cases (Sept-1 code generation, unreproducible) were regenerated with the Sept-13 snapshot pipeline; all paired metrics re-scored against them. Previous PSNR/SSIM/LPIPS values were deflated by the generation drift of the stale references. Spark-H3 renamed to Spark-H3-10pct; Spark-H3-20pct added; the \"1 - sparsity\" column is now \"density\"."
+  "correction_note": "2026-09-21: dense/sol references for 25 remapped cases (Sept-1 code generation, unreproducible) were regenerated with the Sept-13 snapshot pipeline; all paired metrics re-scored against them. Previous PSNR/SSIM/LPIPS values were deflated by the generation drift of the stale references. Spark-H3 renamed to Spark-H3-10pct; Spark-H3-20pct added; the \"1 - sparsity\" column is now \"density\". The Sol-H3 + Reblock + Reweight row was dropped from the tables on 2026-09-21; its rescore remains in sources (solrr_quality_rescore)."
 }
