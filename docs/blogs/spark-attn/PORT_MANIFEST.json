@@ -8,8 +8,8 @@
       "source": "docs/blogs/landmark_tree_v2/README.md",
       "destination": "docs/blogs/spark-attn/README.md",
       "source_sha256": "318c516ec967bb3ded1061bc97366bf0459dda010995dd688a6de6476debb76f",
-      "adapted_sha256": "be1b9044ba4cd7c635a5e377fdf9ba307ad82fb09e6790d5a3e1bbb66de5af9e",
-      "note": "Diverged intentionally on 2026-09-21: corrected benchmark tables (regenerated dense references, Spark-H3-10pct/20pct rename, density column)."
+      "adapted_sha256": "c7d546baea897c77496dc0021caca31feebd95bcaf8f5f366124081c849abf96",
+      "note": "Diverged intentionally on 2026-09-21: corrected benchmark tables (regenerated dense references, Spark-H3-10pct/20pct rename, density column); Attn speedup redefined as end-to-end attention-core ratio (dense warmup steps and dense first layer included)."
     },
     {
       "source": "docs/blogs/landmark_tree_v2/preview.py",

@@ -117,9 +117,11 @@ We compare Dense, Sol-Attn, and two Spark-H3 variants. Quality is evaluated on v
 | Method | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ | Attn<br>speedup ↑ | DiT<br>speedup ↑ | density ↓ | Denoising<br>time (s, 19 NFE) ↓ |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Dense | ∞ | 1.00 | 0.00 | 1.00× | 1.00× | 100% | 582.1 |
-| Sol-H3 | 20.36 | 0.71 | 0.20 | 3.64× | 1.59× | — | 364.9 |
-| Spark-H3-10pct | 23.30 | 0.80 | 0.14 | 4.12× | 1.70× | 10% | 341.7 |
-| Spark-H3-20pct | 25.38 | 0.85 | 0.09 | — | 1.54× | 20% | 378.2 |
+| Sol-H3 | 20.36 | 0.71 | 0.20 | 2.19× | 1.59× | — | 364.9 |
+| Spark-H3-10pct | 23.30 | 0.80 | 0.14 | 2.33× | 1.70× | 10% | 341.7 |
+| Spark-H3-20pct | 25.38 | 0.85 | 0.09 | 1.96× | 1.54× | 20% | 378.2 |
+
+Attn speedup is the end-to-end ratio of total attention-core time, measured with per-layer CUDA events: dense flash-attention time over each sparse method's full attention-core time, which still includes the 4 dense warmup steps, the dense first layer and sink-query attention that the recipe requires. It is therefore deliberately lower than the isolated sparse-kernel-path speedup (3.6×/4.2×/2.9× for Sol-H3, Spark-H3-10pct and Spark-H3-20pct), which credits the kernel only for the dense work it actually replaces.
 
 All methods run the same number of function evaluations (NFE), so our DiT speedup — the ratio of total denoising wall times — corresponds exactly to the NFE-normalized per-step speedup reported by [OpenVDN](https://openvdn.github.io/): with identical NFE on both sides, the evaluation count cancels in the ratio, leaving the ratio of mean per-evaluation latencies. Per-NFE latencies are 30.6 s for Dense, 19.2 s for Sol-H3, 18.0 s for Spark-H3-10pct and 19.9 s for Spark-H3-20pct. No step reduction is used; these speedups come from cheaper evaluations, not fewer steps. The first 4 of 19 steps and the first attention layer stay dense in all sparse methods, so per-step cost varies within each run, but the ratio of totals is identical to the ratio of mean per-NFE latencies. Note on convention: the MiniMax-H3 scheduler builds N sigma grid points (terminal zero included) and drives N − 1 model evaluations, so NFE labels that quote requested steps are off by one from actual evaluations — OpenVDN's "50-NFE" dense baseline, for instance, runs the standard 50-step schedule, i.e. 49 denoiser forwards. We always count actual evaluations.
 
