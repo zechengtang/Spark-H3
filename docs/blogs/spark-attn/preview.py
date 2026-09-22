@@ -28,7 +28,7 @@ CDN = f'https://cdn.jsdelivr.net/npm/katex@{KATEX_VERSION}/'
 MATH = re.compile(r'\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|(?<!\\)\$(?!\$)([^$\n]+?)(?<!\\)\$')
 LOCK = threading.Lock()
 CACHE = {}
-ANIMATIONS = frozenset({'spark-reblock.html', 'spark-reweight.html'})
+ANIMATIONS = frozenset({'spark-reblock.html', 'spark-reweight.html', 'branch-comparison.html'})
 RESIZE_ANIMATIONS = '''<script>
 window.addEventListener('message', event => {
   if (event.origin !== location.origin || event.data?.type !== 'spark-animation-height') return;
@@ -146,6 +146,11 @@ def article_layout(content):
     for index, section in enumerate(sections):
         end = sections[index + 1].start() if index + 1 < len(sections) else len(content)
         body = content[section.end():end]
+        reading = re.match(r'\s*<p><em>(~\d+ min read)</em></p>', body)
+        reading_html = ''
+        if reading:
+            body = body[reading.end():]
+            reading_html = f'<span class="reading-time">{reading.group(1)}</span>'
         body = re.sub(r'<p>(<img\b[^>]*>)</p>\s*<p><em>(.*?)</em></p>', figure, body, flags=re.S)
         label = html.escape(section.group(2) + ' results', quote=True)
         body = re.sub(r'(<table>.*?</table>)',
@@ -156,7 +161,7 @@ def article_layout(content):
                         '<div class="section-heading">'
                         f'<span class="chapter-number">0{index + 1} / METHOD</span>'
                         f'<h2 id="{section.group(1)}-title"><a href="#{section.group(1)}">'
-                        f'{section.group(2)}</a></h2></div><div class="chapter-body">{body}</div></section>')
+                        f'{section.group(2)}</a></h2>{reading_html}</div><div class="chapter-body">{body}</div></section>')
     return hero + overview + ''.join(chapters)
 
 
@@ -189,7 +194,9 @@ def gallery_html():
         cards.append(
             f'<article class="comparison-card" aria-labelledby="case-{sid}">'
             '<div class="comparison-heading"><div class="comparison-identity">'
-            f'<h3 class="comparison-index" id="case-{sid}" aria-label="Comparison {index}">{index:02d}</h3></div>'
+            f'<h3 class="comparison-index" id="case-{sid}" aria-label="Comparison {index}">{index:02d}</h3>'
+            '<button class="video-reset" type="button" title="同时从头播放本 prompt 的所有视频">⟲ 复位</button>'
+            '</div>'
             '</div>'
             '<div class="comparison-pair">' + ''.join(videos) + '</div>'
             '<details class="comparison-prompt"><summary>'
@@ -205,11 +212,11 @@ def gallery_html():
 
 def integration_data():
     return {name: json.loads((HERE / 'integration' / f'{name}.json').read_text())
-            for name in ('turbo-lora', 'fasth3-0753')}
+            for name in ('turbo-lora', 'fasth3-0753', 'vdn10')}
 
 
 def resolve_integration_file(route):
-    for name in ('turbo-lora', 'fasth3-0753'):
+    for name in ('turbo-lora', 'fasth3-0753', 'vdn10'):
         if route == f'/{name}/manifest.json':
             return HERE / 'integration' / f'{name}.json'
     record = json.loads((HERE / 'integration/media.json').read_text()).get(route)
@@ -225,19 +232,23 @@ def integration_html(data, family):
     groups = []
     for prompt_index, prompt in enumerate(('0753', '0685'), 1):
         if family == 'turbo-lora':
+            mode_specs = [('dense', 'Dense', '8 denoising steps'),
+                          ('spark10', 'Spark-H3-10pct', '8 denoising steps · first 2 steps + first layer dense'),
+                          ('spark10_nowarm', 'Spark-H3-10pct', '8 denoising steps · no warmup, fully sparse')]
             models = [(f'{prompt}_{model}_{mode}',
-                       ('LightX2V' if model == 'lightx2v' else 'Larry v4 EMA') +
-                       (' · Dense' if mode == 'dense' else ' · Spark-H3'),
-                       '8 denoising steps')
-                      for model in ('lightx2v', 'larry') for mode in ('dense', 'sparse')]
+                       ('LightX2V' if model == 'lightx2v' else 'Larry v4 EMA') + f' · {title}',
+                       detail)
+                      for model in ('lightx2v', 'larry') for mode, title, detail in mode_specs]
             prompt_text = manifest['cases'][prompt]['generation_prompt']
         else:
             prefix = '' if prompt == '0753' else '0685_'
             models = [(prefix + name, title, detail) for name, title, detail in (
-                ('v1_dense_native', 'FastH3 v1 Dense', '4 denoising steps · full attention'),
-                ('v1_dense_topk10_global', 'FastH3 v1 Dense · Spark-H3', '4 denoising steps · Spark-Attn'),
-                ('v1_vsa_native', 'FastH3 v1 VSA', '4 denoising steps · 90% sparsity'),
-                ('v2_native', 'FastH3 v2 VSA', '8 denoising steps · 80% sparsity'))]
+                ('v1_dense', 'FastH3 v1 Dense', '4 denoising steps · full attention'),
+                ('v1_dense_spark10_nowarm', 'FastH3 v1 Dense · Spark-H3-10pct', '4 denoising steps · no warmup'),
+                ('v1_dense_spark10_warm', 'FastH3 v1 Dense · Spark-H3-10pct + warmup',
+                 '4 denoising steps · first step + first layer dense'),
+                ('v1_vsa', 'FastH3 v1 VSA', '4 denoising steps · 90% sparsity'),
+                ('v2_vsa', 'FastH3 v2 VSA', '8 denoising steps · 80% sparsity'))]
             prompt_text = manifest['prompt' if prompt == '0753' else 'prompt0685']
         cards = []
         for variant, title, detail in models:
@@ -255,7 +266,8 @@ def integration_html(data, family):
         excerpt = ' '.join(excerpt.split())
         groups.append(
             '<div class="integration-group">'
-            f'<h4>{prompt_index:02d}</h4>'
+            f'<h4>{prompt_index:02d}<button class="video-reset" type="button" '
+            'title="同时从头播放本 prompt 的所有视频">⟲ 复位</button></h4>'
             '<div class="integration-video-grid">' + ''.join(cards) + '</div>'
             '<details class="comparison-prompt"><summary>'
             '<span class="prompt-heading"><span class="prompt-label">Prompt</span>'
@@ -264,6 +276,165 @@ def integration_html(data, family):
             '<span class="prompt-excerpt">' + html.escape(excerpt) + '</span></summary>'
             f'<div class="prompt-full">{html.escape(prompt_text)}</div></details></div>')
     return '<div class="integration-gallery">' + ''.join(groups) + '</div>'
+
+
+def vdn10_showcase_html(manifest):
+    """Hero carousel of the ten VDN-H3 page prompts, layout after openvdn.github.io."""
+    cards = []
+    for case in manifest['cases']:
+        sid = html.escape(case['sample_id'])
+        slug = html.escape(case['slug'].replace('_', ' '))
+        excerpt = re.sub(r'^integrated_multimodal_description:\s*(?:\[Shot 1\]\s*)?', '', case['prompt'])
+        excerpt = ' '.join(excerpt.split())
+        cards.append(
+            f'<article class="vdn-result-card" role="listitem" '
+            f'aria-label="Showcase video {case["position"]}: {slug}">'
+            f'<video class="vdn-result-video" controls loop muted playsinline preload="none" '
+            f'disablepictureinpicture disableremoteplayback aria-label="{sid}: {slug}" '
+            f'data-src="{html.escape(case["preview"], quote=True)}"></video>'
+            '<details class="comparison-prompt"><summary>'
+            '<span class="prompt-heading"><span class="prompt-label">Prompt</span>'
+            '<span class="prompt-toggle"><span class="prompt-expand">Show full prompt</span>'
+            '<span class="prompt-collapse">Collapse prompt</span>'
+            '<span class="prompt-chevron" aria-hidden="true">↗</span></span></span>'
+            f'<span class="prompt-excerpt">{html.escape(excerpt)}</span></summary>'
+            f'<div class="prompt-full">{html.escape(case["prompt"])}</div></details></article>')
+    total = len(cards)
+    return ('<section class="vdn-showcase" aria-labelledby="vdn-showcase-title">'
+            '<div class="vdn-showcase-inner">'
+            '<div class="vdn-showcase-head"><div>'
+            '<p class="eyebrow">Selected Showcase</p>'
+            '<h2 class="vdn-showcase-title" id="vdn-showcase-title">'
+            '<span class="model-tag"><span class="model-name">LightX2V Turbo</span>'
+            '<span class="model-note">8-step</span></span> + '
+            '<span class="model-tag"><span class="model-name">Spark-H3</span>'
+            '<span class="model-note">90% sparse</span></span></h2>'
+            '<p class="vdn-showcase-sub">Prompts come from the '
+            '<a href="https://openvdn.github.io/">VDN-H3 project page</a>.</p></div>'
+            '<div class="vdn-result-strip-controls" aria-label="Gallery navigation">'
+            '<button type="button" data-vdn-strip-prev aria-label="Scroll video results left">←</button>'
+            f'<output data-vdn-strip-status aria-live="polite">01 / {total:02d}</output>'
+            '<button type="button" data-vdn-strip-next aria-label="Scroll video results right">→</button>'
+            '</div></div>'
+            '<div class="vdn-result-showcase" data-vdn-result-showcase>'
+            '<div class="vdn-result-strip" data-vdn-result-strip role="list" tabindex="0" '
+            'aria-label="LightX2V Spark-H3-10pct video results">'
+            + ''.join(cards) + '</div></div></div></section>')
+
+
+VDN10_SCRIPT = """<script>
+(() => {
+  const showcase = document.querySelector('[data-vdn-result-showcase]');
+  if (!showcase) return;
+  const section = showcase.closest('.vdn-showcase') || showcase;
+  const strip = showcase.querySelector('[data-vdn-result-strip]');
+  const prevBtn = section.querySelector('[data-vdn-strip-prev]');
+  const nextBtn = section.querySelector('[data-vdn-strip-next]');
+  const status = section.querySelector('[data-vdn-strip-status]');
+  const cards = Array.from(strip.querySelectorAll('.vdn-result-card'));
+  const videos = cards.map(card => card.querySelector('video'));
+  if (!cards.length) return;
+  let activeIndex = 0;
+  let heightFrame = 0;
+
+  const prepare = video => {
+    if (video.dataset.src) {
+      video.src = video.dataset.src;
+      delete video.dataset.src;
+      video.preload = 'metadata';
+      video.load();
+    }
+  };
+  const updateHeight = () => {
+    if (heightFrame) cancelAnimationFrame(heightFrame);
+    heightFrame = requestAnimationFrame(() => {
+      heightFrame = 0;
+      const activeCard = cards[activeIndex];
+      if (activeCard) strip.style.setProperty('--vdn-carousel-height', `${activeCard.offsetHeight}px`);
+    });
+  };
+  const updatePlayback = () => {
+    const rect = showcase.getBoundingClientRect();
+    const visible = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
+    if (document.hidden || visible < Math.min(120, rect.height * 0.25)) {
+      videos.forEach(video => video.pause());
+      return;
+    }
+    videos.forEach((video, index) => {
+      if (index === activeIndex) { prepare(video); video.play().catch(() => {}); }
+      else video.pause();
+    });
+  };
+  let playbackFrame = 0;
+  const schedulePlayback = () => {
+    if (playbackFrame) return;
+    playbackFrame = requestAnimationFrame(() => { playbackFrame = 0; updatePlayback(); });
+  };
+  const updateCarousel = (nextIndex, shouldPlay = true) => {
+    activeIndex = (nextIndex + cards.length) % cards.length;
+    cards.forEach((card, index) => {
+      const forward = (index - activeIndex + cards.length) % cards.length;
+      const isCurrent = index === activeIndex;
+      card.dataset.carouselPosition = isCurrent ? 'current'
+        : forward === cards.length - 1 ? 'previous' : forward === 1 ? 'next' : 'hidden';
+      card.style.setProperty('--vdn-carousel-scale', isCurrent ? '1' : '.92');
+      card.toggleAttribute('aria-current', isCurrent);
+      card.setAttribute('aria-hidden', String(!isCurrent));
+      card.inert = !isCurrent;
+      if (!isCurrent) {
+        videos[index].pause();
+        const prompt = card.querySelector('.comparison-prompt');
+        if (prompt && prompt.open) prompt.open = false;
+      }
+    });
+    strip.dataset.activeIndex = String(activeIndex);
+    if (status) status.textContent = `${String(activeIndex + 1).padStart(2, '0')} / ${String(cards.length).padStart(2, '0')}`;
+    updateHeight();
+    if (shouldPlay) schedulePlayback();
+  };
+
+  prevBtn && prevBtn.addEventListener('click', () => updateCarousel(activeIndex - 1));
+  nextBtn && nextBtn.addEventListener('click', () => updateCarousel(activeIndex + 1));
+  strip.addEventListener('keydown', event => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    updateCarousel(activeIndex + (event.key === 'ArrowRight' ? 1 : -1));
+  });
+  let pointerStartX = null;
+  strip.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse') return;
+    pointerStartX = event.clientX;
+  });
+  strip.addEventListener('pointerup', event => {
+    if (pointerStartX === null) return;
+    const distance = event.clientX - pointerStartX;
+    pointerStartX = null;
+    if (Math.abs(distance) > 44) updateCarousel(activeIndex + (distance < 0 ? 1 : -1));
+  });
+  strip.addEventListener('pointercancel', () => { pointerStartX = null; });
+
+  videos.forEach((video, index) => {
+    video.addEventListener('play', () => {
+      if (index !== activeIndex) { video.pause(); return; }
+      videos.forEach((other, otherIndex) => { if (otherIndex !== activeIndex) other.pause(); });
+    });
+    video.addEventListener('loadedmetadata', updateHeight);
+  });
+  strip.querySelectorAll('.comparison-prompt').forEach(details => {
+    details.addEventListener('toggle', updateHeight);
+  });
+  if ('ResizeObserver' in window) {
+    const observer = new ResizeObserver(updateHeight);
+    cards.forEach(card => observer.observe(card));
+  }
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(schedulePlayback, { threshold: [0, 0.25, 0.5] }).observe(showcase);
+  }
+  document.addEventListener('visibilitychange', schedulePlayback);
+  updateCarousel(0, false);
+  schedulePlayback();
+})();
+</script>"""
 
 
 INTEGRATION_SCRIPT = """<script>
@@ -284,6 +455,17 @@ INTEGRATION_SCRIPT = """<script>
     }
   }, {rootMargin: '200px'});
   document.querySelectorAll('.integration-video video').forEach(v => observer.observe(v));
+  document.addEventListener('click', event => {
+    const button = event.target.closest('.video-reset');
+    if (!button) return;
+    const group = button.closest('.comparison-card, .integration-group');
+    if (!group) return;
+    for (const video of group.querySelectorAll('video')) {
+      prepare(video);
+      video.currentTime = 0;
+      video.play().catch(() => {});
+    }
+  });
 })();
 </script>"""
 
@@ -312,6 +494,9 @@ def render():
         content = content.replace('<!-- TURBO_INTEGRATION -->', integration_html(integrations, 'turbo-lora'))
         content = content.replace('<!-- FASTH3_INTEGRATION -->', integration_html(integrations, 'fasth3-0753'))
         content = article_layout(content)
+        if '<!-- VDN10_SHOWCASE -->' in source:
+            content = content.replace('<section class="overview"',
+                                      vdn10_showcase_html(integrations['vdn10']) + '<section class="overview"', 1)
         process = subprocess.run(['node', str(HERE / 'render_math.js'), str(ASSETS / 'katex/katex.min.js')],
                                  input=json.dumps(fragments), text=True, capture_output=True, check=True)
         maths = json.loads(process.stdout)
@@ -335,7 +520,7 @@ def render():
                 '<div><strong>Spark-H3</strong><br>SparkH3 Team · MiniMax-H3</div>'
                 '<div class="footer-links"><a href="/source.md">Markdown source ↗</a>'
                 '<a href="#top">Back to top ↑</a></div></div></footer>'
-                + RESIZE_ANIMATIONS + INTEGRATION_SCRIPT + '</body></html>')
+                + RESIZE_ANIMATIONS + INTEGRATION_SCRIPT + VDN10_SCRIPT + '</body></html>')
         result = (page.encode(), len(fragments))
         CACHE.update(fingerprint=fingerprint, result=result)
         return result

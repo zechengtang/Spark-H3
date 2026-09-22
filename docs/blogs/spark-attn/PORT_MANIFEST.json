@@ -8,14 +8,14 @@
       "source": "docs/blogs/landmark_tree_v2/README.md",
       "destination": "docs/blogs/spark-attn/README.md",
       "source_sha256": "318c516ec967bb3ded1061bc97366bf0459dda010995dd688a6de6476debb76f",
-      "adapted_sha256": "c7d546baea897c77496dc0021caca31feebd95bcaf8f5f366124081c849abf96",
+      "adapted_sha256": "218a6c6a208ca2508e4098c8f6369d1c0a184bc01ddc70f859c3d61773ad8f68",
       "note": "Diverged intentionally on 2026-09-21: corrected benchmark tables (regenerated dense references, Spark-H3-10pct/20pct rename, density column); Attn speedup redefined as end-to-end attention-core ratio (dense warmup steps and dense first layer included)."
     },
     {
       "source": "docs/blogs/landmark_tree_v2/preview.py",
       "destination": "docs/blogs/spark-attn/preview.py",
       "source_sha256": "bb38a968124776ee6dec24896cfff73ec3513538fdf9edbc7ff4fe1ab13e75d2",
-      "adapted_sha256": "c2a0369353369572787f00f43edf4355af0fa2420fc83bcd42bbcc232589a77d"
+      "adapted_sha256": "ffa6f22355cbab0fc401ce7e16f63b822364416e6c16d286364c4b3e92a70d5d"
     },
     {
       "source": "docs/blogs/landmark_tree_v2/blog.css",
@@ -140,9 +140,9 @@
     "GitHub Pages instructions use the destination blog path."
   ],
   "local_metadata_sha256": {
-    "integration/turbo-lora.json": "67b28e616212fc4ba7ed4e9b189a1ed81e0a91fc98af15c830163090f4f9a720",
-    "integration/fasth3-0753.json": "2eeb44a07c112c71ed7f7a2549206ab635ed23978711c84a67022b2dd5cc64a9",
-    "integration/media.json": "6d690b945af6609964fd1de1585b02f2482bf28e452967d6449a839b58efe6de"
+    "integration/turbo-lora.json": "2d5f30966a87394c8692cf8187ab83f21a0bc1c0314c038ab58238580d87bb5f",
+    "integration/fasth3-0753.json": "871aab63f30802fe9a0943b295d6c5ff3fa5fe7f8f5536c9dcf2823fab556aeb",
+    "integration/media.json": "9c32fa85f2e5696b74e7bd37442b8989239bcc2e69c02f8749b5760640d8be3c"
   },
   "backup_directory": "/autodl-fs/data/h3_experiments/minimax_blog_sync_20260918_051657",
   "validation": {

@@ -492,8 +492,19 @@
       "source": "tests/test_global_reweight_followup.py",
       "source_sha256": "455319fe451daf13f0d0fd02d32b69764655c5779ef419e09133365de9d3cb65",
       "ported_sha256": "952ce987c3d5d79a26711ec3835de97c5b1e40aa3af212281283d31e8f110a38"
+    },
+    "h3_sparse_attention/fp8_linear.py": {
+      "source": "vdn-minimax-h3:src/models/ops/fp8_linear.py",
+      "source_sha256": "25d2d188e29f7bca7699190c6a25ca59b6f63cbf5f697df74844da56690e7a04",
+      "ported_sha256": "ef1ee9db573ea4dc8413b476384549336c97f588b8abbf6e3c09b7ec476ba133"
+    },
+    "h3_sparse_attention/fused_block.py": {
+      "source": "vdn-minimax-h3:src/models/ops/fused_block.py",
+      "source_sha256": "abb9a7466fc4f6312109d7512eefc44ed1a46673dfbb68958e132be854636259",
+      "ported_sha256": "29bc4da800361262a2638124707ffa0347d8230f8fb5d32fe47ecaef2b637fa6"
     }
   },
+  "fp8_port": "fp8_linear.py ported from vdn-minimax-h3 on 2026-09-21: conversion scoped to model.transformer_blocks (context_embedder and token_refiner stay bf16), sm120 per-tensor dispatch documented, install_fp8 entry added, Fp8SwiGLUFeedForward fusion and shared-qkv Fp8AttnProcessor/forward_qkv_shared added (the sparse processor calls forward_qkv_shared via a duck-typed guard, so the diffusers fork is untouched); fused_block.py ported the same day with set_inference_mode replaced by a one-way install_fused_blocks; __init__.py re-exports both lazily, diverging from the Sparse source copy.",
   "spark_installer_update": "Source working tree at ca44a1780eba8bfd9d2cbdc4a9ff813bd8c38277; file hashes include uncommitted updates.",
   "sync_date": "2026-09-18",
   "source_working_tree": true,

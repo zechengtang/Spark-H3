@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compressed branches across methods</title>
+<style>
+:root{
+  --bg:#f9f6ef; --paper:#fffdf8; --ink:#161513; --muted:#6d6860;
+  --line:#d8d0c4; --line-soft:#e9e3d9;
+  --exact:#a33e2d; --exact-soft:#e0c1b6;
+  --pooled:#3f7e93; --pooled-soft:#cad8d8;
+  --linear:#8d79a5; --linear-soft:#e7e1ec;
+  --sans:"Assistant","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"SF Mono","Cascadia Code","Roboto Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:var(--sans);color:var(--ink);padding:14px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:18px 20px 14px;
+  box-shadow:0 22px 60px rgba(32,28,20,.08);max-width:960px;margin:0 auto}
+.head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.tabs{display:flex;gap:6px;background:var(--bg);border:1px solid var(--line-soft);border-radius:10px;padding:4px}
+.tabs button{border:0;background:transparent;color:var(--muted);font:600 13px var(--sans);
+  padding:7px 14px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.tabs button.active{background:var(--ink);color:var(--paper)}
+.hint{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.layout{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap}
+.map-wrap{position:relative;padding-left:96px;padding-top:46px;padding-bottom:44px;flex:0 1 auto}
+.axis{font-size:12px;color:var(--muted);letter-spacing:.03em;line-height:1.35}
+.axis b{color:var(--ink);font-weight:650}
+.axis-y{position:absolute;left:0;top:46px;bottom:44px;width:90px;display:flex;flex-direction:column;justify-content:center;text-align:right;padding-right:8px}
+.axis-x{position:absolute;left:96px;right:0;bottom:0;text-align:center}
+.sweep{position:absolute;left:96px;width:min(400px,calc(100vw - 180px));display:flex;align-items:center;gap:8px;
+  color:var(--linear);font-size:12px;font-weight:700}
+.sweep.top{top:18px} .sweep.bottom{bottom:22px}
+.sweep .line{flex:1;height:0;border-top:2.2px solid var(--linear);position:relative}
+.sweep .line::after{content:'';position:absolute;top:-5.5px;border:5.5px solid transparent}
+.sweep.top .line::after{right:-1px;border-left:9px solid var(--linear)}
+.sweep.bottom .line::after{left:-1px;border-right:9px solid var(--linear)}
+.map{display:grid;grid-template-columns:repeat(16,1fr);grid-template-rows:repeat(16,1fr);
+  width:min(400px,calc(100vw - 180px));aspect-ratio:1;
+  border:1.5px solid var(--ink);border-radius:6px;overflow:hidden;background:white}
+.cell{border-right:1px solid rgba(22,21,19,.08);border-bottom:1px solid rgba(22,21,19,.08)}
+.cell.exact{background:var(--exact-soft)}
+.cell.pooled{background:var(--pooled-soft)}
+.cell.linear{background:var(--linear-soft)}
+/* merged groups: drop internal borders */
+.cell.mr{border-right-color:transparent}
+.cell.mb{border-bottom-color:transparent}
+.cell.mr-strong{border-right:1.4px solid rgba(22,21,19,.5)}
+.cell.mb-strong{border-bottom:1.4px solid rgba(22,21,19,.5)}
+.cell.hot{outline:2.5px solid var(--ink);outline-offset:-2.5px;z-index:2;position:relative}
+.map.has-hover .cell:not(.is-row):not(.is-col){opacity:.28}
+.map.has-hover .cell.is-col:not(.is-row){opacity:.6}
+.tooltip{position:absolute;pointer-events:none;background:var(--ink);color:var(--paper);font-size:11.5px;
+  line-height:1.45;padding:7px 10px;border-radius:8px;max-width:250px;opacity:0;transition:opacity .12s;z-index:5}
+.tooltip.on{opacity:1}
+.tooltip b{color:#f2b19e}
+.side{flex:1 1 240px;min-width:230px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin-bottom:13px;font:600 12.5px var(--sans)}
+.legend span{display:flex;align-items:center;gap:8px}
+.swatch{width:14px;height:14px;border-radius:4px}
+.swatch.exact{background:var(--exact)} .swatch.pooled{background:var(--pooled)} .swatch.linear{background:var(--linear)}
+.meta{display:flex;flex-direction:column;gap:6px;margin-bottom:13px;font-size:12.5px}
+.meta div{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dashed var(--line-soft);padding-bottom:6px}
+.meta span{color:var(--muted)} .meta b{font-family:var(--mono);font-weight:600;text-align:right}
+.copy{font-size:13.5px;line-height:1.6;margin:0}
+.foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--line-soft);
+  font-size:11.5px;color:var(--muted);line-height:1.5}
+@media(max-width:760px){.layout{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head">
+    <div class="tabs" id="tabs"></div>
+    <span class="hint">Hover to inspect</span>
+  </div>
+  <div class="layout">
+    <div class="map-wrap">
+      <div class="axis axis-y" id="axisY"></div>
+      <div class="sweep top" id="sweepTop" style="display:none"><span>forward state S&rarr;</span><span class="line"></span></div>
+      <div class="map" id="map" role="img"></div>
+      <div class="sweep bottom" id="sweepBottom" style="display:none"><span class="line"></span><span>reverse state S&larr;</span></div>
+      <div class="axis axis-x" id="axisX"></div>
+      <div class="tooltip" id="tip"></div>
+    </div>
+    <div class="side">
+      <div class="legend" id="legend"></div>
+      <div class="meta" id="meta"></div>
+      <p class="copy" id="copy"></p>
+    </div>
+  </div>
+  <div class="foot" id="foot"></div>
+</div>
+<script>
+const N = 16, P = 4;
+const CEX = [2, 0, 3, 1]; // exact large-block column kept in each large block row
+const METHODS = {
+  fasth3: {
+    tab: 'FastH3 (VSA)', unit: 'block',
+    axisY: '<b>Query blocks</b><br>pooled ÷64',
+    axisX: '<b>Key/value blocks</b><br>pooled ÷64',
+    // each large block row keeps one whole large block exact; everything else is one pooled 4x4 super-cell per group
+    branch: (i, j) => Math.floor(j / P) === CEX[Math.floor(i / P)] ? 'exact' : 'pooled',
+    merge(i, j) { return { mr: (j + 1) % P !== 0 && j + 1 < N, mb: (i + 1) % P !== 0 && i + 1 < N }; },
+    meta: [['Unit', 'block'], ['Exact path', '1 large block per block row'], ['Compressed branch', 'Q and KV pooled ÷64']],
+    tip: (i, j) => METHODS.fasth3.branch(i, j) === 'exact'
+      ? `<b>exact path</b><br>large block (${Math.floor(i / P) + 1}, ${Math.floor(j / P) + 1}): one whole 4&times;4 block pair kept exact in this block row`
+      : `<b>compressed branch</b><br>pooled query block ${Math.floor(i / P) + 1} &times; pooled KV block ${Math.floor(j / P) + 1}: one coarse score for 4&times;4 token blocks`,
+    copy: '<b>VSA pools both sides.</b> Query blocks and key/value blocks are each pooled 64&times;, so the compressed branch is one coarse map: every score stands for a whole group of queries, and per-query detail is lost. The exact path (coral) keeps one whole large block per block row at full resolution &mdash; exactness is also shared at block granularity.',
+    foot: 'Schematic at toy scale: 16 blocks per axis grouped into 4&times;4 large blocks; pooling factor 4 stands in for 64&times; in production. Coral cells are exact, merged blue cells share one pooled score.',
+    legend: ['exact', 'pooled']
+  },
+  sol: {
+    tab: 'Sol-Attn / Spark-H3', unit: 'block',
+    axisY: '<b>Query blocks</b><br>full resolution',
+    axisX: '<b>Key/value blocks</b><br>pooled ÷64',
+    // each large block row keeps one whole 4x4 block exact; every other large block is KV-pooled:
+    // each full-resolution query row reads the pooled KV once, so the block is tiled by four 1x4 strips
+    branch: (i, j) => Math.floor(j / P) === CEX[Math.floor(i / P)] ? 'exact' : 'pooled',
+    merge(i, j) { return { mr: (j + 1) % P !== 0 && j + 1 < N, mb: false }; },
+    meta: [['Unit', 'block'], ['Exact path', '4&times;4 block per block row'], ['Compressed branch', 'KV pooled ÷64 &rarr; 1&times;4 strips']],
+    tip: (i, j) => METHODS.sol.branch(i, j) === 'exact'
+      ? `<b>exact path</b><br>large block (${Math.floor(i / P) + 1}, ${Math.floor(j / P) + 1}): whole 4&times;4 block kept exact in this block row`
+      : `<b>compressed branch</b><br>query block ${i + 1} reads pooled KV block ${Math.floor(j / P) + 1} &mdash; full-resolution query, one pooled key/value`,
+    copy: '<b>Only the KV side is pooled.</b> The exact path (coral) keeps a full 4&times;4 block per block row. In the compressed branch, queries stay at full resolution while keys/values are pooled 64&times;, so each compressed block becomes four 1&times;4 strips &mdash; every query row reads one pooled key/value. Spark-Reweight further weights these pooled estimates instead of averaging them uniformly.',
+    foot: 'Schematic at toy scale: 16 blocks per axis grouped into 4&times;4 large blocks; pooling factor 4 stands in for 64&times; in production. Coral cells are exact; blue 1&times;4 strips are pooled KV blocks, one per full-resolution query row.',
+    legend: ['exact', 'pooled']
+  },
+  openvdn: {
+    tab: 'OpenVDN (VDN-H3)', unit: 'chunk',
+    axisY: '<b>Query chunks</b><br>1 chunk = 5 latent frames',
+    axisX: '<b>Key chunks</b><br>1 chunk = 5 latent frames',
+    branch(i, j) {
+      return (Math.abs(i - j) <= 2 || i === 0 || j === 0 || i === N - 1 || j === N - 1) ? 'exact' : 'linear';
+    },
+    merge: () => ({ mr: false, mb: false }),
+    meta: [['Unit', 'chunk (5 latent frames)'], ['Local & boundary', 'exact softmax'], ['Long-range', 'linear state']],
+    tip: (i, j) => METHODS.openvdn.branch(i, j) === 'exact'
+      ? `<b>exact softmax</b><br>chunk pair (c${i + 1}, c${j + 1}): sliding window or boundary anchor`
+      : `<b>linear branch</b><br>chunk pair (c${i + 1}, c${j + 1}): covered by the bidirectional linear state &mdash; no pairwise computation`,
+    copy: '<b>No pooling &mdash; a linear branch instead.</b> Each chunk writes once into a forward state and a reverse state (arrows show the iteration direction), and every query chunk reads both states back. Long-range context is carried by the recurrent states, never by pooled blocks.',
+    foot: 'Schematic at toy scale: 16 chunks per axis stand in for the production sequence. Coral cells are exact softmax (sliding window plus boundary anchors); purple cells are handled by the linear branch.',
+    legend: ['exact', 'linear']
+  }
+};
+const map = document.getElementById('map'), tip = document.getElementById('tip');
+const tabs = document.getElementById('tabs'), copy = document.getElementById('copy'),
+      meta = document.getElementById('meta'), legend = document.getElementById('legend'),
+      foot = document.getElementById('foot'),
+      axisY = document.getElementById('axisY'), axisX = document.getElementById('axisX'),
+      sweepTop = document.getElementById('sweepTop'), sweepBottom = document.getElementById('sweepBottom');
+const LEGEND_LABEL = { exact: 'exact softmax', pooled: 'pooled (÷64)', linear: 'linear state' };
+let current = 'fasth3';
+
+function render() {
+  const spec = METHODS[current];
+  tabs.innerHTML = '';
+  for (const [key, s] of Object.entries(METHODS)) {
+    const b = document.createElement('button');
+    b.textContent = s.tab;
+    b.className = key === current ? 'active' : '';
+    b.onclick = () => { current = key; render(); };
+    tabs.append(b);
+  }
+  axisY.innerHTML = spec.axisY; axisX.innerHTML = spec.axisX;
+  const isLinear = current === 'openvdn';
+  sweepTop.style.display = isLinear ? '' : 'none';
+  sweepBottom.style.display = isLinear ? '' : 'none';
+  map.innerHTML = '';
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+    const cell = document.createElement('div');
+    const branch = spec.branch(i, j);
+    const m = branch === 'pooled' ? spec.merge(i, j) : { mr: false, mb: false };
+    cell.className = 'cell ' + branch + (m.mr ? ' mr' : '') + (m.mb ? ' mb' : '');
+    cell.dataset.i = i; cell.dataset.j = j;
+    map.append(cell);
+  }
+  legend.innerHTML = spec.legend.map(k =>
+    `<span><span class="swatch ${k}"></span>${LEGEND_LABEL[k]}</span>`).join('');
+  meta.innerHTML = spec.meta.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+  copy.innerHTML = spec.copy;
+  foot.innerHTML = spec.foot;
+  map.setAttribute('aria-label', `${spec.tab} compressed-branch map`);
+  tip.classList.remove('on');
+}
+map.addEventListener('mousemove', e => {
+  const cell = e.target.closest('.cell');
+  map.classList.toggle('has-hover', !!cell);
+  map.querySelectorAll('.is-row,.is-col,.hot').forEach(n => n.classList.remove('is-row', 'is-col', 'hot'));
+  if (!cell) { tip.classList.remove('on'); return; }
+  const i = +cell.dataset.i, j = +cell.dataset.j;
+  map.querySelectorAll('.cell').forEach(n => {
+    if (+n.dataset.i === i) n.classList.add('is-row');
+    if (+n.dataset.j === j) n.classList.add('is-col');
+  });
+  cell.classList.add('hot');
+  tip.innerHTML = METHODS[current].tip(i, j);
+  tip.classList.add('on');
+  const wrap = map.parentElement.getBoundingClientRect(), r = cell.getBoundingClientRect();
+  let x = r.left - wrap.left + r.width + 10, y = r.top - wrap.top - 6;
+  if (x + 260 > wrap.width) x = r.left - wrap.left - 255;
+  if (y + 76 > wrap.height) y = wrap.height - 76;
+  tip.style.left = x + 'px'; tip.style.top = Math.max(0, y) + 'px';
+});
+map.addEventListener('mouseleave', () => {
+  map.classList.remove('has-hover'); tip.classList.remove('on');
+  map.querySelectorAll('.is-row,.is-col,.hot').forEach(n => n.classList.remove('is-row', 'is-col', 'hot'));
+});
+render();
+if (window.parent !== window) new ResizeObserver(() => window.parent.postMessage(
+  { type: 'spark-animation-height', height: Math.ceil(document.body.getBoundingClientRect().height) + 28 },
+  location.origin)).observe(document.body);
+</script>
+</body>
+</html>

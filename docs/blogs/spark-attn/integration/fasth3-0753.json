@@ -1,113 +1,95 @@
 {
-  "prompt": "integrated_multimodal_description: [Shot 1] A sleek, black cat lounges on a sunlit poolside deck, wearing stylish, tiny sunglasses that reflect the shimmering water. The cat's fur glistens under the bright sun, and its relaxed posture exudes cool confidence. Nearby, a colorful beach towel and a half-empty glass of lemonade add to the summery vibe. The cat occasionally stretches, its sunglasses staying perfectly in place, while the gentle ripples in the pool create a soothing background. The scene captures a perfect blend of feline elegance and laid-back summer fun.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
-  "variants": [
-    {
-      "variant": "v1_dense_native",
-      "status": "complete",
-      "generation_seconds": 189.5462234467268,
-      "archive": "/fasth3-0753/archives/v1_dense_native.mkv",
-      "preview": "/fasth3-0753/media/v1_dense_native.mp4"
-    },
-    {
-      "variant": "v1_dense_spark",
-      "status": "complete",
-      "generation_seconds": 291.78952814266086,
-      "archive": "/fasth3-0753/archives/v1_dense_spark.mkv",
-      "preview": "/fasth3-0753/media/v1_dense_spark.mp4"
-    },
-    {
-      "variant": "v1_vsa_native",
-      "status": "complete",
-      "generation_seconds": 106.40349524095654,
-      "archive": "/fasth3-0753/archives/v1_vsa_native.mkv",
-      "preview": "/fasth3-0753/media/v1_vsa_native.mp4"
-    },
-    {
-      "variant": "v1_vsa_spark",
-      "status": "complete",
-      "generation_seconds": 119.55374961346388,
-      "archive": "/fasth3-0753/archives/v1_vsa_spark.mkv",
-      "preview": "/fasth3-0753/media/v1_vsa_spark.mp4"
-    },
-    {
-      "variant": "v2_native",
-      "status": "complete",
-      "generation_seconds": 215.1226333938539,
-      "archive": "/fasth3-0753/archives/v2_native.mkv",
-      "preview": "/fasth3-0753/media/v2_native.mp4"
-    },
-    {
-      "variant": "v2_spark",
-      "status": "complete",
-      "generation_seconds": 224.10154290497303,
-      "archive": "/fasth3-0753/archives/v2_spark.mkv",
-      "preview": "/fasth3-0753/media/v2_spark.mp4"
-    },
-    {
-      "variant": "v1_dense_topk10_global",
-      "status": "complete",
-      "generation_seconds": 93.8077827654779,
-      "preview": "/fasth3-0753/media/v1_dense_topk10_global.mp4",
-      "archive": "/fasth3-0753/archives/v1_dense_topk10_global.mkv"
-    },
-    {
-      "variant": "0285_v1_dense_native",
-      "status": "complete",
-      "generation_seconds": 155.12055360898376,
-      "preview": "/fasth3-0753/media/0285_v1_dense_native.mp4",
-      "archive": "/fasth3-0753/archives/0285_v1_dense_native.mkv"
-    },
-    {
-      "variant": "0285_v1_vsa_native",
-      "status": "complete",
-      "generation_seconds": 111.9541324749589,
-      "preview": "/fasth3-0753/media/0285_v1_vsa_native.mp4",
-      "archive": "/fasth3-0753/archives/0285_v1_vsa_native.mkv"
-    },
-    {
-      "variant": "0285_v2_native",
-      "status": "complete",
-      "generation_seconds": 204.8629987463355,
-      "preview": "/fasth3-0753/media/0285_v2_native.mp4",
-      "archive": "/fasth3-0753/archives/0285_v2_native.mkv"
-    },
-    {
-      "variant": "0685_v1_dense_native",
-      "status": "complete",
-      "generation_seconds": 154.86345071345568,
-      "preview": "/fasth3-0753/media/0685_v1_dense_native.mp4",
-      "archive": "/fasth3-0753/archives/0685_v1_dense_native.mkv"
-    },
-    {
-      "variant": "0685_v1_dense_topk10_global",
-      "status": "complete",
-      "generation_seconds": 93.65414498746395,
-      "preview": "/fasth3-0753/media/0685_v1_dense_topk10_global.mp4",
-      "archive": "/fasth3-0753/archives/0685_v1_dense_topk10_global.mkv"
-    },
-    {
-      "variant": "0685_v1_vsa_native",
-      "status": "complete",
-      "generation_seconds": 104.51585615426302,
-      "preview": "/fasth3-0753/media/0685_v1_vsa_native.mp4",
-      "archive": "/fasth3-0753/archives/0685_v1_vsa_native.mkv"
-    },
-    {
-      "variant": "0685_v2_native",
-      "status": "complete",
-      "generation_seconds": 209.148781709373,
-      "preview": "/fasth3-0753/media/0685_v2_native.mp4",
-      "archive": "/fasth3-0753/archives/0685_v2_native.mkv"
-    }
-  ],
-  "preview_encoding": {
-    "video_workers": 3,
-    "encoder_threads": 4,
-    "decoder_threads": 4,
-    "codec": "H264",
-    "crf": 18,
-    "audio": "AAC192k"
+ "prompt": "integrated_multimodal_description: [Shot 1] A sleek, black cat lounges on a sunlit poolside deck, wearing stylish, tiny sunglasses that reflect the shimmering water. The cat's fur glistens under the bright sun, and its relaxed posture exudes cool confidence. Nearby, a colorful beach towel and a half-empty glass of lemonade add to the summery vibe. The cat occasionally stretches, its sunglasses staying perfectly in place, while the gentle ripples in the pool create a soothing background. The scene captures a perfect blend of feline elegance and laid-back summer fun.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
+ "variants": [
+  {
+   "variant": "v1_dense",
+   "status": "complete",
+   "generation_seconds": 148.26247813599184,
+   "denoise_seconds": 120.72124135587364,
+   "preview": "/fasth3-0753/media/v1_dense.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/fasth3_compile5_blog2_20260921/v1_dense/videos/02_vbench_all_0753.mkv"
   },
-  "prompt0285": "integrated_multimodal_description: [Shot 1] A sleek, modern train glides effortlessly over a towering steel bridge, its polished exterior reflecting the golden hues of the setting sun. The bridge, an architectural marvel, spans a deep, verdant valley, with lush forests and a winding river far below. As the train moves, its rhythmic clatter harmonizes with the distant calls of birds and the gentle rustling of leaves. The scene shifts to a close-up of the train's wheels, showcasing their precision and power as they navigate the intricate lattice of the bridge. Finally, the camera pans out to reveal the entire bridge, a majestic structure silhouetted against a vibrant, twilight sky, with the train continuing its journey into the horizon.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
-  "prompt0685": "integrated_multimodal_description: [Shot 1] A lone stormtrooper, clad in iconic white armor, stands on a sunlit beach, holding a futuristic vacuum cleaner. The scene opens with the stormtrooper methodically vacuuming the golden sand, the ocean waves gently lapping in the background. Seagulls fly overhead, casting fleeting shadows on the pristine shore. The stormtrooper's movements are precise and deliberate, contrasting humorously with the serene beach setting. As the camera zooms in, the details of the armor gleam under the bright sunlight, and the vacuum hums softly, creating an amusing juxtaposition of sci-fi and everyday life. The scene concludes with the stormtrooper pausing to look out at the horizon, the vast ocean stretching endlessly, blending the surreal with the mundane.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A"
+  {
+   "variant": "v1_dense_spark10_nowarm",
+   "status": "complete",
+   "generation_seconds": 87.8670192740392,
+   "denoise_seconds": 58.151697610039264,
+   "preview": "/fasth3-0753/media/v1_dense_spark10_nowarm.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/fasth3_compile5_blog2_20260921/v1_dense_spark10_nowarm/videos/02_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "v1_dense_spark10_warm",
+   "status": "complete",
+   "generation_seconds": 103.22152128908783,
+   "denoise_seconds": 74.89943145611323,
+   "preview": "/fasth3-0753/media/v1_dense_spark10_warm.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/fasth3_compile5_blog2_20260921/v1_dense_spark10_warm/videos/02_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "v1_vsa",
+   "status": "complete",
+   "generation_seconds": 104.80344103788957,
+   "denoise_seconds": 66.3463819399476,
+   "preview": "/fasth3-0753/media/v1_vsa.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/fasth3_compile5_blog2_20260921/v1_vsa/videos/02_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "v2_vsa",
+   "status": "complete",
+   "generation_seconds": 182.01301301503554,
+   "denoise_seconds": 153.74499603291042,
+   "preview": "/fasth3-0753/media/v2_vsa.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/fasth3_compile5_blog2_20260921/v2_vsa/videos/02_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "0685_v1_dense",
+   "status": "complete",
+   "generation_seconds": 148.6691373079084,
+   "denoise_seconds": 120.65359424916096,
+   "preview": "/fasth3-0753/media/0685_v1_dense.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/fasth3_retime_0685_20260922/v1_dense/videos/02_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0685_v1_dense_spark10_nowarm",
+   "status": "complete",
+   "generation_seconds": 87.49036171799526,
+   "denoise_seconds": 58.47132304892875,
+   "preview": "/fasth3-0753/media/0685_v1_dense_spark10_nowarm.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/fasth3_retime_0685_20260922/v1_dense_spark10_nowarm/videos/02_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0685_v1_dense_spark10_warm",
+   "status": "complete",
+   "generation_seconds": 103.1328828218393,
+   "denoise_seconds": 74.93138222303241,
+   "preview": "/fasth3-0753/media/0685_v1_dense_spark10_warm.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/fasth3_retime_0685_20260922/v1_dense_spark10_warm/videos/02_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0685_v1_vsa",
+   "status": "complete",
+   "generation_seconds": 92.20715448213741,
+   "denoise_seconds": 65.38910546689294,
+   "preview": "/fasth3-0753/media/0685_v1_vsa.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/fasth3_retime_0685_20260922/v1_vsa/videos/02_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0685_v2_vsa",
+   "status": "complete",
+   "generation_seconds": 181.33866839599796,
+   "denoise_seconds": 153.41226438689046,
+   "preview": "/fasth3-0753/media/0685_v2_vsa.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/fasth3_retime_0685_20260922/v2_vsa/videos/02_vbench_all_0685.mkv"
+  }
+ ],
+ "preview_encoding": {
+  "video_workers": 3,
+  "encoder_threads": 4,
+  "decoder_threads": 4,
+  "codec": "H264",
+  "crf": 18,
+  "audio": "AAC192k"
+ },
+ "prompt0285": "integrated_multimodal_description: [Shot 1] A sleek, modern train glides effortlessly over a towering steel bridge, its polished exterior reflecting the golden hues of the setting sun. The bridge, an architectural marvel, spans a deep, verdant valley, with lush forests and a winding river far below. As the train moves, its rhythmic clatter harmonizes with the distant calls of birds and the gentle rustling of leaves. The scene shifts to a close-up of the train's wheels, showcasing their precision and power as they navigate the intricate lattice of the bridge. Finally, the camera pans out to reveal the entire bridge, a majestic structure silhouetted against a vibrant, twilight sky, with the train continuing its journey into the horizon.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A",
+ "prompt0685": "integrated_multimodal_description: [Shot 1] A lone stormtrooper, clad in iconic white armor, stands on a sunlit beach, holding a futuristic vacuum cleaner. The scene opens with the stormtrooper methodically vacuuming the golden sand, the ocean waves gently lapping in the background. Seagulls fly overhead, casting fleeting shadows on the pristine shore. The stormtrooper's movements are precise and deliberate, contrasting humorously with the serene beach setting. As the camera zooms in, the details of the armor gleam under the bright sunlight, and the vacuum hums softly, creating an amusing juxtaposition of sci-fi and everyday life. The scene concludes with the stormtrooper pausing to look out at the horizon, the vast ocean stretching endlessly, blending the surreal with the mundane.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A"
 }

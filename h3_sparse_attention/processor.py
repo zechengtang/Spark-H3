@@ -25,6 +25,8 @@ class H3SparseAttentionConfig:
     sol_thresh_type: str = "diag"
     sol_kv_splits: int = 1
     sol_dense_layers: int = 1
+    sol_extra_dense_evaluations: tuple[int, ...] = ()
+    sol_extra_dense_layers: tuple[int, ...] = ()
     sol_force_local_blocks: bool | None = None
 
     sol_route_topk_ratio: float | None = None
@@ -79,6 +81,18 @@ class H3SparseAttentionConfig:
             raise ValueError("sol_kv_splits must be a positive integer")
         if type(self.sol_dense_layers) is not int or self.sol_dense_layers < 0:
             raise ValueError("sol_dense_layers must be a nonnegative integer")
+        if type(self.sol_extra_dense_evaluations) is not tuple or not all(
+                type(e) is int and 0 <= e < self.total_evaluations
+                for e in self.sol_extra_dense_evaluations):
+            raise ValueError("sol_extra_dense_evaluations must be a tuple of evaluation "
+                             "indices in [0, total_evaluations)")
+        object.__setattr__(self, "sol_extra_dense_evaluations",
+                           tuple(sorted(set(self.sol_extra_dense_evaluations))))
+        if type(self.sol_extra_dense_layers) is not tuple or not all(
+                type(layer) is int and layer >= 0 for layer in self.sol_extra_dense_layers):
+            raise ValueError("sol_extra_dense_layers must be a tuple of nonnegative layer indices")
+        object.__setattr__(self, "sol_extra_dense_layers",
+                           tuple(sorted(set(self.sol_extra_dense_layers))))
         if self.sol_force_local_blocks is not None and type(self.sol_force_local_blocks) is not bool:
             raise ValueError("sol_force_local_blocks must be bool")
 
@@ -309,6 +323,7 @@ class _Controller:
         self.landmark_reblock_hierarchy = None
         self.sol_virtual_query_layout = None
         self.sol_route_density = None
+        self.head_topk_budget = None
 
     def begin_forward(self, _module, args, kwargs):
         self.evaluation_index += 1
@@ -336,6 +351,8 @@ class _Controller:
                     completed_evaluations=self.evaluation_index + 1,
                     total_evaluations=self.config.total_evaluations,
                     dense_evaluations=self.config.dense_evaluations,
+                    sol_extra_dense_evaluations=self.config.sol_extra_dense_evaluations,
+                    sol_extra_dense_layers=self.config.sol_extra_dense_layers,
                     processor_calls=dict(self.counts),
                     sol_route_density=self.sol_route_density,
                     sol_virtual_query_layout=self.sol_virtual_query_layout,
@@ -349,6 +366,13 @@ def _sol_attention(controller, q, k, v, layout, layer, *, return_bthd=False):
     from sol_attn import get_sol_attn_backend, sol_attn
 
     cfg = controller.config
+    allocator = getattr(controller, "head_budget_allocator", None)
+    if allocator is not None:
+        if cfg.sol_route_topk_ratio is None:
+            raise ValueError("head budget allocation requires a Top-K configuration")
+        controller.head_topk_budget = allocator(layer, controller.evaluation_index, v, layout.video_tokens)
+    else:
+        controller.head_topk_budget = None
     if cfg.sol_landmark_preprocess or cfg.sol_route_topk_ratio is not None:
         from .spark_integration import spark_attention
         return spark_attention(controller, q, k, v, layout, layer, return_bthd=return_bthd)
@@ -384,6 +408,14 @@ class _H3SparseProcessor:
         layout = controller.layout
         if controller.is_warmup:
             return self._dense(attn, hidden_states, rotary_emb, attention_mask, "warmup")
+        if controller.evaluation_index in controller.config.sol_extra_dense_evaluations:
+            return self._dense(
+                attn,
+                hidden_states,
+                rotary_emb,
+                attention_mask,
+                "extra_dense_evaluation",
+            )
         if self.layer < controller.config.sol_dense_layers:
             return self._dense(
                 attn,
@@ -391,6 +423,14 @@ class _H3SparseProcessor:
                 rotary_emb,
                 attention_mask,
                 "dense_layer",
+            )
+        if self.layer in controller.config.sol_extra_dense_layers:
+            return self._dense(
+                attn,
+                hidden_states,
+                rotary_emb,
+                attention_mask,
+                "extra_dense_layer",
             )
         if layout is None:
             raise RuntimeError("sparse H3 processor did not receive packed-layout metadata")
@@ -409,11 +449,19 @@ class _H3SparseProcessor:
         if attn.fused_projections:
             query, key, value = attn.to_qkv(hidden_states).chunk(3, dim=-1)
         else:
-            query, key, value = (
-                attn.to_q(hidden_states),
-                attn.to_k(hidden_states),
-                attn.to_v(hidden_states),
-            )
+            shared_qkv = None
+            if hasattr(attn.to_q, "forward_quantized"):
+                # fp8-converted projections: one quantisation of x feeds all three.
+                from .fp8_linear import forward_qkv_shared
+                shared_qkv = forward_qkv_shared(attn, hidden_states)
+            if shared_qkv is not None:
+                query, key, value = shared_qkv
+            else:
+                query, key, value = (
+                    attn.to_q(hidden_states),
+                    attn.to_k(hidden_states),
+                    attn.to_v(hidden_states),
+                )
         query = attn.norm_q(query.unflatten(-1, (attn.heads, -1)))
         key = attn.norm_k(key.unflatten(-1, (attn.heads, -1)))
         value = value.unflatten(-1, (attn.heads, -1))

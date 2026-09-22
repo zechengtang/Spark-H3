@@ -1,118 +1,358 @@
 {
-  "cases": {
-    "0753": {
-      "index": 46,
-      "sample_id": "vbench_all_0753",
-      "seed": 100753,
-      "source_suite": "overall_consistency",
-      "vbench_dimensions": [
-        "aesthetic_quality",
-        "imaging_quality"
-      ],
-      "suite_index": 70,
-      "all_dimension_index": 753,
-      "all_dimension_line": 754,
-      "original_prompt": "A cat wearing sunglasses at a pool",
-      "longer_prompt": "A sleek, black cat lounges on a sunlit poolside deck, wearing stylish, tiny sunglasses that reflect the shimmering water. The cat's fur glistens under the bright sun, and its relaxed posture exudes cool confidence. Nearby, a colorful beach towel and a half-empty glass of lemonade add to the summery vibe. The cat occasionally stretches, its sunglasses staying perfectly in place, while the gentle ripples in the pool create a soothing background. The scene captures a perfect blend of feline elegance and laid-back summer fun.",
-      "generation_prompt": "integrated_multimodal_description: [Shot 1] A sleek, black cat lounges on a sunlit poolside deck, wearing stylish, tiny sunglasses that reflect the shimmering water. The cat's fur glistens under the bright sun, and its relaxed posture exudes cool confidence. Nearby, a colorful beach towel and a half-empty glass of lemonade add to the summery vibe. The cat occasionally stretches, its sunglasses staying perfectly in place, while the gentle ripples in the pool create a soothing background. The scene captures a perfect blend of feline elegance and laid-back summer fun.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A"
-    },
-    "0685": {
-      "index": 32,
-      "sample_id": "vbench_all_0685",
-      "seed": 100685,
-      "source_suite": "overall_consistency",
-      "vbench_dimensions": [
-        "aesthetic_quality",
-        "imaging_quality"
-      ],
-      "suite_index": 2,
-      "all_dimension_index": 685,
-      "all_dimension_line": 686,
-      "original_prompt": "A storm trooper vacuuming the beach.",
-      "longer_prompt": "A lone stormtrooper, clad in iconic white armor, stands on a sunlit beach, holding a futuristic vacuum cleaner. The scene opens with the stormtrooper methodically vacuuming the golden sand, the ocean waves gently lapping in the background. Seagulls fly overhead, casting fleeting shadows on the pristine shore. The stormtrooper's movements are precise and deliberate, contrasting humorously with the serene beach setting. As the camera zooms in, the details of the armor gleam under the bright sunlight, and the vacuum hums softly, creating an amusing juxtaposition of sci-fi and everyday life. The scene concludes with the stormtrooper pausing to look out at the horizon, the vast ocean stretching endlessly, blending the surreal with the mundane.",
-      "generation_prompt": "integrated_multimodal_description: [Shot 1] A lone stormtrooper, clad in iconic white armor, stands on a sunlit beach, holding a futuristic vacuum cleaner. The scene opens with the stormtrooper methodically vacuuming the golden sand, the ocean waves gently lapping in the background. Seagulls fly overhead, casting fleeting shadows on the pristine shore. The stormtrooper's movements are precise and deliberate, contrasting humorously with the serene beach setting. As the camera zooms in, the details of the armor gleam under the bright sunlight, and the vacuum hums softly, creating an amusing juxtaposition of sci-fi and everyday life. The scene concludes with the stormtrooper pausing to look out at the horizon, the vast ocean stretching endlessly, blending the surreal with the mundane.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A"
-    }
+ "cases": {
+  "0753": {
+   "index": 46,
+   "sample_id": "vbench_all_0753",
+   "seed": 100753,
+   "source_suite": "overall_consistency",
+   "vbench_dimensions": [
+    "aesthetic_quality",
+    "imaging_quality"
+   ],
+   "suite_index": 70,
+   "all_dimension_index": 753,
+   "all_dimension_line": 754,
+   "original_prompt": "A cat wearing sunglasses at a pool",
+   "longer_prompt": "A sleek, black cat lounges on a sunlit poolside deck, wearing stylish, tiny sunglasses that reflect the shimmering water. The cat's fur glistens under the bright sun, and its relaxed posture exudes cool confidence. Nearby, a colorful beach towel and a half-empty glass of lemonade add to the summery vibe. The cat occasionally stretches, its sunglasses staying perfectly in place, while the gentle ripples in the pool create a soothing background. The scene captures a perfect blend of feline elegance and laid-back summer fun.",
+   "generation_prompt": "integrated_multimodal_description: [Shot 1] A sleek, black cat lounges on a sunlit poolside deck, wearing stylish, tiny sunglasses that reflect the shimmering water. The cat's fur glistens under the bright sun, and its relaxed posture exudes cool confidence. Nearby, a colorful beach towel and a half-empty glass of lemonade add to the summery vibe. The cat occasionally stretches, its sunglasses staying perfectly in place, while the gentle ripples in the pool create a soothing background. The scene captures a perfect blend of feline elegance and laid-back summer fun.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A"
   },
-  "variants": [
-    {
-      "variant": "0753_lightx2v_dense",
-      "status": "complete",
-      "generation_seconds": 308.06120268628,
-      "denoise_seconds": 250.02373736724257,
-      "transition_seconds": 37.34643806889653,
-      "decode_seconds": 20.691027250140905,
-      "archive": "/turbo-lora/archives/0753_lightx2v_dense.mkv",
-      "preview": "/turbo-lora/media/0753_lightx2v_dense.mp4"
-    },
-    {
-      "variant": "0753_lightx2v_sparse",
-      "status": "complete",
-      "generation_seconds": 211.6011572405696,
-      "denoise_seconds": 156.63972605019808,
-      "transition_seconds": 34.292217418551445,
-      "decode_seconds": 20.66921377182007,
-      "archive": "/turbo-lora/archives/0753_lightx2v_sparse.mkv",
-      "preview": "/turbo-lora/media/0753_lightx2v_sparse.mp4"
-    },
-    {
-      "variant": "0753_larry_dense",
-      "status": "complete",
-      "generation_seconds": 303.9344714730978,
-      "denoise_seconds": 247.5883586294949,
-      "transition_seconds": 35.84968802705407,
-      "decode_seconds": 20.496424816548824,
-      "archive": "/turbo-lora/archives/0753_larry_dense.mkv",
-      "preview": "/turbo-lora/media/0753_larry_dense.mp4"
-    },
-    {
-      "variant": "0753_larry_sparse",
-      "status": "complete",
-      "generation_seconds": 210.8645770214498,
-      "denoise_seconds": 156.18136090785265,
-      "transition_seconds": 34.00859394669533,
-      "decode_seconds": 20.674622166901827,
-      "archive": "/turbo-lora/archives/0753_larry_sparse.mkv",
-      "preview": "/turbo-lora/media/0753_larry_sparse.mp4"
-    },
-    {
-      "variant": "0685_lightx2v_dense",
-      "status": "complete",
-      "generation_seconds": 305.24056992307305,
-      "denoise_seconds": 250.1941128782928,
-      "transition_seconds": 34.497881434857845,
-      "decode_seconds": 20.54857560992241,
-      "archive": "/turbo-lora/archives/0685_lightx2v_dense.mkv",
-      "preview": "/turbo-lora/media/0685_lightx2v_dense.mp4"
-    },
-    {
-      "variant": "0685_lightx2v_sparse",
-      "status": "complete",
-      "generation_seconds": 212.75212591141462,
-      "denoise_seconds": 156.63330257311463,
-      "transition_seconds": 35.27211758494377,
-      "decode_seconds": 20.84670575335622,
-      "archive": "/turbo-lora/archives/0685_lightx2v_sparse.mkv",
-      "preview": "/turbo-lora/media/0685_lightx2v_sparse.mp4"
-    },
-    {
-      "variant": "0685_larry_dense",
-      "status": "complete",
-      "generation_seconds": 302.7104064822197,
-      "denoise_seconds": 247.78066803142428,
-      "transition_seconds": 34.37522169947624,
-      "decode_seconds": 20.55451675131917,
-      "archive": "/turbo-lora/archives/0685_larry_dense.mkv",
-      "preview": "/turbo-lora/media/0685_larry_dense.mp4"
-    },
-    {
-      "variant": "0685_larry_sparse",
-      "status": "complete",
-      "generation_seconds": 211.73264404386282,
-      "denoise_seconds": 156.36483188346028,
-      "transition_seconds": 34.57496350631118,
-      "decode_seconds": 20.792848654091358,
-      "archive": "/turbo-lora/archives/0685_larry_sparse.mkv",
-      "preview": "/turbo-lora/media/0685_larry_sparse.mp4"
-    }
-  ]
+  "0685": {
+   "index": 32,
+   "sample_id": "vbench_all_0685",
+   "seed": 100685,
+   "source_suite": "overall_consistency",
+   "vbench_dimensions": [
+    "aesthetic_quality",
+    "imaging_quality"
+   ],
+   "suite_index": 2,
+   "all_dimension_index": 685,
+   "all_dimension_line": 686,
+   "original_prompt": "A storm trooper vacuuming the beach.",
+   "longer_prompt": "A lone stormtrooper, clad in iconic white armor, stands on a sunlit beach, holding a futuristic vacuum cleaner. The scene opens with the stormtrooper methodically vacuuming the golden sand, the ocean waves gently lapping in the background. Seagulls fly overhead, casting fleeting shadows on the pristine shore. The stormtrooper's movements are precise and deliberate, contrasting humorously with the serene beach setting. As the camera zooms in, the details of the armor gleam under the bright sunlight, and the vacuum hums softly, creating an amusing juxtaposition of sci-fi and everyday life. The scene concludes with the stormtrooper pausing to look out at the horizon, the vast ocean stretching endlessly, blending the surreal with the mundane.",
+   "generation_prompt": "integrated_multimodal_description: [Shot 1] A lone stormtrooper, clad in iconic white armor, stands on a sunlit beach, holding a futuristic vacuum cleaner. The scene opens with the stormtrooper methodically vacuuming the golden sand, the ocean waves gently lapping in the background. Seagulls fly overhead, casting fleeting shadows on the pristine shore. The stormtrooper's movements are precise and deliberate, contrasting humorously with the serene beach setting. As the camera zooms in, the details of the armor gleam under the bright sunlight, and the vacuum hums softly, creating an amusing juxtaposition of sci-fi and everyday life. The scene concludes with the stormtrooper pausing to look out at the horizon, the vast ocean stretching endlessly, blending the surreal with the mundane.\n\noverall_soundscape: Natural ambient sounds and physical action sounds match the depicted environment and visible motion. Audible events remain temporally synchronized with their visible sources and acoustically consistent across the full video.\n\nnon_diegetic_music: N/A"
+  }
+ },
+ "variants": [
+  {
+   "variant": "0753_lightx2v_dense",
+   "status": "complete",
+   "generation_seconds": 296.2950961512979,
+   "denoise_seconds": 243.67946058814414,
+   "transition_seconds": 32.62017399515025,
+   "decode_seconds": 19.99546156800352,
+   "evaluation_seconds": [
+    30.186938412953168,
+    30.409792989958078,
+    30.371073007117957,
+    30.48121162620373,
+    30.505923645105213,
+    30.548875640844926,
+    30.567484162049368,
+    30.534709868952632
+   ],
+   "preview": "/turbo-lora/media/0753_lightx2v_dense.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_compile3_blog2_20260921/lightx2v_dense/0753_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "0753_lightx2v_spark10",
+   "status": "complete",
+   "generation_seconds": 202.5247361708898,
+   "denoise_seconds": 150.9336665610317,
+   "transition_seconds": 31.790586788905784,
+   "decode_seconds": 19.80048282095231,
+   "evaluation_seconds": [
+    30.53215489909053,
+    30.732637538807467,
+    16.89827236486599,
+    14.49966601189226,
+    14.532689481973648,
+    14.546250288141891,
+    14.558650907827541,
+    14.568506365874782
+   ],
+   "preview": "/turbo-lora/media/0753_lightx2v_spark10.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_compile3_blog2_20260921/lightx2v_spark10/0753_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "0753_lightx2v_spark10_densefirst",
+   "status": "complete",
+   "generation_seconds": 168.9928700271994,
+   "denoise_seconds": 118.33485660911538,
+   "transition_seconds": 30.814949359977618,
+   "decode_seconds": 19.843064058106393,
+   "evaluation_seconds": [
+    16.84441118198447,
+    14.500658128876239,
+    14.382483646040782,
+    14.440732203889638,
+    14.489252323983237,
+    14.51787144690752,
+    14.54187920014374,
+    14.554057011846453
+   ],
+   "preview": "/turbo-lora/media/0753_lightx2v_spark10_densefirst.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_spark10_densefirst/0753_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "0753_larry_dense",
+   "status": "complete",
+   "generation_seconds": 296.7521724861581,
+   "denoise_seconds": 244.72138836910017,
+   "transition_seconds": 32.0979633780662,
+   "decode_seconds": 19.932820738991722,
+   "evaluation_seconds": [
+    30.19660032587126,
+    30.49499153299257,
+    30.489163000136614,
+    30.646845567040145,
+    30.605046487879008,
+    30.658328050049022,
+    30.778063128935173,
+    30.77625854499638
+   ],
+   "preview": "/turbo-lora/media/0753_larry_dense.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_compile3_blog2_20260921/larry_dense/0753_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "0753_larry_spark10",
+   "status": "complete",
+   "generation_seconds": 200.9147824367974,
+   "denoise_seconds": 149.15560791594908,
+   "transition_seconds": 31.872579481918365,
+   "decode_seconds": 19.886595038929954,
+   "evaluation_seconds": [
+    29.98035274189897,
+    30.30099701602012,
+    16.830832117935643,
+    14.35834601894021,
+    14.379388320958242,
+    14.39946397091262,
+    14.420021924888715,
+    14.424077195115387
+   ],
+   "preview": "/turbo-lora/media/0753_larry_spark10.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_compile3_blog2_20260921/larry_spark10/0753_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "0753_larry_spark10_densefirst",
+   "status": "complete",
+   "generation_seconds": 168.57309742015786,
+   "denoise_seconds": 117.37807436590083,
+   "transition_seconds": 31.344636435154825,
+   "decode_seconds": 19.85038661910221,
+   "evaluation_seconds": [
+    16.83386667398736,
+    14.380257532931864,
+    14.265875494107604,
+    14.322482923977077,
+    14.354147309903055,
+    14.375328965019435,
+    14.389458074001595,
+    14.400366521906108
+   ],
+   "preview": "/turbo-lora/media/0753_larry_spark10_densefirst.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_spark10_densefirst/0753_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "0685_lightx2v_dense",
+   "status": "complete",
+   "generation_seconds": 295.0717397038825,
+   "denoise_seconds": 244.00389417400584,
+   "transition_seconds": 31.39248440787196,
+   "decode_seconds": 19.675361122004688,
+   "evaluation_seconds": [
+    30.195814496837556,
+    30.437592886853963,
+    30.365935502108186,
+    30.48983003082685,
+    30.578119333134964,
+    30.571730402996764,
+    30.606484781950712,
+    30.674340514931828
+   ],
+   "preview": "/turbo-lora/media/0685_lightx2v_dense.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_dense/0685_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0685_lightx2v_spark10",
+   "status": "complete",
+   "generation_seconds": 200.02297756820917,
+   "denoise_seconds": 149.1030711370986,
+   "transition_seconds": 31.044958715094253,
+   "decode_seconds": 19.874947716016322,
+   "evaluation_seconds": [
+    29.982339984038845,
+    30.295759777072817,
+    16.781099249143153,
+    14.356803370872512,
+    14.384755288017914,
+    14.398904592962936,
+    14.417058215942234,
+    14.422080998076126
+   ],
+   "preview": "/turbo-lora/media/0685_lightx2v_spark10.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_spark10/0685_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0685_lightx2v_spark10_densefirst",
+   "status": "complete",
+   "generation_seconds": 165.56941760890186,
+   "denoise_seconds": 115.51995226996951,
+   "transition_seconds": 30.39714536885731,
+   "decode_seconds": 19.65231997007504,
+   "evaluation_seconds": [
+    14.240222311811522,
+    14.3002248799894,
+    14.378878163173795,
+    14.443108089035377,
+    14.485740447184071,
+    14.5149557441473,
+    14.529949370073155,
+    14.561561160953715
+   ],
+   "preview": "/turbo-lora/media/0685_lightx2v_spark10_densefirst.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_spark10_densefirst/0685_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0685_larry_dense",
+   "status": "complete",
+   "generation_seconds": 295.55015601823106,
+   "denoise_seconds": 244.91680308501236,
+   "transition_seconds": 30.704171433113515,
+   "decode_seconds": 19.929181500105187,
+   "evaluation_seconds": [
+    30.170315007213503,
+    30.514689579838887,
+    30.480539810843766,
+    30.560805084183812,
+    30.610666787019,
+    30.722478420007974,
+    30.979512956924736,
+    30.803008244838566
+   ],
+   "preview": "/turbo-lora/media/0685_larry_dense.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_dense/0685_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0685_larry_spark10",
+   "status": "complete",
+   "generation_seconds": 202.4424405391328,
+   "denoise_seconds": 150.65557402698323,
+   "transition_seconds": 31.909338876139373,
+   "decode_seconds": 19.8775276360102,
+   "evaluation_seconds": [
+    30.295023020124063,
+    30.655706502962857,
+    16.947108324849978,
+    14.490141422953457,
+    14.510948388138786,
+    14.537572390167043,
+    14.550834064139053,
+    14.561047826195136
+   ],
+   "preview": "/turbo-lora/media/0685_larry_spark10.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_spark10/0685_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0685_larry_spark10_densefirst",
+   "status": "complete",
+   "generation_seconds": 165.55943873198703,
+   "denoise_seconds": 114.52604879601859,
+   "transition_seconds": 31.340554320951924,
+   "decode_seconds": 19.69283561501652,
+   "evaluation_seconds": [
+    14.160320736002177,
+    14.193062068196014,
+    14.263703095028177,
+    14.315708108013496,
+    14.362298291176558,
+    14.373574854107574,
+    14.390453339088708,
+    14.407862504012883
+   ],
+   "preview": "/turbo-lora/media/0685_larry_spark10_densefirst.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_spark10_densefirst/0685_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0753_lightx2v_spark10_nowarm",
+   "status": "complete",
+   "generation_seconds": 167.47399550210685,
+   "denoise_seconds": 115.9316202250775,
+   "transition_seconds": 31.74322090507485,
+   "decode_seconds": 19.7991543719545,
+   "evaluation_seconds": [
+    16.74140637810342,
+    14.185675801942125,
+    14.04486484779045,
+    14.117999330861494,
+    14.153272229945287,
+    14.187260207021609,
+    14.20574707002379,
+    14.22249085106887
+   ],
+   "preview": "/turbo-lora/media/0753_lightx2v_nowarm.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_spark10_nowarm/0753_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "0685_lightx2v_spark10_nowarm",
+   "status": "complete",
+   "generation_seconds": 164.22588348924182,
+   "denoise_seconds": 113.004516400164,
+   "transition_seconds": 31.608340935083106,
+   "decode_seconds": 19.613026153994724,
+   "evaluation_seconds": [
+    13.9500535170082,
+    13.978527227882296,
+    14.04361668904312,
+    14.113971525104716,
+    14.176347794011235,
+    14.209949953947216,
+    14.225268363952637,
+    14.238396663917229
+   ],
+   "preview": "/turbo-lora/media/0685_lightx2v_nowarm.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_spark10_nowarm/0685_vbench_all_0685.mkv"
+  },
+  {
+   "variant": "0753_larry_spark10_nowarm",
+   "status": "complete",
+   "generation_seconds": 166.2304958528839,
+   "denoise_seconds": 114.8216041920241,
+   "transition_seconds": 31.315151027869433,
+   "decode_seconds": 20.093740632990375,
+   "evaluation_seconds": [
+    16.51771325408481,
+    14.047710801009089,
+    13.941491613863036,
+    13.9951253591571,
+    14.039543765131384,
+    14.05829346110113,
+    14.074005840113387,
+    14.086545480880886
+   ],
+   "preview": "/turbo-lora/media/0753_larry_nowarm.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_spark10_nowarm/0753_vbench_all_0753.mkv"
+  },
+  {
+   "variant": "0685_larry_spark10_nowarm",
+   "status": "complete",
+   "generation_seconds": 162.78195225284435,
+   "denoise_seconds": 111.92502534296364,
+   "transition_seconds": 31.26537122996524,
+   "decode_seconds": 19.591555679915473,
+   "evaluation_seconds": [
+    13.869959185132757,
+    13.865068522980437,
+    13.94152993708849,
+    13.987817852990702,
+    14.02446157601662,
+    14.036563158966601,
+    14.057780314004049,
+    14.07477845903486
+   ],
+   "preview": "/turbo-lora/media/0685_larry_nowarm.mp4",
+   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_spark10_nowarm/0685_vbench_all_0685.mkv"
+  }
+ ]
 }

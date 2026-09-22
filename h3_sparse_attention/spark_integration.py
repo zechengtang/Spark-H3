@@ -618,7 +618,15 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     backend = sol_topk_threshold_backend(q.device)
     partial_video = sink_tokens == 0 and layout.video_tokens // 64 < math.ceil(q.shape[1] / 64)
     threshold = route = summaries = None
-    if cfg.sol_route_global_weighted_mean:
+    head_budget = getattr(controller, "head_topk_budget", None)
+    if head_budget is not None:
+        from .head_budget import route_with_head_budgets
+        scores, _, kb, qb, target = _sol_topk_policy_scores(
+            q, kc, video_tokens=layout.video_tokens, topk_ratio=cfg.sol_route_topk_ratio)
+        route = route_with_head_budgets(scores, head_budget, kb, layout.video_tokens, sink_tokens)
+        stats = dict(candidate_video_blocks=kb, query_video_blocks=qb,
+            target_topk_blocks_per_query=target, route_threshold_mode="per_head_exact_topk")
+    elif cfg.sol_route_global_weighted_mean:
         from .global_weighted_route import global_weighted_route
         route, stats = global_weighted_route(q, k,
             video_tokens=layout.video_tokens, sink_tokens=sink_tokens,

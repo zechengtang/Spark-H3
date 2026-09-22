@@ -1,66 +1,146 @@
 {
-  "/fasth3-0753/media/0685_v1_dense_native.mp4": {
-    "file": "integration/fasth3-0753/media/0685_v1_dense_native.mp4",
-    "sha256": "023d08c195a23aedf549bae79a7c5b924093bb922fccbd03be56791c404e22fb"
-  },
-  "/fasth3-0753/media/0685_v1_dense_topk10_global.mp4": {
-    "file": "integration/fasth3-0753/media/0685_v1_dense_topk10_global.mp4",
-    "sha256": "060529963132947a908137e527813a94904d43036ed794979e843b05f8442aa6"
-  },
-  "/fasth3-0753/media/0685_v1_vsa_native.mp4": {
-    "file": "integration/fasth3-0753/media/0685_v1_vsa_native.mp4",
-    "sha256": "e2a2cae5f080b8f0ee689761bcfe0b5fdd52b26b2e96da22f31bc5715839a501"
-  },
-  "/fasth3-0753/media/0685_v2_native.mp4": {
-    "file": "integration/fasth3-0753/media/0685_v2_native.mp4",
-    "sha256": "554c688c7693734484460b4c1df4f2289c30c5a81e66c0b90fff2ad656c75aeb"
-  },
-  "/fasth3-0753/media/v1_dense_native.mp4": {
-    "file": "integration/fasth3-0753/media/v1_dense_native.mp4",
-    "sha256": "0cb5ba99d5fe1be6894191d5c79e145ecbdfb24e93d96ecbf2c4c622588ec337"
-  },
-  "/fasth3-0753/media/v1_dense_topk10_global.mp4": {
-    "file": "integration/fasth3-0753/media/v1_dense_topk10_global.mp4",
-    "sha256": "f0465e3dcf7f9d22b8dcabbe7dc1cb21a9d8921727e9e6d4db426ce65ed8f199"
-  },
-  "/fasth3-0753/media/v1_vsa_native.mp4": {
-    "file": "integration/fasth3-0753/media/v1_vsa_native.mp4",
-    "sha256": "cd88511d13f614eff78b07ed1eea47782bf2def91644d07e6a4637827eaf7581"
-  },
-  "/fasth3-0753/media/v2_native.mp4": {
-    "file": "integration/fasth3-0753/media/v2_native.mp4",
-    "sha256": "64d5528bd08940315208bef78e7e60d464e831436ccac8e67fa85e4019197343"
-  },
-  "/turbo-lora/media/0685_larry_dense.mp4": {
-    "file": "integration/turbo-lora/media/0685_larry_dense.mp4",
-    "sha256": "808d4372445fdff635fe6ece135358d7c8c772cd0ac6424f7c7a867f31b28171"
-  },
-  "/turbo-lora/media/0685_larry_sparse.mp4": {
-    "file": "integration/turbo-lora/media/0685_larry_sparse.mp4",
-    "sha256": "ad20a2bd0a50f5ca24e84d6ab2657ca3523f13fef9a7c6b584fb2a2357d3eac5"
-  },
-  "/turbo-lora/media/0685_lightx2v_dense.mp4": {
-    "file": "integration/turbo-lora/media/0685_lightx2v_dense.mp4",
-    "sha256": "0793ae57eced015b177afcfc7575584cc7d19c51cc887e6d908e329cdef6aa85"
-  },
-  "/turbo-lora/media/0685_lightx2v_sparse.mp4": {
-    "file": "integration/turbo-lora/media/0685_lightx2v_sparse.mp4",
-    "sha256": "fd885fd0cb3ed5968f6f18beb68b79b6015369f17ce0be5af95badf9cc8f8dac"
-  },
-  "/turbo-lora/media/0753_larry_dense.mp4": {
-    "file": "integration/turbo-lora/media/0753_larry_dense.mp4",
-    "sha256": "ffb6a853efb8cff12ea98546c6008996205f1e381153be79d9c4fc68c51455f3"
-  },
-  "/turbo-lora/media/0753_larry_sparse.mp4": {
-    "file": "integration/turbo-lora/media/0753_larry_sparse.mp4",
-    "sha256": "32115c3a958f99abb347eec6da548bc7222198f34b66b1a55f08798f6b02e3e4"
-  },
-  "/turbo-lora/media/0753_lightx2v_dense.mp4": {
-    "file": "integration/turbo-lora/media/0753_lightx2v_dense.mp4",
-    "sha256": "0e329466a677b696b64c857a5793dc2dd57d7578943c41c40d093f1d32fe41d0"
-  },
-  "/turbo-lora/media/0753_lightx2v_sparse.mp4": {
-    "file": "integration/turbo-lora/media/0753_lightx2v_sparse.mp4",
-    "sha256": "ba21f14822f9c42e4f69c786b5e1a8667ec747991ebb462bea3da146eb9742b6"
-  }
+ "/fasth3-0753/media/0685_v1_dense.mp4": {
+  "file": "integration/fasth3-0753/media/0685_v1_dense.mp4",
+  "sha256": "580211d4b2788895218c62937ec43f933fb0633892d8163d873f7dc890577fbc"
+ },
+ "/fasth3-0753/media/0685_v1_dense_spark10_nowarm.mp4": {
+  "file": "integration/fasth3-0753/media/0685_v1_dense_spark10_nowarm.mp4",
+  "sha256": "d348a5211a9b8e96178533da952908da4e20794229b035563d89ba1e3313cfdd"
+ },
+ "/fasth3-0753/media/0685_v1_dense_spark10_warm.mp4": {
+  "file": "integration/fasth3-0753/media/0685_v1_dense_spark10_warm.mp4",
+  "sha256": "0745f5bfedfa1350f8ce2fffeb336628df5b69e19189573030a9bf9294311433"
+ },
+ "/fasth3-0753/media/0685_v1_vsa.mp4": {
+  "file": "integration/fasth3-0753/media/0685_v1_vsa.mp4",
+  "sha256": "a2dae74620a38ff927588cdcdde02caacf622734dee3a02263c3544d31beac96"
+ },
+ "/fasth3-0753/media/0685_v2_vsa.mp4": {
+  "file": "integration/fasth3-0753/media/0685_v2_vsa.mp4",
+  "sha256": "202ab9e4afc44363cd80d9d0fdbe5a3b9220d81549a835f48d3df22a068174fe"
+ },
+ "/fasth3-0753/media/v1_dense.mp4": {
+  "file": "integration/fasth3-0753/media/v1_dense.mp4",
+  "sha256": "d915840ae8e40af949e9b74d69568a7a3a81b68c1285ecbdb08d5fc715150952"
+ },
+ "/fasth3-0753/media/v1_dense_spark10_nowarm.mp4": {
+  "file": "integration/fasth3-0753/media/v1_dense_spark10_nowarm.mp4",
+  "sha256": "3a969d485c8a8c2235b648e1bc55c75a848ee69462b4834fbfed1fa1ff35d004"
+ },
+ "/fasth3-0753/media/v1_dense_spark10_warm.mp4": {
+  "file": "integration/fasth3-0753/media/v1_dense_spark10_warm.mp4",
+  "sha256": "cb77e845b78ca4a41e6ce92c72dd369bb3dc625a518852024aa921991bdfc040"
+ },
+ "/fasth3-0753/media/v1_vsa.mp4": {
+  "file": "integration/fasth3-0753/media/v1_vsa.mp4",
+  "sha256": "2697ab3fc996f812a2ee8d23d7693b941d82f9e8f489cfab776567ee0f7d6c4e"
+ },
+ "/fasth3-0753/media/v2_vsa.mp4": {
+  "file": "integration/fasth3-0753/media/v2_vsa.mp4",
+  "sha256": "ed19a26900b7e3a65f51a4d8bd2d0015169f601f1d5422fa82175689184067c3"
+ },
+ "/turbo-lora/media/0685_larry_dense.mp4": {
+  "file": "integration/turbo-lora/media/0685_larry_dense.mp4",
+  "sha256": "a9695fc2588f06d36efb8ecb363c0d0a882f858e96014c8ff7522278e706d68a"
+ },
+ "/turbo-lora/media/0685_larry_nowarm.mp4": {
+  "file": "integration/turbo-lora/media/0685_larry_nowarm.mp4",
+  "sha256": "c0f10b479c80a10222a4c9c87b08a6c87d0e5499a794a0709af534d5d4a5d14d"
+ },
+ "/turbo-lora/media/0685_larry_spark10.mp4": {
+  "file": "integration/turbo-lora/media/0685_larry_spark10.mp4",
+  "sha256": "8e27e1a3a44809b4703e36468be42d1e3a5b06cac6175af7e1c2536c9eaa3eda"
+ },
+ "/turbo-lora/media/0685_larry_spark10_densefirst.mp4": {
+  "file": "integration/turbo-lora/media/0685_larry_spark10_densefirst.mp4",
+  "sha256": "688dcdb2611ec158afa794d8005f961831f370ffa3b55729ed8d5e5540553a9f"
+ },
+ "/turbo-lora/media/0685_lightx2v_dense.mp4": {
+  "file": "integration/turbo-lora/media/0685_lightx2v_dense.mp4",
+  "sha256": "2692cd73a3336ccc530b4c2ea316b06eded2e668a0bf4e2574f14446e5c906e1"
+ },
+ "/turbo-lora/media/0685_lightx2v_nowarm.mp4": {
+  "file": "integration/turbo-lora/media/0685_lightx2v_nowarm.mp4",
+  "sha256": "622e69d760f7817efe8fc34201df1c1426c50e301ba70867fa53bceba4c05d81"
+ },
+ "/turbo-lora/media/0685_lightx2v_spark10.mp4": {
+  "file": "integration/turbo-lora/media/0685_lightx2v_spark10.mp4",
+  "sha256": "0d7fa99ea2a38b3d340da9f528cc5aaee42ca7b9d355274d5fc3981500690b41"
+ },
+ "/turbo-lora/media/0685_lightx2v_spark10_densefirst.mp4": {
+  "file": "integration/turbo-lora/media/0685_lightx2v_spark10_densefirst.mp4",
+  "sha256": "9c8386c163ec1ee4f72031ea0ef9c9d5b66f8b44a655aa6ac68c05096509f577"
+ },
+ "/turbo-lora/media/0753_larry_dense.mp4": {
+  "file": "integration/turbo-lora/media/0753_larry_dense.mp4",
+  "sha256": "74b66e6f2f47bf709a4361bfa851e59945ec26a19afe45579b819095964547aa"
+ },
+ "/turbo-lora/media/0753_larry_nowarm.mp4": {
+  "file": "integration/turbo-lora/media/0753_larry_nowarm.mp4",
+  "sha256": "5b047f713ae25fa2ca4ff828f26a3f6ed75296db28efefc6036c20ae88e10a73"
+ },
+ "/turbo-lora/media/0753_larry_spark10.mp4": {
+  "file": "integration/turbo-lora/media/0753_larry_spark10.mp4",
+  "sha256": "cf93d9512d4136a9b6c1cf620ca53e659500b362ce36259e6a9433afe365454b"
+ },
+ "/turbo-lora/media/0753_larry_spark10_densefirst.mp4": {
+  "file": "integration/turbo-lora/media/0753_larry_spark10_densefirst.mp4",
+  "sha256": "2243ed3c1042c7e4b238fdabba0b0078853820426440ba732617dda079ebf679"
+ },
+ "/turbo-lora/media/0753_lightx2v_dense.mp4": {
+  "file": "integration/turbo-lora/media/0753_lightx2v_dense.mp4",
+  "sha256": "0c0f9c28f2807902fd97fa1629ba633078586714da35d5bc487a0b30a2f3dae6"
+ },
+ "/turbo-lora/media/0753_lightx2v_nowarm.mp4": {
+  "file": "integration/turbo-lora/media/0753_lightx2v_nowarm.mp4",
+  "sha256": "70e4b4c7fe0e15783a8f83511ecaae8176a9b474aa26d3dc24235b4bcc550c6d"
+ },
+ "/turbo-lora/media/0753_lightx2v_spark10.mp4": {
+  "file": "integration/turbo-lora/media/0753_lightx2v_spark10.mp4",
+  "sha256": "7574fef904d056fc36bee1f5e5236bbb0753396d5e5e337d6f38418e5cb478ed"
+ },
+ "/turbo-lora/media/0753_lightx2v_spark10_densefirst.mp4": {
+  "file": "integration/turbo-lora/media/0753_lightx2v_spark10_densefirst.mp4",
+  "sha256": "955125e2e27a4fb64bcd915471c945e9fd02e40d97b1fa9f66de4f47139df117"
+ },
+ "/vdn10/media/vdn_0001_japanese_woman_city_closeup.mp4": {
+  "file": "integration/vdn10/media/vdn_0001_japanese_woman_city_closeup.mp4",
+  "sha256": "c9933ff81f446cbf4f56ec46f277cd1e3a5acf1f447e3c4d1bb6f45b4d8a2ed4"
+ },
+ "/vdn10/media/vdn_0002_elf_water_fox_jungle_ruins.mp4": {
+  "file": "integration/vdn10/media/vdn_0002_elf_water_fox_jungle_ruins.mp4",
+  "sha256": "491e0d7102490e2493e8d5942b2ffd5d75e6a4809ceb695938cd68f631043262"
+ },
+ "/vdn10/media/vdn_0003_watercolor_masterplan_to_reality.mp4": {
+  "file": "integration/vdn10/media/vdn_0003_watercolor_masterplan_to_reality.mp4",
+  "sha256": "642ffa21b8155808161fdb3a6b22ab4608582416e158c2592e319ddf7433e0bf"
+ },
+ "/vdn10/media/vdn_0004_soap_sculpture_bubble.mp4": {
+  "file": "integration/vdn10/media/vdn_0004_soap_sculpture_bubble.mp4",
+  "sha256": "a1feed456e190aece227b61607055067041c0aac2a79d9c70586bac1e5e43444"
+ },
+ "/vdn10/media/vdn_0005_elf_princess_battlefield_seed907948000.mp4": {
+  "file": "integration/vdn10/media/vdn_0005_elf_princess_battlefield_seed907948000.mp4",
+  "sha256": "87a637af84ad426f0314214ebb21f7d9ab0a979c0407b90fa0c0ea41a648ce11"
+ },
+ "/vdn10/media/vdn_0006_night_camcorder_street_documentary.mp4": {
+  "file": "integration/vdn10/media/vdn_0006_night_camcorder_street_documentary.mp4",
+  "sha256": "9da68fed6fb2227824020f28286c3ab57c3e4a4dbd828e231b1edd41321a6fb3"
+ },
+ "/vdn10/media/vdn_0007_theatrical_stage_documentary.mp4": {
+  "file": "integration/vdn10/media/vdn_0007_theatrical_stage_documentary.mp4",
+  "sha256": "a640b296a18b3c5ca8486d67bb6ab95db0ad837f2d233567ea71c19ccf82ac7a"
+ },
+ "/vdn10/media/vdn_0008_tracking_shot_walking_subject.mp4": {
+  "file": "integration/vdn10/media/vdn_0008_tracking_shot_walking_subject.mp4",
+  "sha256": "6f14e3aab3a175f9d6f7de1369dfe731051ad30f0234216faf8d32ae12e0ad1a"
+ },
+ "/vdn10/media/vdn_0009_photographer_bombed_street.mp4": {
+  "file": "integration/vdn10/media/vdn_0009_photographer_bombed_street.mp4",
+  "sha256": "db282717d241dac353cb0e458c39c4d7711c159b3ccb3512de01432038ce96e8"
+ },
+ "/vdn10/media/vdn_0010_2d_anime_eye_pullout.mp4": {
+  "file": "integration/vdn10/media/vdn_0010_2d_anime_eye_pullout.mp4",
+  "sha256": "bd1532068b869440a33280a28feae7b38b77ff8583411a9d185d3020bc0a62c3"
+ }
 }
