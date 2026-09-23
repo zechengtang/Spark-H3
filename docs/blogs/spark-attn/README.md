@@ -1,6 +1,6 @@
 # Spark-H3: Better Block Sparse Attention for MiniMax-H3
 
-September 13, 2026 · SparkH3 Team<br>
+September 23, 2026 · SparkH3 Team<br>
 <!-- <span class="hero-affiliations">PKU · NJU</span> -->
 
 <!-- VDN10_SHOWCASE -->
