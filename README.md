@@ -7,6 +7,7 @@
 
 <p>
   <a href="https://github.com/zechengtang/Spark-H3"><img src="https://img.shields.io/badge/GitHub-Spark--H3-24292f?style=flat-square&amp;logo=github&amp;logoColor=white" alt="Spark-H3 on GitHub"></a>
+  <a href="https://zechengtang.github.io/Spark-H3/"><img src="https://img.shields.io/badge/Blog-Spark--H3-f97316?style=flat-square" alt="Spark-H3 technical blog"></a>
   <a href="h3_sparse_attention/README.md"><img src="https://img.shields.io/badge/Docs-Usage_%26_Configuration-2563eb?style=flat-square" alt="Usage and configuration guide"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-15803d?style=flat-square" alt="License: Apache 2.0"></a>
   <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3"><img src="https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-MiniMax--H3-ffc107?style=flat-square" alt="MiniMax-H3 model weights on Hugging Face"></a>
@@ -14,7 +15,7 @@
 
 <p>
   <a href="#quick-start">🚀 Quick Start</a> &nbsp;·&nbsp;
-  <a href="docs/blogs/spark-attn/README.md">📖 Method &amp; Illustrations</a> &nbsp;·&nbsp;
+  <a href="https://zechengtang.github.io/Spark-H3/">📖 Technical Blog</a> &nbsp;·&nbsp;
   <a href="#todo">🗓️ TODO</a>
 </p>
 
@@ -65,9 +66,11 @@ requirements, defaults, and options.
 
 ## 🗓️ TODO
 
-- [ ] Release a ComfyUI version.
+- [ ] Release the ComfyUI integration.
+- [ ] Release a Ref2VA inference example.
 - [ ] Release the technical report.
-- [ ] Conduct further evaluation.
+- [ ] Optimize the Spark kernels.
+- [ ] Verify the kernels on SM90 and implement SM80 support.
 
 ## 🤝 Acknowledgments
  
