@@ -14,6 +14,7 @@
 </p>
 
 <p>
+  <a href="#demo">🎬 Demo</a> &nbsp;·&nbsp;
   <a href="#quick-start">🚀 Quick Start</a> &nbsp;·&nbsp;
   <a href="https://zechengtang.github.io/Spark-H3/">📖 Technical Blog</a> &nbsp;·&nbsp;
   <a href="#todo">🗓️ TODO</a>
@@ -35,6 +36,23 @@ It combines two operations:
 
 Spark-H3 provides the Spark attention kernels and MiniMax-H3 inference
 integration. Conditioning video, text, and audio retain exact attention handling.
+
+<a id="demo"></a>
+
+## 🎬 Demo
+
+Click the preview to watch the full visual comparison of Dense, Spark-H3, and
+Sol-H3 generation results.
+
+<p align="center">
+  <a href="assets/spark-h3-demo.mp4">
+    <img src="assets/spark-h3-demo-poster.jpg" width="100%" alt="Spark-H3 visual comparison demo">
+  </a>
+</p>
+
+<p align="center">
+  <a href="assets/spark-h3-demo.mp4">▶ Watch the full demo (MP4, 1:20)</a>
+</p>
 
 <a id="quick-start"></a>
 
