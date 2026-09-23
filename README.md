@@ -41,8 +41,8 @@ integration. Conditioning video, text, and audio retain exact attention handling
 
 ## 🎬 Demo
 
-The preview loops through three matched-seed comparisons of Dense, Spark-H3,
-and Sol-H3, including slow-motion detail crops.
+The preview compares Dense, Spark-H3, and Sol-H3 with matched seeds, including
+both complete slow-motion detail segments from Case 2.
 
 ![Spark-H3 visual comparison: Dense vs. Spark-H3 vs. Sol-H3](assets/spark-h3-demo-preview.webp)
 
