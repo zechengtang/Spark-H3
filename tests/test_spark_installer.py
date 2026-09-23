@@ -33,8 +33,8 @@ def test_overrides_and_plain_sol_opt_in():
 def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused):
     from test_sol_spark import TinyTransformer
     monkeypatch.setenv('H3_SPARK_REWEIGHT_FUSED', fused)
-    if fused == '1' and torch.cuda.get_device_capability() != (12, 0):
-        pytest.skip('fused kernel requires SM120')
+    if fused == '1' and torch.cuda.get_device_capability() not in ((9, 0), (10, 0), (12, 0)):
+        pytest.skip('fused kernel requires SM90/SM100/SM120')
     torch.manual_seed(27)
     model = TinyTransformer().to(device='cuda', dtype=torch.bfloat16).eval()
     attn = model.transformer_blocks[0].attn
@@ -131,7 +131,7 @@ def test_spark_default_routes_merge_with_reweight(monkeypatch, topk_ratio):
     inv = captured['inverse']
     expected = integration._headwise_permute_video_tokens(out, inv, video_tokens=video)
     torch.testing.assert_close(actual, expected, atol=.008, rtol=.025)
-    if torch.cuda.get_device_capability() == (12, 0):
+    if torch.cuda.get_device_capability() in ((9, 0), (10, 0), (12, 0)):
         monkeypatch.setenv('H3_SPARK_REWEIGHT_FUSED', '1')
         fused = _sol_attention(_Controller(cfg), q.transpose(1,2), k.transpose(1,2),
                                v.transpose(1,2), layout, 0).transpose(1,2)

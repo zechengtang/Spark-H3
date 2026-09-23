@@ -133,12 +133,13 @@ def _compile_sm90(
     kv_splits,
     sink_range,
     stream,
+    force_local_blocks=True,
 ):
     import cutlass.cute as cute
 
     from .sm90 import make_kernel
 
-    operator = make_kernel(tokens, kv_splits)
+    operator = make_kernel(tokens, kv_splits, force_local_blocks=force_local_blocks)
     args = _to_cute_tensors(tensors)
     compiled = cute.compile(
         operator,
@@ -159,14 +160,16 @@ def _compile_sm100(
     sink_start_block,
     sink_end_block,
     stream,
+    force_local_blocks=True,
 ):
     import cutlass.cute as cute
 
-    from .sm100 import forward
+    from .sm100 import make_kernel
 
+    operator = make_kernel(force_local_blocks=force_local_blocks)
     args = _to_cute_tensors(tensors)
     compiled = cute.compile(
-        forward,
+        operator,
         *args,
         scale,
         sink_start_block,
@@ -278,6 +281,7 @@ def _sol_attn_cute(
                     kv_splits,
                     sink_range,
                     stream,
+                    force_local_blocks=force_local_blocks,
                 )
             else:
                 args = _to_cute_tensors(tensors)
@@ -293,7 +297,14 @@ def _sol_attn_cute(
                 sink_start,
                 sink_tokens,
             )
-            tensors = [q, k, v, output, kc, vc, threshold, lse]
+            # Same ABI as SM120: the stock policy compiles with
+            # external_route=False and the placeholder is never dereferenced.
+            route_placeholder = torch.empty(
+                (1,), device=q.device, dtype=torch.uint8
+            )
+            tensors = [
+                q, k, v, output, kc, vc, threshold, route_placeholder, lse
+            ]
             compiled = _compiled.get(key)
             if compiled is None:
                 compiled, args = _compile_sm100(
@@ -303,6 +314,7 @@ def _sol_attn_cute(
                     sink_start_block,
                     sink_end_block,
                     stream,
+                    force_local_blocks=force_local_blocks,
                 )
             else:
                 args = _to_cute_tensors(tensors)
@@ -387,8 +399,6 @@ def sol_attn(
     if kv_splits not in (1, 2, 4):
         raise ValueError("kv_splits must be 1, 2, or 4")
     backend = _backend_for_arch(arch)
-    if not force_local_blocks and backend in ("cute_sm90", "cute_sm100"):
-        raise NotImplementedError("force_local_blocks=False currently supports SM120 CuTe and Triton")
     scale = q.shape[-1] ** -0.5 if scale is None else float(scale)
     tau = float(tau)
 

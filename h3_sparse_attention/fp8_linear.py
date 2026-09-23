@@ -68,7 +68,7 @@ import triton.language as tl
 FP8_DTYPE = torch.float8_e4m3fn
 _FP8_MAX = torch.finfo(FP8_DTYPE).max
 MIN_WIDTH = 4096
-SKIP_END_BLOCKS = 4
+SKIP_END_BLOCKS = 0
 
 
 @triton.jit

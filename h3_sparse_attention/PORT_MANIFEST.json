@@ -76,7 +76,7 @@
     "h3_sparse_attention/sol_numerator_virtual_q.py": {
       "source": "h3_sparse_attention/sol_numerator_virtual_q.py",
       "source_sha256": "66be33bf60d452fce5c46a0405fbee2478cf5a6451c9cc71a935f6c7f9c85a01",
-      "ported_sha256": "66be33bf60d452fce5c46a0405fbee2478cf5a6451c9cc71a935f6c7f9c85a01"
+      "ported_sha256": "6ec22ad6a94d641b60536992534a54158036d48565786e1b1a079698ed2af08b"
     },
     "sol_attn/THIRD_PARTY_NOTICES.md": {
       "source": "sol_attn/THIRD_PARTY_NOTICES.md",
@@ -196,7 +196,7 @@
     "sol_attn/interface.py": {
       "source": "sol_attn/interface.py",
       "source_sha256": "271e0cc8a799d2369805c23fba5a2b9b41b90be8efc3e7f8896e468e5d9b1daa",
-      "ported_sha256": "271e0cc8a799d2369805c23fba5a2b9b41b90be8efc3e7f8896e468e5d9b1daa"
+      "ported_sha256": "3fcc3433a43ce43829973e40b795cf11b2a684664534276603a60ee3e513a2ea"
     },
     "sol_attn/preprocess.py": {
       "source": "sol_attn/preprocess.py",
@@ -211,17 +211,17 @@
     "sol_attn/sm100/__init__.py": {
       "source": "sol_attn/sm100/__init__.py",
       "source_sha256": "77a77ead8e28f2a388a77497297f6e9e9385cfe0e99a1f67e2036d41ef4c1c78",
-      "ported_sha256": "77a77ead8e28f2a388a77497297f6e9e9385cfe0e99a1f67e2036d41ef4c1c78"
+      "ported_sha256": "b5600295e859c178b2f4d100791657d6039fb59f26f26fe4fc994b1eadcaf166"
     },
     "sol_attn/sm100/kernel.py": {
       "source": "sol_attn/sm100/kernel.py",
       "source_sha256": "a614f29e002fdde2e9258da516b452d2ea07ecdeec8410722a344c72a40f61a0",
-      "ported_sha256": "a614f29e002fdde2e9258da516b452d2ea07ecdeec8410722a344c72a40f61a0"
+      "ported_sha256": "34848c59f522c801c7aa3ad13cfac1038906b417ddb62c19ce8882a58d3b31d4"
     },
     "sol_attn/sm100/mainloop.py": {
       "source": "sol_attn/sm100/mainloop.py",
       "source_sha256": "707d565bccc7fb8c60e130c91d6d65549d8762c562a227ef2c0a231697a1cf2d",
-      "ported_sha256": "707d565bccc7fb8c60e130c91d6d65549d8762c562a227ef2c0a231697a1cf2d"
+      "ported_sha256": "d7ff2e46a1b7c7b8e1cfa8dac590db912565576479c559fcade706496e405ba6"
     },
     "sol_attn/sm100/math.py": {
       "source": "sol_attn/sm100/math.py",
@@ -306,12 +306,12 @@
     "sol_attn/sm90/kernel.py": {
       "source": "sol_attn/sm90/kernel.py",
       "source_sha256": "fcc3980955a60cdbb93cc4d52187d58359fa99d7a9ec9f594fde2e50b5e497f5",
-      "ported_sha256": "fcc3980955a60cdbb93cc4d52187d58359fa99d7a9ec9f594fde2e50b5e497f5"
+      "ported_sha256": "ee396608c5b43281e9370f36d9754bf8a4dfc78a6850c13c0b57ff5bd920b477"
     },
     "sol_attn/sm90/mainloop.py": {
       "source": "sol_attn/sm90/mainloop.py",
       "source_sha256": "4cec571d97201d76d5f9fccd4a4919d83d82dfdcc77d7c68ad6514567fbe0da7",
-      "ported_sha256": "4cec571d97201d76d5f9fccd4a4919d83d82dfdcc77d7c68ad6514567fbe0da7"
+      "ported_sha256": "984709dd059424d558fbdfbb8c1b35181b032bae6413ee17264252fc1846d7fe"
     },
     "sol_attn/sm90/split_combine.py": {
       "source": "sol_attn/sm90/split_combine.py",
@@ -356,12 +356,12 @@
     "h3_sparse_attention/spark_integration.py": {
       "source": "h3_sparse_attention/processor.py",
       "source_sha256": "9f860c3f160722cd4dfefe0d0190b7ce342e99409f18a9d08c720d4eeb1caa1f",
-      "ported_sha256": "70029fda4d5c310d1f511993d4ec2feb2b0ec98dd63b68f7582f571a17fe8087"
+      "ported_sha256": "21a35bef2c62426f6705cb477c4d647cebf67f942986c83601bf5487c8c8f37b"
     },
     "h3_sparse_attention/rope_sol_kernel.py": {
       "source": "h3_sparse_attention/rope_sol_kernel.py",
       "source_sha256": "f6750d8ec3cd706e8f32297f2b0358792d4e8155a1748a94a97fe5989c0ceec0",
-      "ported_sha256": "8fc7696d3027dc7d914f3c1fbfec1d46c2eb8edb40f7efdd6ccf829cba189878"
+      "ported_sha256": "583bd1f32f6668fae9b69fd6ca017b4666379b5d83815b8b4551e04aa647eb02"
     },
     "h3_sparse_attention/sol_logsumexp_correction_triton.py": {
       "source": "h3_sparse_attention/sol_logsumexp_correction_triton.py",
@@ -376,7 +376,7 @@
     "h3_sparse_attention/sol_vaware_compensation.py": {
       "source": "h3_sparse_attention/sol_vaware_compensation.py",
       "source_sha256": "09b1b2acdba4a7abf813c91b4774da4c6a043f15706f6890ebfe1719a0a048be",
-      "ported_sha256": "1e2694d2f9474e4e1bdce1ad006d007a4be6d80cd4590c7fa8c3820632ef916b"
+      "ported_sha256": "c055eb0d7ea3ec0bf56207fac885bffc1c888cc03c3f44a6f6e37cc1edc5cead"
     },
     "h3_sparse_attention/spark_defaults.py": {
       "source": "h3_sparse_attention/spark_defaults.py",
@@ -502,6 +502,16 @@
       "source": "vdn-minimax-h3:src/models/ops/fused_block.py",
       "source_sha256": "abb9a7466fc4f6312109d7512eefc44ed1a46673dfbb68958e132be854636259",
       "ported_sha256": "29bc4da800361262a2638124707ffa0347d8230f8fb5d32fe47ecaef2b637fa6"
+    },
+    "h3_sparse_attention/spark_reweight_sm90.py": {
+      "source": "h3_sparse_attention/spark_reweight_sm90.py",
+      "source_sha256": "18b5272aaff0cf17cd05e1ac825ffc5d00c67ba3935c532e7502a10535de0b2d",
+      "ported_sha256": "18b5272aaff0cf17cd05e1ac825ffc5d00c67ba3935c532e7502a10535de0b2d"
+    },
+    "h3_sparse_attention/spark_reweight_sm100.py": {
+      "source": "h3_sparse_attention/spark_reweight_sm100.py",
+      "source_sha256": "65e2adb721e92ceab1052e2c06de82f7fbdf990507f2ac25dafdaf97609686c4",
+      "ported_sha256": "65e2adb721e92ceab1052e2c06de82f7fbdf990507f2ac25dafdaf97609686c4"
     }
   },
   "fp8_port": "fp8_linear.py ported from vdn-minimax-h3 on 2026-09-21: conversion scoped to model.transformer_blocks (context_embedder and token_refiner stay bf16), sm120 per-tensor dispatch documented, install_fp8 entry added, Fp8SwiGLUFeedForward fusion and shared-qkv Fp8AttnProcessor/forward_qkv_shared added (the sparse processor calls forward_qkv_shared via a duck-typed guard, so the diffusers fork is untouched); fused_block.py ported the same day with set_inference_mode replaced by a one-way install_fused_blocks; __init__.py re-exports both lazily, diverging from the Sparse source copy.",

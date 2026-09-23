@@ -62,6 +62,11 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         sol_attn_exact_mask_seqlen_last_only: bool = False,
         sol_attn_tail16_lane_group_route_reduce: bool = False,
         sol_attn_num_splits: int = 1,
+        external_route: bool = False,
+        hybrid_route: bool = False,
+        exact_only: bool = False,
+        export_route: bool = False,
+        force_local_blocks: bool = True,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -101,6 +106,20 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         self.sol_attn_approx_colmask = False
         self.sol_attn_packed_route_reduction = False
         self.sol_attn_num_splits = sol_attn_num_splits
+        self.external_route = external_route
+        self.hybrid_route = hybrid_route
+        self.exact_only = exact_only
+        self.export_route = export_route
+        self.force_local_blocks = force_local_blocks
+        if external_route or hybrid_route or export_route:
+            if (
+                self.sol_attn_packed_route_reduction
+                or self.sol_attn_approx_colmask
+                or not self.sol_attn_warp_route_mask
+            ):
+                raise NotImplementedError(
+                    "route-mask modes require the default SM90 route configuration"
+                )
         self.buffer_align_bytes = 1024
         self.use_tma_KV = True
         self.cluster_shape_mn = (1, 1)
@@ -378,6 +397,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         mGlobalThresh: cute.Tensor,
         softmax_scale_log2: Float32,
         sink_range: Int32,
+        mRouteMask: Optional[cute.Tensor] = None,
         assume_full_route_group: cutlass.Constexpr[bool] = False,
         physical_route_tile_n: cutlass.Constexpr[int] = 64,
         route_mask_words_override: cutlass.Constexpr[int] = 0,
@@ -403,17 +423,30 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         q_len = Float32(q_len_i32)
 
         full_q_tile = q_len_i32 == Int32(self.tile_m)
-        if const_expr(self.sol_attn_tail16_lane_group_route_reduce and physical_route_tile_n == 16):
-            if full_q_tile:
-                self.sol_attn_reduce_route_sums_lane_group_tail16(
-                    acc_S_mn,
-                    route_sums,
-                    route_col_offset,
-                    warp_in_mma,
-                    lane,
-                )
-            else:
-                self.sol_attn_reduce_route_sums_static_tail(
+        if const_expr(not self.external_route):
+            if const_expr(self.sol_attn_tail16_lane_group_route_reduce and physical_route_tile_n == 16):
+                if full_q_tile:
+                    self.sol_attn_reduce_route_sums_lane_group_tail16(
+                        acc_S_mn,
+                        route_sums,
+                        route_col_offset,
+                        warp_in_mma,
+                        lane,
+                    )
+                else:
+                    self.sol_attn_reduce_route_sums_static_tail(
+                        acc_S_mn,
+                        route_sums,
+                        tScS_mn,
+                        q_start,
+                        route_col_offset,
+                        seqlen,
+                        warp_in_mma,
+                        lane,
+                        full_q_tile,
+                    )
+            elif const_expr(physical_route_tile_n == 16):
+                self.sol_attn_reduce_route_sums_physical16(
                     acc_S_mn,
                     route_sums,
                     tScS_mn,
@@ -424,45 +457,33 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                     lane,
                     full_q_tile,
                 )
-        elif const_expr(physical_route_tile_n == 16):
-            self.sol_attn_reduce_route_sums_physical16(
-                acc_S_mn,
-                route_sums,
-                tScS_mn,
-                q_start,
-                route_col_offset,
-                seqlen,
-                warp_in_mma,
-                lane,
-                full_q_tile,
-            )
-        elif const_expr(self.sol_attn_assume_lane_group_route_reduce):
-            self.sol_attn_reduce_route_sums_lane_group(acc_S_mn, route_sums, warp_in_mma, lane)
-        elif const_expr(self.sol_attn_lane_group_route_reduce):
-            if full_q_tile:
+            elif const_expr(self.sol_attn_assume_lane_group_route_reduce):
                 self.sol_attn_reduce_route_sums_lane_group(acc_S_mn, route_sums, warp_in_mma, lane)
+            elif const_expr(self.sol_attn_lane_group_route_reduce):
+                if full_q_tile:
+                    self.sol_attn_reduce_route_sums_lane_group(acc_S_mn, route_sums, warp_in_mma, lane)
+                else:
+                    self.sol_attn_reduce_route_sums_guarded(
+                        acc_S_mn,
+                        route_sums,
+                        tScS_mn,
+                        q_start,
+                        seqlen,
+                        warp_in_mma,
+                        lane,
+                    )
             else:
-                self.sol_attn_reduce_route_sums_guarded(
-                    acc_S_mn,
-                    route_sums,
-                    tScS_mn,
-                    q_start,
-                    seqlen,
-                    warp_in_mma,
-                    lane,
-                )
-        else:
-            for off in cutlass.range_constexpr(self.tile_n):
-                partial = Float32(0.0)
-                for i in cutlass.range(cute.size(acc_S_mn), unroll_full=True):
-                    row = tScS_mn[i][0]
-                    col = tScS_mn[i][1]
-                    valid_row = q_start + row < seqlen.seqlen_q
-                    if col == Int32(off) and valid_row:
-                        partial += Float32(acc_S_mn[i])
-                warp_sum = cute.arch.warp_reduction_sum(partial)
-                if lane == Int32(0):
-                    route_sums[warp_in_mma, off] = warp_sum
+                for off in cutlass.range_constexpr(self.tile_n):
+                    partial = Float32(0.0)
+                    for i in cutlass.range(cute.size(acc_S_mn), unroll_full=True):
+                        row = tScS_mn[i][0]
+                        col = tScS_mn[i][1]
+                        valid_row = q_start + row < seqlen.seqlen_q
+                        if col == Int32(off) and valid_row:
+                            partial += Float32(acc_S_mn[i])
+                    warp_sum = cute.arch.warp_reduction_sum(partial)
+                    if lane == Int32(0):
+                        route_sums[warp_in_mma, off] = warp_sum
 
         if const_expr(self.sol_attn_route_sum_arrive_overlap and self.sol_attn_warp_route_mask):
             if warp_in_mma == Int32(0):
@@ -556,26 +577,64 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                             valid = off < valid_count
                         exact = False
                         if valid:
-                            col_sum = (
-                                Float32(route_sums[0, route_col])
-                                + Float32(route_sums[1, route_col])
-                                + Float32(route_sums[2, route_col])
-                                + Float32(route_sums[3, route_col])
-                            )
-                            col_mean = col_sum * softmax_scale_log2 / q_len
-                            exact = sol_attn_selector.sol_attn_route_is_exact(
-                                m_block,
-                                group_start_n_block + off,
-                                col_mean,
-                                thresh,
-                                valid,
-                            )
+                            if const_expr(self.external_route):
+                                exact = Int32(
+                                    mRouteMask[
+                                        m_block,
+                                        head_idx,
+                                        batch_idx,
+                                        group_start_n_block + off,
+                                    ]
+                                ) != Int32(0)
+                            else:
+                                col_sum = (
+                                    Float32(route_sums[0, route_col])
+                                    + Float32(route_sums[1, route_col])
+                                    + Float32(route_sums[2, route_col])
+                                    + Float32(route_sums[3, route_col])
+                                )
+                                col_mean = col_sum * softmax_scale_log2 / q_len
+                                if const_expr(self.force_local_blocks):
+                                    exact = sol_attn_selector.sol_attn_route_is_exact(
+                                        m_block,
+                                        group_start_n_block + off,
+                                        col_mean,
+                                        thresh,
+                                        valid,
+                                    )
+                                else:
+                                    exact = (col_mean > thresh) and valid
+                                if const_expr(self.hybrid_route):
+                                    if thresh != thresh:
+                                        exact = Int32(
+                                            mRouteMask[
+                                                m_block,
+                                                head_idx,
+                                                batch_idx,
+                                                group_start_n_block + off,
+                                            ]
+                                        ) != Int32(0)
+                                        if const_expr(self.force_local_blocks):
+                                            distance = m_block - (
+                                                group_start_n_block + off
+                                            )
+                                            exact = exact or (
+                                                (distance >= Int32(-1))
+                                                and (distance <= Int32(1))
+                                            )
                             if sink_enabled:
                                 exact = exact or (
                                     group_start_n_block + off
                                     >= sink_start_block
                                     and group_start_n_block + off
                                     < sink_end_block
+                                )
+                        if const_expr(self.export_route):
+                            if valid:
+                                mRouteMask[
+                                    m_block, head_idx, batch_idx, group_start_n_block + off
+                                ] = (
+                                    cutlass.Uint8(1) if exact else cutlass.Uint8(0)
                                 )
                         if const_expr(self.sol_attn_approx_colmask):
                             column_mask = -Float32.inf
@@ -623,27 +682,62 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                     not (self.sol_attn_assume_full_route_groups or assume_full_route_group)
                 ):
                     valid = Int32(off) < valid_count
-                col_sum = (
-                    Float32(route_sums[0, route_col])
-                    + Float32(route_sums[1, route_col])
-                    + Float32(route_sums[2, route_col])
-                    + Float32(route_sums[3, route_col])
-                )
-                if valid:
-                    col_mean = col_sum * softmax_scale_log2 / q_len
-                    exact = sol_attn_selector.sol_attn_route_is_exact(
-                        m_block,
-                        group_start_n_block + Int32(off),
-                        col_mean,
-                        thresh,
-                        valid,
+                if const_expr(not self.external_route):
+                    col_sum = (
+                        Float32(route_sums[0, route_col])
+                        + Float32(route_sums[1, route_col])
+                        + Float32(route_sums[2, route_col])
+                        + Float32(route_sums[3, route_col])
                     )
+                if valid:
+                    if const_expr(self.external_route):
+                        exact = Int32(
+                            mRouteMask[
+                                m_block,
+                                head_idx,
+                                batch_idx,
+                                group_start_n_block + Int32(off),
+                            ]
+                        ) != Int32(0)
+                    else:
+                        col_mean = col_sum * softmax_scale_log2 / q_len
+                        if const_expr(self.force_local_blocks):
+                            exact = sol_attn_selector.sol_attn_route_is_exact(
+                                m_block,
+                                group_start_n_block + Int32(off),
+                                col_mean,
+                                thresh,
+                                valid,
+                            )
+                        else:
+                            exact = (col_mean > thresh) and valid
+                        if const_expr(self.hybrid_route):
+                            if thresh != thresh:
+                                exact = Int32(
+                                    mRouteMask[
+                                        m_block,
+                                        head_idx,
+                                        batch_idx,
+                                        group_start_n_block + Int32(off),
+                                    ]
+                                ) != Int32(0)
+                                if const_expr(self.force_local_blocks):
+                                    distance = m_block - (group_start_n_block + Int32(off))
+                                    exact = exact or (
+                                        (distance >= Int32(-1)) and (distance <= Int32(1))
+                                    )
                     if sink_enabled:
                         exact = exact or (
                             group_start_n_block + Int32(off)
                             >= sink_start_block
                             and group_start_n_block + Int32(off)
                             < sink_end_block
+                        )
+                    if const_expr(self.export_route):
+                        mRouteMask[
+                            m_block, head_idx, batch_idx, group_start_n_block + Int32(off)
+                        ] = (
+                            cutlass.Uint8(1) if exact else cutlass.Uint8(0)
                         )
                     if exact:
                         mask0, mask1, mask2, mask3 = (
@@ -849,6 +943,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         softmax_scale: Float32,
         sink_range: Int32,
         stream: cuda.CUstream = None,
+        mRouteMask: Optional[cute.Tensor] = None,
     ):
         """Configure and launch the Hopper Sol-Attn kernel."""
 
@@ -883,6 +978,9 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         mGlobalThresh = layout_utils.select(
             mGlobalThresh, SOL_ATTN_BNH_TRANSPOSE
         )
+        SOL_ATTN_BNHK_TRANSPOSE = [1, 2, 0, 3]
+        if const_expr(mRouteMask is not None):
+            mRouteMask = layout_utils.select(mRouteMask, SOL_ATTN_BNHK_TRANSPOSE)
         if const_expr(piecewise_k is not None):
             piecewise_k, piecewise_v = [
                 layout_utils.select(t, SOL_ATTN_BTHD_TRANSPOSE)
@@ -1104,6 +1202,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
             tma_tensor_V2 if const_expr(self.has_piecewise_kv) else None,
             tma_tensor_O if const_expr(self.use_tma_O) else mO,
             mGlobalThresh,
+            mRouteMask,
             mLSE,
             mCuSeqlensQ,
             mCuSeqlensK,
@@ -1159,6 +1258,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         mV2: Optional[cute.Tensor],
         mO: cute.Tensor,
         mGlobalThresh: cute.Tensor,
+        mRouteMask: Optional[cute.Tensor],
         mLSE: Optional[cute.Tensor],
         mCuSeqlensQ: Optional[cute.Tensor],
         mCuSeqlensK: Optional[cute.Tensor],
@@ -1371,6 +1471,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
             AttentionMaskCls,
             TileSchedulerCls,
             mGlobalThresh,
+            mRouteMask,
             route_mask,
             route_sums,
             softmax_scale_log2,
@@ -1543,6 +1644,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         AttentionMaskCls: Callable,
         TileSchedulerCls: cutlass.Constexpr[Callable],
         mGlobalThresh: cute.Tensor,
+        mRouteMask: Optional[cute.Tensor],
         route_mask: cute.Tensor,
         route_sums: cute.Tensor,
         softmax_scale_log2: Float32,
@@ -1818,6 +1920,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                         sink_range,
                         False,
                         route_mask_words_override=2,
+                        mRouteMask=mRouteMask,
                     )
                     exact_mask0 = mask0
                     exact_mask1 = mask1
@@ -1915,6 +2018,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                             ((mask0 & valid_bits0) != valid_bits0)
                             or ((mask1 & valid_bits1) != valid_bits1)
                         )
+                    route_has_approx = route_has_approx and const_expr(not self.exact_only)
                     self.sol_attn_mask_route_approx_columns(
                         acc_S,
                         route_sums,

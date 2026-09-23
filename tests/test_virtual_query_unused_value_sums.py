@@ -5,8 +5,9 @@ import pytest
 import torch
 
 pytestmark = pytest.mark.skipif(
-    not torch.cuda.is_available() or torch.cuda.get_device_capability() != (12, 0),
-    reason='requires SM120 fused virtual-query backend',
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() not in ((9, 0), (10, 0), (12, 0)),
+    reason='requires a fused virtual-query CuTe backend (SM90/SM100/SM120)',
 )
 
 @pytest.mark.parametrize('tokens', [128, 129, 8193])

@@ -604,13 +604,13 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     from sol_attn.preprocess import _reduce_kv
     from .rope_sol_kernel import (
         sol_topk_threshold_attn, sol_topk_threshold_backend,
-        rope_sol_attn, rope_sol_backend,
     )
+    from .sol_vaware_compensation import exact_attention
     from .sol_topk_cutoff import gemm_radix_topk_cutoff, triton_gaussian_moment_cutoff
 
     cfg = controller.config
     from .sol_numerator_virtual_q import virtual_q_backend, reduce_virtual_key_centroids
-    if virtual_query_data is not None and virtual_q_backend(q) == "sm120_fused_virtual_query":
+    if virtual_query_data is not None and virtual_q_backend(q).endswith("fused_virtual_query"):
         kc, vs = reduce_virtual_key_centroids(k), None
     else:
         kc, vs = _reduce_kv(k, v)
@@ -652,7 +652,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         route, stats = _sol_topk_route(q, kc, video_tokens=layout.video_tokens,
                                       sink_tokens=sink_tokens, topk_ratio=cfg.sol_route_topk_ratio)
         stats["route_threshold_mode"] = (
-            "topk_explicit_partial_video_fallback" if partial_video else "topk_explicit_non_sm120")
+            "topk_explicit_partial_video_fallback" if partial_video else "topk_explicit_no_threshold_backend")
 
     if cfg.sol_log_density and controller.sol_route_density is None:
         if route is None:
@@ -682,9 +682,12 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         controller.sol_backend = f"{backend}:{cfg.sol_route_topk_cutoff_mode}"
         controller.counts["sol_topk_threshold_calls"] += 1
     else:
-        output = rope_sol_attn(q, k, v, kc, vs, route.to(torch.uint8),
-                               sink_start=layout.video_tokens, sink_tokens=sink_tokens)
-        controller.sol_backend = rope_sol_backend(q.device)
+        output, _, _ = exact_attention(
+            q, k, v, kc, vs, route=route,
+            sink_start=layout.video_tokens, sink_tokens=sink_tokens,
+            force_local_blocks=cfg.sol_local_blocks_enabled)
+        output = output.to(v.dtype)
+        controller.sol_backend = "vaware_exact_explicit_route"
         controller.counts["sol_topk_explicit_fallback_calls"] += 1
     controller.counts["sol_topk_calls"] += 1
     return output

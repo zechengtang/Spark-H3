@@ -24,7 +24,7 @@ def test_parallel_anchor_preserves_sequential_reduction(dtype,lengths):
 @pytest.mark.parametrize('precomputed',[False,True])
 @pytest.mark.parametrize('head_chunk',[False,True])
 def test_query_prefix_preserves_video_and_dense_context(monkeypatch,precomputed,head_chunk):
-    if torch.cuda.get_device_capability() != (12,0):pytest.skip('SM120 required')
+    if torch.cuda.get_device_capability() not in ((9,0),(10,0),(12,0)):pytest.skip('fused kernel requires SM90/SM100/SM120')
     import h3_sparse_attention.sol_numerator_virtual_q as rw
     torch.manual_seed(922)
     b,t,h,video=2,8329,3,8192;n=(t+63)//64
@@ -55,7 +55,7 @@ def test_query_prefix_preserves_video_and_dense_context(monkeypatch,precomputed,
 
 
 def test_topk_caller_preserves_full_output_default():
-    if torch.cuda.get_device_capability() != (12,0):pytest.skip('SM120 required')
+    if torch.cuda.get_device_capability() not in ((9,0),(10,0),(12,0)):pytest.skip('fused kernel requires SM90/SM100/SM120')
     from types import SimpleNamespace
     import h3_sparse_attention.processor as proc
     import h3_sparse_attention.spark_integration as integration

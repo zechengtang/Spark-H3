@@ -6,6 +6,8 @@ in shared memory and reused by the approximate and exact score paths.
 """
 
 import math
+from typing import Optional
+
 import cuda.bindings.driver as cuda
 import cutlass
 import cutlass.cute as cute
@@ -14,7 +16,7 @@ import cutlass.utils as utils
 import cutlass.utils.blackwell_helpers as sm100_utils
 import sol_attn._vendor.flash_attn.cute.pipeline as fa_pipeline
 import sol_attn._vendor.flash_attn.cute.utils as fa_utils
-from cutlass import BFloat16, Float32, Int32
+from cutlass import BFloat16, Float32, Int32, Uint8
 from cutlass._mlir.dialects import llvm
 from cutlass.cute.nvgpu import cpasync, tcgen05
 from cutlass.cutlass_dsl import T, dsl_user_op
@@ -363,6 +365,7 @@ def _sol_attn_sm100_bf16_kernel(
     tma_atom_vc: cute.CopyAtom,
     mVC_nkl: cute.Tensor,
     mThreshold_bnh: cute.Tensor,
+    mRouteMask: Optional[cute.Tensor],
     mO_bthd: cute.Tensor,
     mLSE_bth: cute.Tensor,
     token_count: Int32,
@@ -379,6 +382,11 @@ def _sol_attn_sm100_bf16_kernel(
     pack_v_gather_layout: cute.ComposedLayout,
     route_k_layout: cute.ComposedLayout,
     route_v_layout: cute.ComposedLayout,
+    external_route: cutlass.Constexpr[bool],
+    hybrid_route: cutlass.Constexpr[bool],
+    exact_only: cutlass.Constexpr[bool],
+    export_route: cutlass.Constexpr[bool],
+    force_local_blocks: cutlass.Constexpr[bool],
 ):
     tidx, _, _ = cute.arch.thread_idx()
     warp_idx = cute.arch.make_warp_uniform(cute.arch.warp_idx())
@@ -826,72 +834,77 @@ def _sol_attn_sm100_bf16_kernel(
                 # sees the same zero-padded operand streams, and the removed
                 # chains only ever accumulated 0.0. Writer lanes 0 and 2 equal
                 # 2*(col%2).
-                for pair_idx in cutlass.range_constexpr(
-                    0, ROUTE_TILE_SIZE // 2, 2
-                ):
-                    my_col0 = Int32(2 * pair_idx) + lane_col_parity
-                    partial0 = Float32(0.0)
-                    if row_valid and my_col0 < valid_route_count:
-                        partial0 = Float32(score_raw[pair_idx])
-                    my_col1 = Int32(2 * (pair_idx + 1)) + lane_col_parity
-                    partial1 = Float32(0.0)
-                    if row_valid and my_col1 < valid_route_count:
-                        partial1 = Float32(score_raw[pair_idx + 1])
+                # An external route mask makes the reduction dead: its sums
+                # only feed the col_mean selector below.
+                if cutlass.const_expr(not external_route):
+                    for pair_idx in cutlass.range_constexpr(
+                        0, ROUTE_TILE_SIZE // 2, 2
+                    ):
+                        my_col0 = Int32(2 * pair_idx) + lane_col_parity
+                        partial0 = Float32(0.0)
+                        if row_valid and my_col0 < valid_route_count:
+                            partial0 = Float32(score_raw[pair_idx])
+                        my_col1 = Int32(2 * (pair_idx + 1)) + lane_col_parity
+                        partial1 = Float32(0.0)
+                        if row_valid and my_col1 < valid_route_count:
+                            partial1 = Float32(score_raw[pair_idx + 1])
 
-                    raw_partial0 = partial0
-                    raw_partial1 = partial1
-                    scaled0, scaled1 = cute.arch.mul_packed_f32x2(
-                        (raw_partial0, raw_partial1),
-                        (softmax_scale_log2, softmax_scale_log2),
-                    )
-                    peer_scaled0 = cute.arch.shuffle_sync_bfly(
-                        scaled0, offset=1
-                    )
-                    peer_scaled1 = cute.arch.shuffle_sync_bfly(
-                        scaled1, offset=1
-                    )
-                    partial0, partial1 = cute.arch.fma_packed_f32x2(
-                        (raw_partial0, raw_partial1),
-                        (softmax_scale_log2, softmax_scale_log2),
-                        (peer_scaled0, peer_scaled1),
-                    )
-                    peer0 = cute.arch.shuffle_sync_bfly(
-                        partial0, offset=16
-                    )
-                    peer1 = cute.arch.shuffle_sync_bfly(
-                        partial1, offset=16
-                    )
-                    partial0, partial1 = cute.arch.add_packed_f32x2(
-                        (partial0, partial1), (peer0, peer1)
-                    )
-                    peer0 = cute.arch.shuffle_sync_bfly(
-                        partial0, offset=8
-                    )
-                    peer1 = cute.arch.shuffle_sync_bfly(
-                        partial1, offset=8
-                    )
-                    partial0, partial1 = cute.arch.add_packed_f32x2(
-                        (partial0, partial1), (peer0, peer1)
-                    )
-                    peer0 = cute.arch.shuffle_sync_bfly(
-                        partial0, offset=4
-                    )
-                    peer1 = cute.arch.shuffle_sync_bfly(
-                        partial1, offset=4
-                    )
-                    partial0, partial1 = cute.arch.add_packed_f32x2(
-                        (partial0, partial1), (peer0, peer1)
-                    )
-                    if lane == Int32(0):
-                        route_partial[owner_warp, 2 * pair_idx] = partial0
-                        route_partial[owner_warp, 2 * (pair_idx + 1)] = (
-                            partial1
+                        raw_partial0 = partial0
+                        raw_partial1 = partial1
+                        scaled0, scaled1 = cute.arch.mul_packed_f32x2(
+                            (raw_partial0, raw_partial1),
+                            (softmax_scale_log2, softmax_scale_log2),
                         )
-                    if lane == Int32(2):
-                        route_partial[owner_warp, 2 * pair_idx + 1] = partial0
-                        route_partial[
-                            owner_warp, 2 * (pair_idx + 1) + 1
-                        ] = partial1
+                        peer_scaled0 = cute.arch.shuffle_sync_bfly(
+                            scaled0, offset=1
+                        )
+                        peer_scaled1 = cute.arch.shuffle_sync_bfly(
+                            scaled1, offset=1
+                        )
+                        partial0, partial1 = cute.arch.fma_packed_f32x2(
+                            (raw_partial0, raw_partial1),
+                            (softmax_scale_log2, softmax_scale_log2),
+                            (peer_scaled0, peer_scaled1),
+                        )
+                        peer0 = cute.arch.shuffle_sync_bfly(
+                            partial0, offset=16
+                        )
+                        peer1 = cute.arch.shuffle_sync_bfly(
+                            partial1, offset=16
+                        )
+                        partial0, partial1 = cute.arch.add_packed_f32x2(
+                            (partial0, partial1), (peer0, peer1)
+                        )
+                        peer0 = cute.arch.shuffle_sync_bfly(
+                            partial0, offset=8
+                        )
+                        peer1 = cute.arch.shuffle_sync_bfly(
+                            partial1, offset=8
+                        )
+                        partial0, partial1 = cute.arch.add_packed_f32x2(
+                            (partial0, partial1), (peer0, peer1)
+                        )
+                        peer0 = cute.arch.shuffle_sync_bfly(
+                            partial0, offset=4
+                        )
+                        peer1 = cute.arch.shuffle_sync_bfly(
+                            partial1, offset=4
+                        )
+                        partial0, partial1 = cute.arch.add_packed_f32x2(
+                            (partial0, partial1), (peer0, peer1)
+                        )
+                        if lane == Int32(0):
+                            route_partial[owner_warp, 2 * pair_idx] = partial0
+                            route_partial[owner_warp, 2 * (pair_idx + 1)] = (
+                                partial1
+                            )
+                        if lane == Int32(2):
+                            route_partial[owner_warp, 2 * pair_idx + 1] = (
+                                partial0
+                            )
+                            route_partial[
+                                owner_warp, 2 * (pair_idx + 1) + 1
+                            ] = partial1
 
                 cute.arch.fence_view_async_shared()
                 score_loaded_barrier.arrive_and_wait()
@@ -919,20 +932,64 @@ def _sol_attn_sm100_bf16_kernel(
                         valid = off < valid_route_count
                         exact_pred = False
                         if valid:
-                            pair_02 = Float32(route_partial[0, off]) + Float32(
-                                route_partial[2, off]
-                            )
-                            pair_13 = Float32(route_partial[1, off]) + Float32(
-                                route_partial[3, off]
-                            )
-                            col_mean = (pair_02 + pair_13) / Float32(q_len)
-                            exact_pred = sol_attn_route_is_exact(
-                                q_block_idx,
-                                route_start + off,
-                                col_mean,
-                                threshold,
-                                valid,
-                            )
+                            if cutlass.const_expr(external_route):
+                                exact_pred = (
+                                    Int32(
+                                        mRouteMask[
+                                            batch_idx,
+                                            q_block_idx,
+                                            head_idx,
+                                            route_start + off,
+                                        ]
+                                    )
+                                    != Int32(0)
+                                ) and valid
+                            else:
+                                pair_02 = Float32(
+                                    route_partial[0, off]
+                                ) + Float32(route_partial[2, off])
+                                pair_13 = Float32(
+                                    route_partial[1, off]
+                                ) + Float32(route_partial[3, off])
+                                col_mean = (pair_02 + pair_13) / Float32(q_len)
+                                if cutlass.const_expr(force_local_blocks):
+                                    exact_pred = sol_attn_route_is_exact(
+                                        q_block_idx,
+                                        route_start + off,
+                                        col_mean,
+                                        threshold,
+                                        valid,
+                                    )
+                                else:
+                                    exact_pred = (col_mean > threshold) and valid
+                                # A NaN cutoff marks a numerically unsafe Top-K
+                                # boundary. Hybrid mode uses the explicit route
+                                # for only that query-block/head and leaves
+                                # every other row on the scalar-threshold
+                                # selector.
+                                if cutlass.const_expr(hybrid_route):
+                                    if threshold != threshold:
+                                        exact_pred = (
+                                            Int32(
+                                                mRouteMask[
+                                                    batch_idx,
+                                                    q_block_idx,
+                                                    head_idx,
+                                                    route_start + off,
+                                                ]
+                                            )
+                                            != Int32(0)
+                                        ) and valid
+                            # Local retention is an attention-kernel policy,
+                            # including hybrid rows whose selection came from
+                            # an explicit mask.
+                            if cutlass.const_expr(
+                                force_local_blocks and not external_route
+                            ):
+                                distance = q_block_idx - (route_start + off)
+                                exact_pred = exact_pred or (
+                                    (distance >= -1) and (distance <= 1)
+                                )
                             # Sink is a KV-only contract. Text queries remain
                             # a caller-side dense operation in MMDiT models.
                             exact_pred = (
@@ -942,6 +999,16 @@ def _sol_attn_sm100_bf16_kernel(
                                     and route_start + off < sink_end_block
                                 )
                             )
+                        if cutlass.const_expr(export_route):
+                            if valid:
+                                mRouteMask[
+                                    batch_idx,
+                                    q_block_idx,
+                                    head_idx,
+                                    route_start + off,
+                                ] = (
+                                    Uint8(1) if exact_pred else Uint8(0)
+                                )
                         word_mask = Int32(
                             cute.arch.vote_ballot_sync(exact_pred)
                         )
@@ -1000,7 +1067,9 @@ def _sol_attn_sm100_bf16_kernel(
                 # route-score load is introduced.
                 score_loaded_barrier.arrive_and_wait()
                 route_exact_count = Int32(route_packet[4])
-                has_route_approx = route_exact_count < valid_route_count
+                has_route_approx = (
+                    route_exact_count < valid_route_count
+                ) and cutlass.const_expr(not exact_only)
                 if has_route_approx:
                     row_mask = -Float32.inf
                     if row_valid:
@@ -1139,7 +1208,9 @@ def _sol_attn_sm100_bf16_kernel(
                 route_packet_ready_barrier.arrive_and_wait()
             if warp_idx == Int32(0):
                 route_exact_count = Int32(route_packet[4])
-                route_has_approx = route_exact_count < valid_route_count
+                route_has_approx = (
+                    route_exact_count < valid_route_count
+                ) and cutlass.const_expr(not exact_only)
                 pack_v_pipe.consumer_wait(pack_v_consumer)
                 if route_has_approx:
                     mma_utils.gemm(
@@ -1561,6 +1632,12 @@ def _sol_attn_sm100_bf16_host(
     sink_start_block: Int32,
     sink_end_block: Int32,
     stream: cuda.CUstream = None,
+    route_mask: Optional[cute.Tensor] = None,
+    external_route: cutlass.Constexpr[bool] = False,
+    hybrid_route: cutlass.Constexpr[bool] = False,
+    exact_only: cutlass.Constexpr[bool] = False,
+    export_route: cutlass.Constexpr[bool] = False,
+    force_local_blocks: cutlass.Constexpr[bool] = True,
 ):
     q, k, v, o, kc, vc = tuple(
         assume_tensor_aligned(t) for t in (q, k, v, o, kc, vc)
@@ -1704,6 +1781,7 @@ def _sol_attn_sm100_bf16_host(
         vc_tma_atom,
         vc_tma_tensor,
         threshold,
+        route_mask,
         o,
         lse,
         Int32(token_count),
@@ -1720,6 +1798,11 @@ def _sol_attn_sm100_bf16_host(
         pack_v_gather_layout,
         route_k_layout,
         route_v_layout,
+        external_route,
+        hybrid_route,
+        exact_only,
+        export_route,
+        force_local_blocks,
     ).launch(
         grid=(num_blocks, num_heads, num_batches),
         block=(THREADS, 1, 1),
@@ -1759,4 +1842,61 @@ def forward(
     )
 
 
-__all__ = ["forward"]
+class SolAttnForwardSm100:
+    """tcgen05 Sol-Attn kernel with SM120-style route-mask policy switches."""
+
+    def __init__(
+        self,
+        *,
+        external_route: bool = False,
+        hybrid_route: bool = False,
+        exact_only: bool = False,
+        export_route: bool = False,
+        force_local_blocks: bool = True,
+    ):
+        self.external_route = external_route
+        self.hybrid_route = hybrid_route
+        self.exact_only = exact_only
+        self.export_route = export_route
+        self.force_local_blocks = force_local_blocks
+
+    @cute.jit
+    def __call__(
+        self,
+        q: cute.Tensor,
+        k: cute.Tensor,
+        v: cute.Tensor,
+        o: cute.Tensor,
+        kc: cute.Tensor,
+        vc: cute.Tensor,
+        threshold: cute.Tensor,
+        route_mask: Optional[cute.Tensor],
+        lse: cute.Tensor,
+        softmax_scale: Float32,
+        sink_start_block: Int32,
+        sink_end_block: Int32,
+        stream: cuda.CUstream = None,
+    ):
+        return _sol_attn_sm100_bf16_host(
+            q,
+            k,
+            v,
+            o,
+            kc,
+            vc,
+            threshold,
+            lse,
+            softmax_scale,
+            sink_start_block,
+            sink_end_block,
+            stream,
+            route_mask,
+            self.external_route,
+            self.hybrid_route,
+            self.exact_only,
+            self.export_route,
+            self.force_local_blocks,
+        )
+
+
+__all__ = ["SolAttnForwardSm100", "forward"]

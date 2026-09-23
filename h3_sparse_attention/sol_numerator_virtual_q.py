@@ -299,7 +299,7 @@ def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=N
         expected=(b,virtual_ranges.shape[0],h,n,d)
         if ak.shape!=expected or av.shape!=expected or lm.shape!=expected[:-1] or not all(x.device==q.device and x.is_contiguous() for x in (ak,av,lm)) or ak.dtype!=q.dtype or av.dtype!=q.dtype or lm.dtype!=torch.float32:
             raise ValueError('invalid precomputed virtual summaries')
-    if virtual_q_backend(q) == 'sm120_fused_virtual_query':
+    if virtual_q_backend(q).endswith('fused_virtual_query'):
         return _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,key_centroids,
                               threshold,route,sink_start,sink_tokens,precomputed_summaries,
                               force_local_blocks=force_local_blocks,_query_tokens=_query_tokens)
@@ -312,18 +312,19 @@ _FUSED_COMPILED = {}
 
 
 def virtual_q_backend(q):
-    """Auto-fuse production SM120 lengths; 0/1 force fallback/fusion for A/B.
+    """Auto-fuse production lengths; 0/1 force fallback/fusion for A/B.
 
     Small grids cannot amortize the CuTe invocation/extra summary-key pipeline.
     Their original streamed path remains faster in the measured 4097-row case.
     """
     import os
     selection=os.environ.get('H3_SPARK_REWEIGHT_FUSED', 'auto')
+    capability=tuple(torch.cuda.get_device_capability(q.device)) if q.is_cuda else None
     if (q.is_cuda and q.dtype == torch.bfloat16
-            and torch.cuda.get_device_capability(q.device) == (12, 0)
+            and capability in ((9, 0), (10, 0), (12, 0))
             and selection != '0'
             and (selection == '1' or q.shape[1] > 8192)):
-        return 'sm120_fused_virtual_query'
+        return f'sm{capability[0]}{capability[1]}_fused_virtual_query'
     return 'stock_exact+triton_virtual_query_skipped'
 
 
@@ -341,7 +342,13 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     import cuda.bindings.driver as cuda
     import cutlass.cute as cute
     from sol_attn.common import to_cute_tensor
-    from .spark_reweight_sm120 import SparkReweightForwardSm120
+    capability=tuple(torch.cuda.get_device_capability(q.device))
+    if capability==(9,0):
+        from .spark_reweight_sm90 import SparkReweightForwardSm90 as FusedKernel
+    elif capability==(10,0):
+        from .spark_reweight_sm100 import SparkReweightForwardSm100 as FusedKernel
+    else:
+        from .spark_reweight_sm120 import SparkReweightForwardSm120 as FusedKernel
     b,t,h,d=q.shape;n=triton.cdiv(t,64);p=a.shape[1]
     ranges=_host_ranges(virtual_ranges)
     query_tokens=t if _query_tokens is None else operator.index(_query_tokens)
@@ -385,7 +392,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     tensors=(q,k,v,out,kc,avt,threshold,route,lse,akt,lm,leaf_to_virtual)
     args=[to_cute_tensor(x) for x in tensors]
     stream=cuda.CUstream(torch.cuda.current_stream(q.device).cuda_stream)
-    key=(q.device.index,external,hybrid,export_route,force_local_blocks,
+    key=(q.device.index,capability,external,hybrid,export_route,force_local_blocks,
          tuple((tuple(x.shape),tuple(x.stride()),x.dtype) for x in tensors))
     compiled=_FUSED_COMPILED.get(key)
     sink_start=t-sink_tokens if sink_start is None else sink_start
@@ -405,7 +412,9 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
             scalars=(qb_start,qb_end-qb_start,p_start,head_start,head_count,
                      d**-.5,sink_first,sink_last)
             if compiled is None:
-                kernel=SparkReweightForwardSm120(external_route=external,hybrid_route=hybrid,export_route=export_route,force_local_blocks=force_local_blocks)
+                kernel=(FusedKernel(t,external_route=external,hybrid_route=hybrid,export_route=export_route,force_local_blocks=force_local_blocks)
+                        if capability==(9,0) else
+                        FusedKernel(external_route=external,hybrid_route=hybrid,export_route=export_route,force_local_blocks=force_local_blocks))
                 compiled=cute.compile(kernel,*args,*scalars,stream=stream,options='--enable-tvm-ffi')
                 _FUSED_COMPILED[key]=compiled
             compiled(*args,*scalars,stream=stream)

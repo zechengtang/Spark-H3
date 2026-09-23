@@ -6,11 +6,29 @@ from .fwd import SolAttnSplitForwardSm90
 from .mainloop import SolAttnMainloopSm90
 
 
-def make_kernel(tokens: int, kv_splits: int):
+def make_kernel(
+    tokens: int,
+    kv_splits: int,
+    *,
+    external_route: bool = False,
+    hybrid_route: bool = False,
+    exact_only: bool = False,
+    export_route: bool = False,
+    force_local_blocks: bool = True,
+):
     blocks = (tokens + 63) // 64
     full_groups, tail = divmod(blocks, 64)
     has_full_groups = tail == 0
     has_full_blocks = tokens % 64 == 0
+    route_mask_mode = (
+        external_route
+        or hybrid_route
+        or exact_only
+        or export_route
+        or not force_local_blocks
+    )
+    if kv_splits != 1 and route_mask_mode:
+        raise ValueError("route-mask modes are unsupported for the SM90 split-KV variant")
     kernel = SolAttnMainloopSm90 if kv_splits == 1 else SolAttnSplitForwardSm90
 
     return kernel(
@@ -41,6 +59,11 @@ def make_kernel(tokens: int, kv_splits: int):
         ),
         sol_attn_tail16_lane_group_route_reduce=tail == 16,
         sol_attn_num_splits=kv_splits,
+        external_route=external_route,
+        hybrid_route=hybrid_route,
+        exact_only=exact_only,
+        export_route=export_route,
+        force_local_blocks=force_local_blocks,
     )
 
 
