@@ -41,18 +41,12 @@ integration. Conditioning video, text, and audio retain exact attention handling
 
 ## 🎬 Demo
 
-Click the preview to watch the full visual comparison of Dense, Spark-H3, and
-Sol-H3 generation results.
+Play the full visual comparison of Dense, Spark-H3, and Sol-H3 generation
+results directly below.
 
-<p align="center">
-  <a href="assets/spark-h3-demo.mp4">
-    <img src="assets/spark-h3-demo-poster.jpg" width="100%" alt="Spark-H3 visual comparison demo">
-  </a>
-</p>
+https://github.com/user-attachments/assets/6ca6375c-b44f-4e3f-a712-61f2df73580f
 
-<p align="center">
-  <a href="assets/spark-h3-demo.mp4">▶ Watch the full demo (MP4, 1:20)</a>
-</p>
+[Download the full-resolution demo (1080p MP4, 1:20)](assets/spark-h3-demo.mp4)
 
 <a id="quick-start"></a>
 
