@@ -92,9 +92,9 @@ function render(t){
  const kpos=k.map((_,i)=>lerp(lerp(i,km[i],first),kp[i],second));
  stage(route,[
  'Start with 16 tokens. Fixed blocks mix attention preferences; the root contains every token.',
- 'Split by coarse preference to fill each child’s assigned capacity. This toy uses 8 + 8 tokens; the arbitrary splitter also supports unequal child sizes.',
+ 'Split by coarse preference to fill each child’s assigned capacity.',
  'Recurse: apply the split separately inside A and B. Tokens stay within their parent, producing four leaves of 4 tokens. Stop at the leaf block size.',
- 'Pack the leaf blocks, then select attention blocks. Q and K are reordered independently; V follows K. Return the output to the original Q order.'
+ 'Reorder Q and K independently so that tokens within each leaf are contiguous; V follows K. Then select attention blocks and return the output to the original Q order.'
  ][route]);
  treeNodes.forEach((n,i)=>{
    const reached=i===0||i<3&&first===1||i>=3&&second===1;

@@ -1,41 +1,43 @@
 # Spark-H3: Better Block Sparse Attention for MiniMax-H3
 
 September 13, 2026 · SparkH3 Team<br>
-<span class="hero-affiliations">PKU · NJU · DreamTech</span>
+<!-- <span class="hero-affiliations">PKU · NJU</span> -->
 
 <!-- VDN10_SHOWCASE -->
 
-**Block-Sparse Attention (BSA)** splits attention into two complementary branches: an **exact branch** that computes selected blocks exactly, and a **compressed branch** that covers the remaining content at much lower complexity. However, fixed block partitioning limits the exact branch, and mean estimation — a common construction of the compressed branch — biases its estimates. We introduce **Spark-Attn** to improve both branches:
+**Block-Sparse Attention (BSA)** splits attention into two complementary branches: an **exact branch** that computes selected blocks exactly, and a **compressed branch** that covers the remaining content at much lower complexity. However, fixed block partitioning limits the exact branch, and mean estimation — a common construction of the compressed branch — biases its estimates. We introduce **Spark-Attn**, comprising **Spark-Reblock** and **Spark-Reweight**, to improve the two branches. We refer to its MiniMax-H3 implementation as **Spark-H3**.
 
 - **Spark-Reblock** improves the exact branch: it partitions tokens according to attention preference, improving attention mass recall at the same budget.
-- **Spark-Reweight** improves the compressed branch: it uses weighted rather than uniform mean estimation, reducing the Jensen-gap bias.
-- **Spark-Integration** demonstrates the feasibility of combining Spark-Attn with few-step distilled acceleration, including FastH3.
+- **Spark-Reweight** improves the compressed branch with weighted summaries and a log-mass bias, reducing the bias introduced by mean pooling.
+- **Benchmark Results** evaluates Spark-H3's fidelity, visual quality, and acceleration against dense attention and Sol-Attn.
+- **Spark-Integration** applies Spark-H3 to FastH3 and to few-step LoRAs from Larryvrh and LightX2V.
+- **Visual Comparisons** presents paired Dense and Spark-H3 outputs generated with matching prompts and seeds.
 
 ## Spark-Reblock
 
-*~3 min read*
+*~2 min read*
 
 Block-level scoring works better when tokens within each block are more similar. Common block layouts group consecutive tokens or use fixed spatio-temporal tiles. These layouts provide efficient, regular blocks, but do not account for differences across inputs and layers.
 
 Two aspects of video diffusion help explain why these differences matter.
 
-**Noise weakens the spatio-temporal prior.** Denoising starts from independent Gaussian noise and gradually recovers structure. Nearby positions in the noise do not have an inherent similarity advantage. A spatio-temporal neighborhood that makes sense in a clean video may therefore be a poor basis for forming attention blocks during denoising.
+**Noise weakens the spatio-temporal prior.** Denoising starts from independent Gaussian noise and gradually recovers structure. Nearby positions in the noise do not have an inherent similarity advantage. A spatio-temporal neighborhood that aligns well with a clean video may therefore be less well suited to the attention-relevant similarity structure during early denoising.
 
 ![Denoising from noise to data](https://yang-song.net/assets/img/score/denoise_vp.gif)
 
 *Illustration: [Yang Song, Generative Modeling by Estimating Gradients of the Data Distribution](https://yang-song.net/blog/2021/score/).*
 
-**Similarity patterns vary across inputs and layers.** Each layer and head learns its own similarity measure, so which tokens are similar depends on both the model’s learned weights and the input. A single fixed block partition cannot adapt to these different similarity patterns.
+**Similarity patterns vary across inputs and layers.** Each layer and head learns its own similarity measure, so which tokens are similar depends on both the model’s learned weights and the input. A single fixed block partitioning may not match these varying similarity patterns well.
 
-We propose **Spark-Reblock** to account for both effects by grouping similar tokens into the same blocks. “Attention preference” refers to which keys a query tends to attend to, and which queries tend to attend to a key. We use token similarity as a proxy for similar attention preferences, measured by Mahalanobis cosine distance under the opposite side's second moment:
+We propose **Spark-Reblock** to account for both effects by grouping tokens with similar attention preferences into the same blocks. More precisely, two queries are considered similar if they produce similar attention-score patterns over the key distribution, while two keys are considered similar if they receive similar scores across the query distribution. We quantify these relationships using a Mahalanobis cosine distance induced by the opposite side's second moment:
 
 $$
 d_Q(q_i,q_j)=1-\cos\!\big(M_K^{1/2}q_i,\,M_K^{1/2}q_j\big),\qquad M_K=\mathbb{E}[kk^\top],
 $$
 
-and symmetrically for keys with $M_Q=\mathbb{E}[qq^\top]$. The partition adapts to the input and each layer and head’s learned similarity measure. A divide-and-conquer algorithm recursively splits tokens into groups of exactly block size, with time complexity $\mathcal{O}(N \log N)$, where $N$ is the number of tokens.
+and symmetrically for keys with $M_Q=\mathbb{E}[qq^\top]$. These distances make “similar” explicit: query tokens are grouped under $d_Q$, and key tokens under its symmetric counterpart $d_K$. Starting from the full token set, our iterative hierarchical partitioner repeatedly splits every current group according to the corresponding distance while enforcing the assigned child capacities. The process continues level by level until every leaf contains exactly the target block size. Because the hierarchy adapts to the current input, layer, and head, it can follow their different similarity structures; its time complexity is $\mathcal{O}(N \log N)$, where $N$ is the number of tokens.
 
-The animation illustrates recursive partitioning: split the parent according to assigned child capacities, apply the same operation within each child, and stop at the leaf block size. Token IDs track membership through the tree and the attention matrix shows the resulting permutation.
+The following animation illustrates recursive partitioning: split the parent according to assigned child capacities, apply the same operation within each child, and stop at the leaf block size. Token IDs track membership through the tree and the attention matrix shows the resulting permutation.
 
 <iframe class="spark-animation" src="/animations/spark-reblock.html" title="Spark-Reblock: recursive splitting into token blocks" loading="lazy"></iframe>
 
@@ -45,28 +47,43 @@ $$
 \operatorname{BSA}(Q_A)=\operatorname{Softmax}\!\left(\frac{Q_A\widetilde{K}_A^\top}{\sqrt{d}}\right)\widetilde{V}_A.
 $$
 
-The effective keys $\widetilde{K}_A$ and values $\widetilde{V}_A$ concatenate the following blocks:
+The effective keys $\widetilde{K}_A$ and values $\widetilde{V}_A$ are assembled by concatenating over all key-value blocks $B$:
 
 $$
-\bigl(\widetilde{K}_{A,B},\widetilde{V}_{A,B}\bigr)=
+\begin{aligned}
+\widetilde{K}_A
+&=\operatorname{Concat}_{B}
 \begin{cases}
-(K_B,V_B), & B\in\mathcal{S}_A \quad\text{(exact branch)}, \\[4pt]
-(\mathbf{1}_{|B|}\bar{k}_B^\top,\mathbf{1}_{|B|}\bar{v}_B^\top), & B\notin\mathcal{S}_A \quad\text{(compressed branch)}.
+K_B, & B\in\mathcal{S}_A, \\[4pt]
+\mathbf{1}_{|B|}\bar{k}_B^\top, & B\notin\mathcal{S}_A,
+\end{cases} \\[8pt]
+\widetilde{V}_A
+&=\operatorname{Concat}_{B}
+\begin{cases}
+V_B, & B\in\mathcal{S}_A, \\[4pt]
+\mathbf{1}_{|B|}\bar{v}_B^\top, & B\notin\mathcal{S}_A.
 \end{cases}
+\end{aligned}
 $$
 
-Here, $\mathcal{S}_A$ is the set of blocks selected for the exact branch, and $\bar{k}_B$ and $\bar{v}_B$ are the mean key and value of block $B$. The all-ones vector $\mathbf{1}_{|B|}$ repeats each mean across the block's token positions, so every token contributes with equal weight — a uniform mean estimate. (The implementation computes the pooled contribution once with a block-size factor $|B|$, without expanding the repeated tokens.) A single row-wise softmax normalizes both branches' contributions together.
+Here, $\mathcal{S}_A$ is the set of blocks selected for the exact branch, and $\bar{k}_B$ and $\bar{v}_B$ are the mean key and value of block $B$. The all-ones vector $\mathbf{1}_{|B|}$ repeats each mean across the block's token positions, so every token contributes with equal weight — a uniform mean estimate. A single row-wise softmax normalizes both branches' contributions together.
 
-The compressed branch is the same as Sol-Attn's mean-pooled approximation. The difference is routing: we select a fixed Top-K budget using query/key block-centroid scores, whereas Sol-Attn uses a Gaussian-based threshold controlled by $\tau$ ($\mu+\tau\sigma$). Context/sink tokens remain exact and are outside the video-block Top-K budget.
+The compressed branch matches Sol-Attn's mean-pooled approximation, while routing differs: we use a fixed Top-K budget instead of a content-adaptive threshold. Context/sink tokens remain exact and are outside the video-block Top-K budget.
 
-The first 4 of 19 denoising steps and the first attention layer use dense attention. We then replace only the baseline's fixed block partitioning with Spark-Reblock using 8-way recursive splitting, keeping all other settings unchanged.
+The ablation replaces only the baseline's fixed block partitioning with Spark-Reblock; routing, the sparse schedule, and all other settings remain unchanged.
 
 | Method | density ↓ | Attention-mass recall ↑ | PSNR dB ↑ | SSIM ↑ | LPIPS ↓ |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| BSA | 10.00% | 68.61% | 17.68 | 0.64 | 0.30 |
-| BSA + Reblock | 10.00% | 82.69% | 21.03 | 0.74 | 0.19 |
+| BSA | 10% | 68.66% | 18.61 | 0.68 | 0.26 |
+| BSA + Reblock | 10% | 81.54% | 22.41 | 0.80 | 0.14 |
 
-At a Top-K attention budget of **10%**, Spark-Reblock increases attention-mass recall by **14.08 percentage points**. It also improves mean PSNR by **3.35 dB** and mean SSIM by **0.10**, and reduces mean LPIPS by **0.12**. These results demonstrate the benefits of adaptive block partitioning over fixed block partitioning at the same attention budget.
+At a Top-K attention budget of **10%**, Spark-Reblock increases attention-mass recall by **12.88 percentage points** and improves mean PSNR by **3.80 dB**. These results demonstrate the benefit of adaptive block partitioning over fixed block partitioning at the same attention budget.
+
+### Discussion
+
+Concurrent work [VC-Attention](https://arxiv.org/html/2609.15810) uses single-level online $k$-means guided by value-token similarity to reorder keys and values for low-bit quantization. Because the cluster sizes are unconstrained, the sorted sequence is subsequently partitioned at fixed hardware-block boundaries to retain a regular, fixed-size block layout. Spark-Reblock instead uses an iterative divide-and-conquer hierarchy guided by query-key-induced attention-preference similarity to construct fixed-capacity blocks for sparse attention.
+
+[LLSA](https://arxiv.org/abs/2512.16615) also achieves $O(N\log N)$ sparse attention through a hierarchy, recursively pooling fixed neighboring blocks and applying coarse-to-fine Top-K selection. LLSA uses the hierarchy to search interactions over a fixed layout, while Spark-Reblock uses it to adapt the token layout itself. From a log-linear-attention perspective, Spark-Reblock can be understood as an $O(N\log N)$ attention-like probe of the underlying $O(N^2)$ dense attention distribution: instead of materializing the full attention matrix, it infers its structure and rearranges tokens so that fixed-size blocks align better with the resulting attention geometry.
 
 ## Spark-Reweight
 
@@ -74,83 +91,40 @@ At a Top-K attention budget of **10%**, Spark-Reblock increases attention-mass r
 
 Mean pooling underestimates attention mass because of the **Jensen gap**. Attention exponentiates logits before normalization, but pooling first replaces $\mathbb{E}[\exp(x)]$ with $\exp(\mathbb{E}[x])$, which therefore underestimates the expected exponential. When pooled blocks are combined with exact blocks, this underestimate suppresses their contribution to the output.
 
-![Exponential Jensen gap: the exponential at the mean logit lies below the mean of the exponentials.](figures/jensen_gap.svg)
+**Spark-Reweight** mitigates the resulting bias by scoring each block once with a representative query. These scores produce weighted key and value summaries, along with a log-mass bias used to correct the block's total attention mass. The weighted summaries and bias are then reused to approximate the block contribution for each query. To avoid per-query weighting—which would incur the full $N \times N$ cost—we use the mean of the video queries as the representative. This only adds a linear $O(N)$ scoring pass.
 
-*For two equally weighted logits, the orange point marks $\mathbb{E}[\exp(x)]$ and the blue point marks $\exp(\mathbb{E}[x])$. Their vertical separation is the Jensen gap: pooling before exponentiation underestimates the expected exponential.*
+![Mean pooling creates a Jensen gap, while a log-mass bias restores the expected exponential.](figures/reweight_correction.svg)
 
-We propose **Spark-Reweight** to reduce this bias using one shared query per group. The group's mean query scores every key within each key-value block, and log-sum-exp preserves the block's attention mass. The same attention weights produce weighted key and value summaries, keeping the value contribution consistent with the restored mass. Each query in the group uses the weighted key to adjust the shared log-mass with a first-order correction, then combines the weighted value with the exact blocks' contributions under a common normalization.
+*In this two-logit illustration, mean pooling produces $\exp(\mathbb{E}[x])$, shown in blue, below the expected exponential $\mathbb{E}[\exp(x)]$, shown in orange. The green point shows the effective pooled logit after applying the log-mass bias; its exponential matches the expected exponential.*
 
-At the shared query, both mass and value contribution are exact in exact arithmetic; other queries use an approximation. Sharing is more accurate when queries in a group have similar attention preferences.
-
-![The orange expectation point projects horizontally onto the exponential curve at the calibrated weighted mean E_w[x], with a vertical guide to the x-axis.](figures/reweight_correction.svg)
-
-*In this two-logit illustration, weights $w_1\approx0.215$ and $w_2\approx0.785$ give $\mathbb{E}_w[x]=\log\mathbb{E}[\exp(x)]$. The horizontal line connects the orange point to $\exp(\mathbb{E}_w[x])$ on the curve, showing the exact match. These illustrative weights express the mass correction as a weighted mean.*
-
-The animation shows how the pooled contribution recovers as its mass and value summary are updated. At the shared query, the completed update matches the dense output.
+The animation illustrates how weighted summaries and a log-mass bias produce a corrected estimate of the compressed block's contribution.
 
 <iframe class="spark-animation" src="/animations/spark-reweight.html" title="Spark-Reweight: correct attention mass and value together" loading="lazy"></iframe>
 
 
-The ablation uses top-k 10% and original contiguous 64-token blocks, without reblocking. The baseline uses mean pooling. Block-level Spark-Reweight uses one representative query per 64-token query block (1,134 representatives per head); global-level Spark-Reweight uses one representative for all 72,576 video queries per head, excluding context. The routing policy stays the same across methods.
+Using the same BSA baseline and evaluation protocol as the Spark-Reblock ablation, this experiment retains the fixed block partitioning and disables reblocking. It changes only the compressed-branch estimator, replacing mean pooling with Spark-Reweight's weighted pooling and log-mass bias; routing remains unchanged. Absolute log-mass error measures the difference between the exact total log-mass of the compressed branch and its approximation.
 
-| Method | PSNR dB ↑ | SSIM ↑ | LPIPS ↓ | Denoising time (s) |
-| --- | ---: | ---: | ---: | ---: |
-| BSA  | 17.68 | 0.64 | 0.30 | 333.71 |
-| BSA + Block-level reweight | 18.23 | 0.67 | 0.28 | 385.49 |
-| BSA + Global-level reweight | 18.14 | 0.66 | 0.28 | 346.06 |
+| Method | density ↓ | Abs log-mass error (nats) ↓ | PSNR dB ↑ | SSIM ↑ | LPIPS ↓ |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| BSA | 10% | 3.86 | 18.61 | 0.68 | 0.26 |
+| BSA + Reweight | 10% | 2.78 | 19.17 | 0.70 | 0.24 |
 
-Both Spark-Reweight variants improve mean PSNR, SSIM and LPIPS. Block-level Spark-Reweight improves mean PSNR by **0.56 dB**, while global-level Spark-Reweight retains a **0.46 dB** gain using a single representative per head.
-
-## Spark-Integration
-
-*~2 min read*
-
-Spark-Attn can be combined with timestep distillation: distilled models reduce the number of denoising steps, while Spark-Attn operate within attention. The examples below demonstrate integration with 4-step Fast-H3 models and 8-step H3 Turbo LoRA models.
-
-### 8-step distilled models
-
-[LightX2V MiniMax-H3 Turbo](https://huggingface.co/lightx2v/Minimax-h3-Turbo) and [Larry MiniMax-H3 Turbo LoRA](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) checkpoints are compared with dense attention and two Spark-H3-10pct schedules using matching prompts and seeds. Both sparse arms use 90% sparsity with the first transformer layer kept dense; the warmup arm additionally keeps the first two denoising steps dense. All examples use 1344×768 resolution and 240 frames at 24 fps.
-
-Generation times include denoising, the GPU component transition, video/audio decoding and first-use compilation. Model loading, LoRA fusion, cached prompt encoding and file encoding are excluded.
-
-<!-- TURBO_INTEGRATION -->
-
-### Fast-H3: a candidate replacement for fixed blocking
-
-The comparisons below show native Fast-H3 checkpoint variants alongside the V1 Dense checkpoint combined with Spark-BSA, with and without dense warmup. V1 variants use four denoising steps; V2 VSA uses eight. Dense + Spark-BSA produces good results in these examples, motivating Spark-Reblock as a natural candidate to replace fixed spatio-temporal block partitioning in VSA.
-
-Inference runs on NVIDIA RTX PRO 6000 Blackwell Server Edition GPUs with 96 GB of memory, with per-block torch.compile enabled on all variants (attention kept eager). V1 Dense and both Spark arms run with all transformer weights resident on the GPU. V1 VSA and V2 VSA run out of memory with resident weights — the VSA backend retains per-layer tile buffers on top of the 62 GiB checkpoint — so they use layerwise CPU offloading; their shown times include the resulting CPU–GPU transfers and are not directly comparable as attention-speed measurements.
-
-V1 Dense + Spark-H3 uses 90% sparsity; the no-warmup arm keeps every step sparse, the warmup arm keeps the first step and the first layer dense. All examples use 1344×768 resolution, and 240 frames at 24 fps. Times include denoising, video/audio decoding and first-use overhead; cached prompt encoding, model loading and archival are excluded.
-
-<!-- FASTH3_INTEGRATION -->
-
-<!--
-The compressed branch is a shared design element, but its construction differs across methods: FastH3's VSA pools queries and keys/values alike, Sol-Attn and Spark-H3 pool only keys/values, and OpenVDN replaces pooling with a linear branch.
-
-<iframe class="spark-animation" src="/animations/branch-comparison.html" title="The compressed branch across FastH3, Sol-Attn / Spark-H3 and OpenVDN" loading="lazy"></iframe>
--->
+At the same 10% density, Spark-Reweight reduces mean absolute log-mass error by **28%** and improves mean PSNR by **0.56 dB**.
 
 ## Benchmark Results
 
 *~3 min read*
 
-We compare Dense, Sol-Attn, and two Spark-H3 variants. Quality is evaluated on vbench prompts using 19 denoising steps, 1344×768 resolution and 240 frames at 24 fps. Sol-Attn uses official setting. Spark-H3-10pct uses 90% sparse BSA plus reblock and global reweight, and Spark-H3-20pct uses an 80% sparse budget with the same reblock and global reweight. Quality metrics are paired against dense references on identical prompts; denoising times are warmup-excluded synchronized means.
+**Evaluation setup.** We compare Dense, Sol-Attn, and two Spark-H3 variants on VBench prompts using 20 steps, 1344×768 resolution, and 240 frames at 24 fps. Sol-Attn uses its official setting. Spark-H3-10pct uses 90% sparse BSA with reblock and reweight; Spark-H3-20pct uses an 80% sparse budget with the same components. Quality is paired against dense references with identical prompts and seeds.
 
-PSNR, SSIM and LPIPS measure paired fidelity to the dense output on identical prompts and seeds: higher PSNR/SSIM and lower LPIPS mean the sparse video stays closer to dense, and the Dense row is the reference itself. Density is the fraction of key–value blocks the route retains per sparse call; Sol-H3 routes by threshold with a content-dependent budget, so no single density is reported.
-
-| Method | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ | Attn<br>speedup ↑ | DiT<br>speedup ↑ | density ↓ | Denoising<br>time (s, 19 NFE) ↓ |
+| Method | DiT<br>latency (s) ↓ | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ | DiT<br>speedup ↑ | ATTN<br>speedup ↑ | density ↓ |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Dense | ∞ | 1.00 | 0.00 | 1.00× | 1.00× | 100% | 582.1 |
-| Sol-H3 | 20.36 | 0.71 | 0.20 | 2.19× | 1.59× | — | 364.9 |
-| Spark-H3-10pct | 23.30 | 0.80 | 0.14 | 2.33× | 1.70× | 10% | 341.7 |
-| Spark-H3-20pct | 25.38 | 0.85 | 0.09 | 1.96× | 1.54× | 20% | 378.2 |
+| Dense | 582.1 | ∞ | 1.00 | 0.00 | 1.00× | 1.00× | 100% |
+| Sol-H3 | 364.9 | 20.36 | 0.71 | 0.20 | 1.59× | 2.19× | — |
+| Spark-H3-10pct | 341.7 | 23.30 | 0.80 | 0.14 | 1.70× | 2.33× | 10% |
+| Spark-H3-20pct | 378.2 | 25.38 | 0.85 | 0.09 | 1.54× | 1.96× | 20% |
 
-Attn speedup is the end-to-end ratio of total attention-core time, measured with per-layer CUDA events: dense flash-attention time over each sparse method's full attention-core time, which still includes the 4 dense warmup steps, the dense first layer and sink-query attention that the recipe requires.
-
-All methods run the same number of function evaluations (NFE), so our DiT speedup — the ratio of total denoising wall times — corresponds exactly to the NFE-normalized per-step speedup reported by [OpenVDN](https://openvdn.github.io/): with identical NFE on both sides, the evaluation count cancels in the ratio, leaving the ratio of mean per-evaluation latencies. Per-NFE latencies are 30.6 s for Dense, 19.2 s for Sol-H3, 18.0 s for Spark-H3-10pct and 19.9 s for Spark-H3-20pct. No step reduction is used; these speedups come from cheaper evaluations, not fewer steps. The first 4 of 19 steps and the first attention layer stay dense in all sparse methods, so per-step cost varies within each run, but the ratio of totals is identical to the ratio of mean per-NFE latencies. Note on convention: the MiniMax-H3 scheduler builds N sigma grid points (terminal zero included) and drives N − 1 model evaluations, so NFE labels that quote requested steps are off by one from actual evaluations — OpenVDN's "50-NFE" dense baseline, for instance, runs the standard 50-step schedule, i.e. 49 denoiser forwards. We always count actual evaluations.
-
-We also report five VBench dimensions, computed on the same generated videos: subject and background consistency track identity stability, motion smoothness tracks temporal fluidity, and imaging and aesthetic quality score per-frame fidelity and visual appeal.
+On the same videos, VBench measures subject and background consistency, motion smoothness, imaging quality, and aesthetic quality; higher is better for every dimension.
 
 | Method | Subject<br>consistency ↑ | Background<br>consistency ↑ | Motion<br>smoothness ↑ | Imaging<br>quality ↑ | Aesthetic<br>quality ↑ |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -159,21 +133,81 @@ We also report five VBench dimensions, computed on the same generated videos: su
 | Spark-H3-10pct | 90.77 | 94.24 | 99.01 | 71.81 | 68.22 |
 | Spark-H3-20pct | 90.92 | 94.25 | 99.01 | 72.08 | 67.73 |
 
+At 10% density, Spark-H3 achieves lower DiT latency than Sol-H3 (341.7 versus 364.9 seconds) while preserving the dense output more faithfully across PSNR, SSIM, and LPIPS. Increasing the density to 20% further improves fidelity, reaching 25.38 dB PSNR, 0.85 SSIM, and 0.09 LPIPS with a modest latency trade-off. Both Spark-H3 variants also closely track the Dense baseline across the reported VBench dimensions, with no broad degradation in visual quality. Together, these results show that Spark-H3 offers a strong fidelity–efficiency trade-off for attention acceleration.
+
+## Spark-Integration
+
+*~3 min read*
+
+Few-step distillation reduces the number of denoising steps, while attention acceleration reduces the cost of each step. FastH3 and OpenVDN already combine these two complementary approaches. The experiments below follow the same strategy by integrating Spark-H3 into FastH3's Dense pipeline and the few-step LoRA pipelines from LightX2V and Larryvrh.
+
+Unless noted otherwise, the integration examples use 1344×768 resolution, 240 frames at 24 fps, and Spark-H3 at 10% attention density, denoted **Spark-H3-10pct** below. FastH3 and few-step LoRA runs use per-block `torch.compile` on a single NVIDIA RTX PRO 6000 Blackwell Server Edition GPU with 96 GB of memory. In the no-warmup setting, Spark-H3 runs from the first step. The warmup setting keeps the first transformer layer dense throughout and uses dense attention for the first step of the 4-step FastH3 schedule and the first two steps of the 8-step LoRA schedules.
+
+### Fast-H3: an alternative for fixed block partitioning
+
+The comparisons below show native Fast-H3 checkpoint variants alongside its V1 Dense checkpoint with Spark-H3-10pct as the attention backend. V1 variants use four steps; V2 VSA uses eight. The results illustrate how Spark-H3 transfers to a distilled dense checkpoint and suggest Spark-Reblock as an alternative to VSA's fixed spatio-temporal block partitioning.
+
+Both VSA variants can load with all weights resident, but inference then exceeds the available 96 GB of GPU memory. We therefore use layerwise offloading. Their reported latencies include CPU–GPU transfer overhead and could be lower with more GPU memory.
+
+<!-- FASTH3_INTEGRATION -->
+
+### Larryvrh 8-step LoRA
+
+[Larryvrh MiniMax-H3 few-step LoRA](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) is evaluated with dense attention and two Spark-H3-10pct schedules using matching prompts and seeds under the shared protocol above.
+
+<!-- LARRY_INTEGRATION -->
+
+### LightX2V 8-step LoRA
+
+[LightX2V MiniMax-H3 few-step LoRA](https://huggingface.co/lightx2v/Minimax-h3-Turbo) is evaluated under the same protocol as the Larryvrh comparisons above.
+
+<!-- LIGHTX2V_INTEGRATION -->
+
+### Video DeltaNet
+
+[Video DeltaNet (VDN)](https://openvdn.github.io/) can be viewed as a special case of BSA in which each block corresponds to one latent frame and a fixed rule selects the exact branch. For each latent frame, this branch covers a local neighborhood of 15 latent frames together with the first and last latent frames, for 17 exact latent frames in total. The remaining context is handled by a DeltaNet branch adapted through training rather than by a pooled compressed branch.
+
+Because there is no corresponding dense checkpoint for the Video DeltaNet weights, we cannot directly integrate Spark-H3 into the same model. We therefore compare their speedups under VDN's longer 345-frame, 14.4-second setting. The table reports average latency per step and measures each speedup against Dense at the same precision.
+
+| Method | Dtype | Per-step DiT<br>latency (s) ↓ | Per-step ATTN<br>latency (s) ↓ | DiT<br>speedup ↑ | ATTN<br>speedup ↑ |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Dense | BF16 | 56.36 | 49.45 | 1.00× | 1.00× |
+| Spark-H3-10pct (w/ warmup) | BF16 | 33.01 | 26.19 | 1.71× | 1.89× |
+| Spark-H3-10pct (w/o warmup) | BF16 | 22.97 | 16.15 | **2.45×** | **3.06×** |
+| VDN (8 steps) | BF16 | 24.54 | 17.90 | 2.30× | 2.76× |
+| Dense | FP8 | 51.67 | 47.45 | 1.00× | 1.00× |
+| Spark-H3-10pct (w/ warmup) | FP8 | 28.63 | 24.50 | 1.80× | 1.94× |
+| Spark-H3-10pct (w/o warmup) | FP8 | 18.71 | 14.53 | **2.76×** | **3.27×** |
+| VDN (8 steps) | FP8 | 19.76 | 15.77 | 2.62× | 3.01× |
+
+In the fully sparse, no-warmup setting, Spark-H3 reaches per-step DiT speedups in a similar range to VDN: 2.45× versus 2.30× in BF16 and 2.76× versus 2.62× in FP8. However, without training adaptation, this fully sparse schedule may deviate more from the dense model. Its outputs may still be visually plausible, but fidelity to the dense model is not guaranteed. We therefore treat these results only as an optimistic speed upper bound, rather than evidence of comparable quality-preserving acceleration. Under the warmup schedule used to preserve dense fidelity, VDN remains faster. The upper-bound results instead suggest that training adaptation could potentially bring Spark-H3 closer to VDN-level speedups while maintaining fidelity.
+
+<!--
+The compressed branch is a shared design element, but its construction differs across methods: FastH3's VSA pools queries and keys/values alike, Sol-Attn and Spark-H3 pool only keys/values, and OpenVDN replaces pooling with a linear branch.
+
+<iframe class="spark-animation" src="/animations/branch-comparison.html" title="The compressed branch across FastH3, Sol-Attn / Spark-H3 and OpenVDN" loading="lazy"></iframe>
+-->
 
 ## Visual Comparisons
 
 *~1 min read*
 
-Dense and Spark-H3-10pct use matching prompts and seeds. These examples use the same Spark-H3-10pct configuration and generation run as the benchmark tables above. Each video shows its own measured denoising time, that is, the time of DiT computation.
+The comparisons below show 10-second videos at 1344×768 resolution. Dense and Spark-H3-10pct use matching prompts and seeds, and each video shows its measured DiT latency.
 
 <!-- VIDEO_GALLERY -->
 
 ## Related Works
 
-*~1 min read*
+*~2 min read*
 
 **MiniMax-H3.** MiniMax-H3 provides the underlying multimodal video-and-audio generation model used in our experiments. Spark-H3 targets the attention computation within this model. [Official repository](https://github.com/MiniMax-AI/MiniMax-H3), [Hugging Face model](https://huggingface.co/MiniMaxAI/MiniMax-H3).
 
-**Sol-Attn.** Sol-Attn combines dynamic routing, sparse computation and approximation correction within an online-softmax pass. Our BSA baseline retains its mean-pooled compressed branch and uses a fixed Top-K routing budget; Spark-Reblock and Spark-Reweight address the exact branch's block partitioning and the compressed branch's bias. [Paper: Sol-Attn — Accelerating Video Generation Inference via On-the-Fly Attention Sparsification](https://arxiv.org/abs/2607.24027).
+**Sol-Attn.** Sol-Attn combines dynamic routing, sparse computation and approximation correction within an online-softmax pass. Our BSA operator is developed on top of the Sol-Attn operator implementation and retains its mean-pooled compressed branch. [Paper: Sol-Attn — Accelerating Video Generation Inference via On-the-Fly Attention Sparsification](https://arxiv.org/abs/2607.24027).
 
-**Fast-H3.** FastVideo’s Fast-H3 provides few-step distilled MiniMax-H3 checkpoints, including four-forward Preview models and eight-forward V2, with native VSA variants. Timestep distillation and attention optimization can be combined; our integration experiments explore Spark-H3 in this setting and Spark-Reblock as a candidate replacement for fixed blocking. [Official Fast-H3 documentation](https://haoailab.com/FastVideo/cookbook/minimax-h3/), [FastVideo repository](https://github.com/hao-ai-lab/FastVideo).
+**FastH3.** FastH3 provides few-step distilled MiniMax-H3 checkpoints and trained VSA variants for accelerated inference. [Official FastH3 documentation](https://haoailab.com/FastVideo/cookbook/minimax-h3/), [FastVideo repository](https://github.com/hao-ai-lab/FastVideo).
+
+**Video DeltaNet.** Video DeltaNet combines an exact softmax branch selected by a fixed temporal rule with a DeltaNet branch adapted through training for the remaining context. [OpenVDN project page](https://openvdn.github.io/).
+
+**VC-Attention.** VC-Attention is a training-free low-bit attention framework. Its V-Smooth module uses online $k$-means to reorder keys and values so that similar value tokens tend to share a quantization block, while ExpCast-FP8 directly encodes attention probabilities in FP8. [Paper: VC-Attention — Value Smoothing and Softmax Casting for Low-bit Attention](https://arxiv.org/html/2609.15810).
+
+**LLSA.** LLSA is a trainable $O(N\log N)$ sparse attention method that recursively mean-pools fixed blocks, performs hierarchical coarse-to-fine Top-K selection, and enriches the selected fine tokens with coarse keys and values to preserve global context. [Paper: Trainable Log-linear Sparse Attention for Efficient Diffusion Transformers](https://arxiv.org/abs/2512.16615).

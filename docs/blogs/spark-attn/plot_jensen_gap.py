@@ -55,24 +55,18 @@ def main(corrected=False):
     if corrected:
         green = "#23866B"
         corrected_x = np.log(mean_f)
-        weights = np.array([samples[1] - corrected_x, corrected_x - samples[0]])
-        weights /= samples[1] - samples[0]
-        assert np.isclose(weights.sum(), 1) and np.all(weights >= 0)
-        assert np.isclose(np.exp(weights @ samples), mean_f)
+        assert np.isclose(np.exp(corrected_x), mean_f)
         ax.hlines(mean_f, mean_x, corrected_x, colors=green,
                   linestyles="dashed", linewidth=1.6)
         ax.vlines(corrected_x, 0, mean_f, colors=green,
                   linestyles="dashed", linewidth=1.6)
         ax.scatter([corrected_x], [mean_f], s=90,
                    color=green, edgecolors="white", zorder=6)
-        ax.text(corrected_x, -0.35, r"$\mathbb{E}_w[x]$", ha="center",
+        ax.text(corrected_x, -0.35, r"$\widetilde{x}$", ha="center",
                 va="top", color=green, fontsize=14)
         ax.text(-1.28, 5.7,
-                r"$\exp(\mathbb{E}_w[x])=\mathbb{E}[\exp(x)]$",
+                r"$\exp(\widetilde{x})=\mathbb{E}[\exp(x)]$",
                 color=green, fontsize=14)
-        ax.text(-1.28, 5.12,
-                rf"$w_1={weights[0]:.3f},\quad w_2={weights[1]:.3f}$",
-                color=green, fontsize=12)
     ax.set_yticks([0, 2, 4, 6, 8])
     ax.set_xlim(-1.4, 2.35)
     ax.set_ylim(0, 8.7)
@@ -81,14 +75,14 @@ def main(corrected=False):
     ax.spines[["top", "right"]].set_visible(False)
     ax.spines[["left", "bottom"]].set_color("#ABB5C2")
     ax.tick_params(colors=ink, length=0, pad=8)
-    title = ("Reweighting the mean to match the expected exponential" if corrected
+    title = ("A log-mass bias restores the expected attention mass" if corrected
              else "Exponentiating the mean underestimates the mean exponential")
     ax.set_title(title,
                  loc="left", fontsize=15, color=ink, pad=24, weight="bold")
-    footer = (rf"Calibrated weights:  $\mathbb{{E}}_w[x]={corrected_x:.3f},\quad"
-              rf"\exp(\mathbb{{E}}_w[x])=\mathbb{{E}}[\exp(x)]={mean_f:.2f}$"
+    footer = (rf"After the log-mass bias:  $\widetilde{{x}}=\log\mathbb{{E}}[\exp(x)]={corrected_x:.3f},\quad"
+              rf"\exp(\widetilde{{x}})=\mathbb{{E}}[\exp(x)]={mean_f:.2f}$"
               if corrected else
-              rf"Two equally weighted logits:  $\exp(\mathbb{{E}}[x])={f_mean:.2f}"
+              rf"Mean pooling over two logits:  $\exp(\mathbb{{E}}[x])={f_mean:.2f}"
               rf"\;<\;\mathbb{{E}}[\exp(x)]={mean_f:.2f}$")
     fig.supxlabel(
         footer,

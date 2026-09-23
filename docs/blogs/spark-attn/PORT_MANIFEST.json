@@ -8,8 +8,8 @@
       "source": "docs/blogs/landmark_tree_v2/README.md",
       "destination": "docs/blogs/spark-attn/README.md",
       "source_sha256": "318c516ec967bb3ded1061bc97366bf0459dda010995dd688a6de6476debb76f",
-      "adapted_sha256": "218a6c6a208ca2508e4098c8f6369d1c0a184bc01ddc70f859c3d61773ad8f68",
-      "note": "Diverged intentionally on 2026-09-21: corrected benchmark tables (regenerated dense references, Spark-H3-10pct/20pct rename, density column); Attn speedup redefined as end-to-end attention-core ratio (dense warmup steps and dense first layer included)."
+      "adapted_sha256": "1f1396935a87a8b0aab1cb5d41c41384d927ed1b3bd1c3ea89720ee4f9696ee2",
+      "note": "Diverged intentionally on 2026-09-21: corrected benchmark tables (regenerated dense references, Spark-H3-10pct/20pct rename, density column); Attn speedup redefined as end-to-end attention-core ratio (dense warmup steps and dense first layer included). 2026-09-22: Spark-Reblock ablation table re-scored against the updated dense manifest (Sep-20 regeneration had replaced dense references for prompts 14/41 after the Sep-19 scoring; attention-mass recall unchanged); Spark-Reweight ablation table (source: flat_global_query_weighted_representative4_20260916_0910) re-scored the same way — global-level now beats block-level (19.05 vs 18.90 dB). Spark-Reweight table: Block-level row dropped per request; added abs log-mass error column from jensen_flat64_reweight_arms_20260922 (flat64, no reblocking, saved-Dense-trajectory diagnostic). Tables 1/2 fully rerun on 2026-09-22 (blog_ablation_4prompts_rerun_20260922): one code snapshot, one fresh dense reference, default fanout-16 reblock (recall re-measured), flat64 global reweight, fresh Jensen diagnostic. Spark-Reweight narrative recentered on the global single-representative design (block/per-query correction dropped from the story)."
     },
     {
       "source": "docs/blogs/landmark_tree_v2/preview.py",

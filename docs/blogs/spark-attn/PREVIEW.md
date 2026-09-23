@@ -18,8 +18,10 @@ Open http://127.0.0.1:6008/. Choose another port if it is already occupied.
 The preview has no dependency on the MiniMax-H3-Sparse checkout or its gallery
 server. Model weights and a GPU are not needed.
 
-`prepare` downloads the attributed Yang Song illustration and pinned KaTeX
-assets, including its license, into the ignored `.preview/` directory.
+`prepare` downloads the attributed Yang Song illustration, pinned KaTeX
+assets, and pinned Assistant/Newsreader WOFF2 fonts into the ignored
+`.preview/` directory. KaTeX and both SIL Open Font License texts are retained
+beside their assets.
 Use `--runtime /path/to/cache` on each command, or set `SPARK_BLOG_RUNTIME`, to
 choose another location. Rendering then works offline once media is present.
 

@@ -25,6 +25,13 @@ ASSETS = RUNTIME / 'assets'
 GIF = 'https://yang-song.net/assets/img/score/denoise_vp.gif'
 KATEX_VERSION = '0.16.22'
 CDN = f'https://cdn.jsdelivr.net/npm/katex@{KATEX_VERSION}/'
+FONTSOURCE_VERSION = '5.3.0'
+FONTSOURCE = 'https://cdn.jsdelivr.net/npm/'
+FONT_ASSETS = (
+    ('@fontsource-variable/assistant', 'assistant-latin-wght-normal.woff2'),
+    ('@fontsource-variable/newsreader', 'newsreader-latin-wght-normal.woff2'),
+    ('@fontsource-variable/newsreader', 'newsreader-latin-wght-italic.woff2'),
+)
 MATH = re.compile(r'\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|(?<!\\)\$(?!\$)([^$\n]+?)(?<!\\)\$')
 LOCK = threading.Lock()
 CACHE = {}
@@ -51,11 +58,18 @@ def download(url, relative):
             payload = response.read()
         if relative.endswith('.gif'):
             assert payload[:6] in (b'GIF87a', b'GIF89a')
+        if relative.endswith('.woff2'):
+            assert payload[:4] == b'wOF2'
         temporary = target.with_suffix(target.suffix + '.download')
         temporary.write_bytes(payload)
         temporary.replace(target)
-    return {'url': url, 'file': relative, 'bytes': target.stat().st_size,
-            'sha256': hashlib.sha256(target.read_bytes()).hexdigest()}
+    payload = target.read_bytes()
+    if relative.endswith('.woff2'):
+        assert payload[:4] == b'wOF2'
+    if relative.endswith('-OFL.txt'):
+        assert b'SIL OPEN FONT LICENSE' in payload
+    return {'url': url, 'file': relative, 'bytes': len(payload),
+            'sha256': hashlib.sha256(payload).hexdigest()}
 
 
 def prepare():
@@ -63,6 +77,14 @@ def prepare():
                download(CDN + 'dist/katex.min.js', 'katex/katex.min.js'),
                download(CDN + 'dist/katex.min.css', 'katex/katex.min.css'),
                download(CDN + 'LICENSE', 'katex/LICENSE')]
+    for package, filename in FONT_ASSETS:
+        base = f'{FONTSOURCE}{package}@{FONTSOURCE_VERSION}/'
+        records.append(download(base + 'files/' + filename, 'fonts/' + filename))
+    for family in ('assistant', 'newsreader'):
+        package = f'@fontsource-variable/{family}'
+        records.append(download(
+            f'{FONTSOURCE}{package}@{FONTSOURCE_VERSION}/LICENSE',
+            f'fonts/{family}-OFL.txt'))
     css = (ASSETS / 'katex/katex.min.css').read_text()
     fonts = sorted(set(re.findall(r'url\([\"\']?(fonts/[^)\"\']+)', css)))
     assert fonts
@@ -137,6 +159,7 @@ def article_layout(content):
                 '<div class="overview-copy">' + intro + '</div></section>')
     chapters = []
     figure_index = 0
+    table_index = 0
     def figure(match):
         nonlocal figure_index
         figure_index += 1
@@ -153,9 +176,26 @@ def article_layout(content):
             reading_html = f'<span class="reading-time">{reading.group(1)}</span>'
         body = re.sub(r'<p>(<img\b[^>]*>)</p>\s*<p><em>(.*?)</em></p>', figure, body, flags=re.S)
         label = html.escape(section.group(2) + ' results', quote=True)
-        body = re.sub(r'(<table>.*?</table>)',
-                      lambda m: f'<div class="table-wrap" role="region" tabindex="0" aria-label="{label}">{m.group(1)}</div>',
-                      body, flags=re.S)
+        def data_table(match):
+            nonlocal table_index
+            table_index += 1
+            table = match.group(1)
+            columns = len(re.findall(r'<th\b', table))
+            def highlight_method(row_match):
+                row = row_match.group(0)
+                first_cell = re.search(r'<td>(.*?)</td>', row, re.S)
+                if first_cell and re.search(r'(?:Spark|Reblock|Reweight)', first_cell.group(1)):
+                    return row.replace('<tr>', '<tr class="is-highlight">', 1)
+                return row
+            table = re.sub(r'<tr>.*?</tr>', highlight_method, table, flags=re.S)
+            return (
+                f'<div class="table-wrap" role="region" tabindex="0" '
+                f'aria-label="{label}" data-columns="{columns}">'
+                '<div class="table-toolbar" aria-hidden="true">'
+                f'<span><b>Table</b> / {table_index:02d}</span>'
+                '<span class="table-scroll-hint">Scroll to compare <i>→</i></span>'
+                '</div>' + table + '</div>')
+        body = re.sub(r'(<table>.*?</table>)', data_table, body, flags=re.S)
         chapters.append(f'<section class="chapter" id="{section.group(1)}" '
                         f'aria-labelledby="{section.group(1)}-title">'
                         '<div class="section-heading">'
@@ -184,7 +224,7 @@ def gallery_html():
             videos.append(
                 f'<figure class="comparison-video {method}"><figcaption>'
                 f'<strong class="comparison-method"><i aria-hidden="true"></i>{label}</strong>'
-                '<span class="comparison-timing"><span class="timing-label">Denoising time</span>'
+                '<span class="comparison-timing"><span class="timing-label">DiT latency</span>'
                 f'<span class="timing-value">{item["denoise_seconds"]:.2f}<small> s</small></span>'
                 f'<span class="timing-speedup">{speedup:.2f}×</span>'
                 '</span></figcaption>'
@@ -195,7 +235,7 @@ def gallery_html():
             f'<article class="comparison-card" aria-labelledby="case-{sid}">'
             '<div class="comparison-heading"><div class="comparison-identity">'
             f'<h3 class="comparison-index" id="case-{sid}" aria-label="Comparison {index}">{index:02d}</h3>'
-            '<button class="video-reset" type="button" title="同时从头播放本 prompt 的所有视频">⟲ 复位</button>'
+            '<button class="video-reset" type="button" title="Restart all videos from the beginning">Restart</button>'
             '</div>'
             '</div>'
             '<div class="comparison-pair">' + ''.join(videos) + '</div>'
@@ -226,29 +266,32 @@ def resolve_integration_file(route):
     return path if path.is_relative_to(RUNTIME.resolve()) else None
 
 
-def integration_html(data, family):
+def integration_html(data, family, only_model=None):
     manifest = data[family]
     records = {r['variant']: r for r in manifest['variants']}
     groups = []
     for prompt_index, prompt in enumerate(('0753', '0685'), 1):
         if family == 'turbo-lora':
-            mode_specs = [('dense', 'Dense', '8 denoising steps'),
-                          ('spark10', 'Spark-H3-10pct', '8 denoising steps · first 2 steps + first layer dense'),
-                          ('spark10_nowarm', 'Spark-H3-10pct', '8 denoising steps · no warmup, fully sparse')]
+            mode_specs = [('dense', '', '8 steps · dense'),
+                          ('spark10', ' + Spark-H3-10pct', '8 steps · 90% sparsity · w/ warmup'),
+                          ('spark10_nowarm', ' + Spark-H3-10pct', '8 steps · 90% sparsity · w/o warmup')]
+            model_names = (only_model,) if only_model else ('lightx2v', 'larry')
             models = [(f'{prompt}_{model}_{mode}',
-                       ('LightX2V' if model == 'lightx2v' else 'Larry v4 EMA') + f' · {title}',
+                       ('LightX2V' if model == 'lightx2v'
+                        else 'Larryvrh') + suffix,
                        detail)
-                      for model in ('lightx2v', 'larry') for mode, title, detail in mode_specs]
+                      for model in model_names for mode, suffix, detail in mode_specs]
             prompt_text = manifest['cases'][prompt]['generation_prompt']
         else:
             prefix = '' if prompt == '0753' else '0685_'
             models = [(prefix + name, title, detail) for name, title, detail in (
-                ('v1_dense', 'FastH3 v1 Dense', '4 denoising steps · full attention'),
-                ('v1_dense_spark10_nowarm', 'FastH3 v1 Dense · Spark-H3-10pct', '4 denoising steps · no warmup'),
-                ('v1_dense_spark10_warm', 'FastH3 v1 Dense · Spark-H3-10pct + warmup',
-                 '4 denoising steps · first step + first layer dense'),
-                ('v1_vsa', 'FastH3 v1 VSA', '4 denoising steps · 90% sparsity'),
-                ('v2_vsa', 'FastH3 v2 VSA', '8 denoising steps · 80% sparsity'))]
+                ('v1_dense', 'FastH3 v1 Dense', '4 steps · dense'),
+                ('v1_dense_spark10_warm', 'FastH3 v1 Dense + Spark-H3-10pct',
+                 '4 steps · 90% sparsity · w/ warmup'),
+                ('v1_dense_spark10_nowarm', 'FastH3 v1 Dense + Spark-H3-10pct',
+                 '4 steps · 90% sparsity · w/o warmup'),
+                ('v1_vsa', 'FastH3 v1 VSA', '4 steps · 90% sparsity'),
+                ('v2_vsa', 'FastH3 v2 VSA', '8 steps · 80% sparsity'))]
             prompt_text = manifest['prompt' if prompt == '0753' else 'prompt0685']
         cards = []
         for variant, title, detail in models:
@@ -260,14 +303,14 @@ def integration_html(data, family):
                 '<figure class="integration-video"><figcaption>'
                 f'<strong>{html.escape(title)}</strong><span>{html.escape(detail)}</span>'
                 '</figcaption>' + video + '<div class="integration-video-footer">'
-                f'<span>Generation <strong>{record["generation_seconds"]:.2f} s</strong></span>'
+                f'<span>DiT latency <strong>{record["denoise_seconds"]:.1f} s</strong></span>'
                 '</div></figure>')
         excerpt = re.sub(r'^integrated_multimodal_description:\s*(?:\[Shot 1\]\s*)?', '', prompt_text)
         excerpt = ' '.join(excerpt.split())
         groups.append(
             '<div class="integration-group">'
             f'<h4>{prompt_index:02d}<button class="video-reset" type="button" '
-            'title="同时从头播放本 prompt 的所有视频">⟲ 复位</button></h4>'
+            'title="Restart all videos from the beginning">Restart</button></h4>'
             '<div class="integration-video-grid">' + ''.join(cards) + '</div>'
             '<details class="comparison-prompt"><summary>'
             '<span class="prompt-heading"><span class="prompt-label">Prompt</span>'
@@ -305,7 +348,7 @@ def vdn10_showcase_html(manifest):
             '<div class="vdn-showcase-head"><div>'
             '<p class="eyebrow">Selected Showcase</p>'
             '<h2 class="vdn-showcase-title" id="vdn-showcase-title">'
-            '<span class="model-tag"><span class="model-name">LightX2V Turbo</span>'
+            '<span class="model-tag"><span class="model-name">LightX2V</span>'
             '<span class="model-note">8-step</span></span> + '
             '<span class="model-tag"><span class="model-name">Spark-H3</span>'
             '<span class="model-note">90% sparse</span></span></h2>'
@@ -492,6 +535,10 @@ def render():
         converter = markdown.Markdown(extensions=['tables', 'fenced_code', 'toc'], extension_configs={'toc': {'toc_depth': '2-2'}})
         content = converter.convert(protected).replace('<!-- VIDEO_GALLERY -->', gallery_html())
         content = content.replace('<!-- TURBO_INTEGRATION -->', integration_html(integrations, 'turbo-lora'))
+        content = content.replace('<!-- LIGHTX2V_INTEGRATION -->',
+                                  integration_html(integrations, 'turbo-lora', 'lightx2v'))
+        content = content.replace('<!-- LARRY_INTEGRATION -->',
+                                  integration_html(integrations, 'turbo-lora', 'larry'))
         content = content.replace('<!-- FASTH3_INTEGRATION -->', integration_html(integrations, 'fasth3-0753'))
         content = article_layout(content)
         if '<!-- VDN10_SHOWCASE -->' in source:
@@ -508,6 +555,8 @@ def render():
         page = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
                 '<meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<title>Spark-H3 · MiniMax-H3</title>'
+                '<link rel="preload" href="/assets/fonts/assistant-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>'
+                '<link rel="preload" href="/assets/fonts/newsreader-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>'
                 '<link rel="stylesheet" href="/assets/katex/katex.min.css">'
                 '<meta name="description" content="Spark-H3: adaptive block partitioning and reweighted pooling for MiniMax-H3 sparse attention.">'
                 '<style>' + style + '</style></head><body id="top">'
@@ -628,9 +677,17 @@ def check():
     page, count = render()
     text = page.decode()
     assert count > 0 and 'class="katex"' in text
+    assert 'Assistant Variable' in text and 'Newsreader Variable' in text
+    assert text.count('rel="preload"') == 2
+    assert 'url("/assets/fonts/' not in text
     assert 'src="/assets/denoise_vp.gif"' in text and 'Yang Song' in text
-    assert len(re.findall(r'class="article-figure"', text)) == 3
-    assert len(re.findall(r'class="table-wrap"', text)) == 4
+    assert len(re.findall(r'class="article-figure"', text)) == 2
+    assert len(re.findall(r'class="table-wrap"', text)) == 5
+    assert len(re.findall(r'class="table-toolbar"', text)) == 5
+    assert len(re.findall(r'<tr class="is-highlight">', text)) == 10
+    assert '<tr class="is-highlight">\n<td>BSA + Reblock</td>' in text
+    assert '<tr class="is-highlight">\n<td>BSA</td>' not in text
+    assert '<tr class="is-highlight">\n<td>Dense</td>' not in text
     assert GIF not in text  # Both image and direct-image link are local; article attribution remains external.
     for target in ('/.git/config', '/etc/passwd', '/assets/../../etc/passwd', '/references/.git/config'):
         assert resolve_file(target) is None

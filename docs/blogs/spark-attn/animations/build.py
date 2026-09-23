@@ -104,9 +104,9 @@ function render(t){
  const kpos=k.map((_,i)=>lerp(lerp(i,km[i],first),kp[i],second));
  stage(route,[
  'Start with 16 tokens. Fixed blocks mix attention preferences; the root contains every token.',
- 'Split the root into two equal children of 8 tokens by coarse preference. Token IDs stay unchanged; each child owns its own subset.',
+ 'Split by coarse preference to fill each child’s assigned capacity.',
  'Recurse: apply the split separately inside A and B. Tokens stay within their parent, producing four leaves of 4 tokens. Stop at the leaf block size.',
- 'Pack the leaf blocks, then select attention blocks. Q and K are reordered independently; V follows K. Return the output to the original Q order.'
+ 'Reorder Q and K independently so that tokens within each leaf are contiguous; V follows K. Then select attention blocks and return the output to the original Q order.'
  ][route]);
  treeNodes.forEach((n,i)=>{
    const reached=i===0||i<3&&first===1||i>=3&&second===1;
@@ -137,7 +137,7 @@ const mass=weights.reduce((a,b)=>a+b,0),value=weights.reduce((a,w,i)=>a+w*values
 const exactMass=8,exactValue=.1,dense=(exactMass*exactValue+mass*value)/(exactMass+mass);
 const orange='#e6a03b',teal='#148d95';
 txt(28,34,'ONE COMPRESSED K/V BLOCK','label');
-txt(28,57,'At the shared query a · four toy tokens');
+txt(28,57,'At representative query a · four toy tokens');
 const bars=[],barLabels=[];
 for(let i=0;i<4;i++){
  const x=44+i*78;
@@ -154,7 +154,7 @@ const massLabel=txt(28,386,'4.00','large');
 txt(205,353,'COMPRESSED VALUE','small');
 const valueLabel=txt(205,386,'0.000','large');
 txt(28,424,'Dashed outlines: exact token contributions.');
-txt(28,448,'Mean logits lose the Jensen gap.');
+txt(28,448,'Mean pooling underestimates the attention mass.');
 txt(455,34,'EXACT + COMPRESSED BRANCHES','label');
 txt(455,57,'Normalize both branches together');
 txt(455,94,'Dense reference at a','label');
@@ -178,16 +178,16 @@ function render(t){
  const share=currentMass/(exactMass+currentMass),output=(exactMass*exactValue+currentMass*currentValue)/(exactMass+currentMass);
  const phase=t<.2?0:t<.6?1:2;
  stage(phase,[
- 'Block means assign each token exp(mean z) = 1. The compressed branch loses both attention mass and the preference for high-scoring values.',
- 'Restore the mass using log-sum-exp. Mass correction alone still leaves the wrong value summary, so the attention output remains inaccurate.',
- 'Use the same within-block softmax weights for the value summary. Mass and numerator now match Dense at the shared query a; nearby queries use an approximation.'
+ 'Mean pooling underestimates attention mass and treats all values equally.',
+ 'A log-mass bias restores the block’s attention mass.',
+ 'The same scores form the block’s weighted value summary.'
  ][phase]);
  bars.forEach((n,i)=>{const w=lerp(1,weights[i],m);n.setAttribute('y',265-w*21);n.setAttribute('height',w*21);barLabels[i].setAttribute('y',255-w*21);barLabels[i].textContent=w.toFixed(2);});
  massLabel.textContent=currentMass.toFixed(2);valueLabel.textContent=currentValue.toFixed(3);
  exactBar.setAttribute('width',width*(1-share));compressedBar.setAttribute('x',455+width*(1-share));compressedBar.setAttribute('width',width*share);
  shareLabel.textContent='Compressed share: '+(share*100).toFixed(1)+'%';
  outputLabel.textContent=output.toFixed(3);errorLabel.textContent='Absolute error: '+Math.abs(output-dense).toFixed(3);
- formula.textContent=phase===0?'Block mean: mass = 4 exp(mean z), value = mean v':phase===1?'Correct mass: exp(log-sum-exp(z)) = Σ exp(z)':'Correct value: Σ softmax(z) · v. Exact at the shared query a.';
+ formula.textContent=phase===0?'Block mean: mass = 4 exp(mean z), value = mean v':phase===1?'Log-mass bias restores log-sum-exp(z)':'Weighted value: Σ softmax(z) · v';
  svg.dataset.mass=currentMass;svg.dataset.value=currentValue;svg.dataset.output=output;svg.dataset.dense=dense;svg.dataset.progress=t;
 }
 '''
@@ -212,10 +212,10 @@ def main():
         'Spark-Reblock groups tokens with similar attention preferences before block selection.',
         ['01 · Root', '02 · Split parent', '03 · Recurse in children', '04 · Leaf blocks'], REBLOCK,
         'Illustrative 16-token example, not measured model results. Colors denote four attention-preference groups. Toy blocks contain 4 tokens; production blocks contain 64. The binary splits illustrate recursion with predetermined toy preferences; production uses learned similarity, configured fanout (8-way in the blog ablation), and 64-token leaves.')
-    reweight = page('02', 'Give the compressed branch its proper weight',
-        'Spark-Reweight corrects attention mass and the attention-weighted value summary together.',
-        ['01 · Block-mean approximation', '02 · Restore attention mass', '03 · Restore the value summary'], REWEIGHT,
-        'Illustrative scalar example at the shared query a, not measured model results. The exact branch has mass 8 and value 0.1. The four compressed tokens have logits [-2, -1, 1, 2] and values [-1, -0.5, 0.5, 1]. Corrections are shown in stages for explanation; the implementation computes them together.')
+    reweight = page('02', 'Reweight the summary, restore the mass',
+        'Spark-Reweight combines weighted summaries with a log-mass bias.',
+        ['01 · Mean pooling', '02 · Restore attention mass', '03 · Weighted value'], REWEIGHT,
+        'Illustrative scalar example, not measured model results. The exact branch has mass 8 and value 0.1. The four compressed tokens have logits [-2, -1, 1, 2] and values [-1, -0.5, 0.5, 1]. Corrections are shown in stages for explanation; the implementation computes them together.')
     for name, content in [('spark-reblock.html', reblock), ('spark-reweight.html', reweight)]:
         (HERE/name).write_text(content)
         print(name, len(content.encode()), 'bytes')

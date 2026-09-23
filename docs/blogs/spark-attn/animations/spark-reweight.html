@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Give the compressed branch its proper weight · Spark-Attn</title><style>
+<title>Reweight the summary, restore the mass · Spark-Attn</title><style>
 :root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:#182d42;background:#f8fafc}
 *{box-sizing:border-box}body{margin:0;padding:24px;max-width:1100px;margin-inline:auto}
 .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#52718c;font-weight:750}
@@ -13,9 +13,9 @@ svg{display:block;width:100%;height:auto;background:white;border:1px solid #dde6
 @media(max-width:540px){body{padding:12px}.stages{gap:4px}.stage{font-size:10px;padding:8px 3px}.insight{font-size:12px;min-height:89px}button{padding:8px;min-width:60px}.controls{gap:8px}svg .small{font-size:14px}}
 </style></head><body>
 <div class="eyebrow">Spark-Attn / 02 / interactive illustration</div>
-<h1>Give the compressed branch its proper weight</h1><p>Spark-Reweight corrects attention mass and the attention-weighted value summary together.</p>
-<div class="stages" aria-label="Animation stages"><div class="stage">01 · Block-mean approximation</div><div class="stage">02 · Restore attention mass</div><div class="stage">03 · Restore the value summary</div></div>
-<svg viewBox="0 0 850 530" role="img" aria-label="Spark-Reweight corrects attention mass and the attention-weighted value summary together."><title>Give the compressed branch its proper weight</title></svg>
+<h1>Reweight the summary, restore the mass</h1><p>Spark-Reweight combines weighted summaries with a log-mass bias.</p>
+<div class="stages" aria-label="Animation stages"><div class="stage">01 · Mean pooling</div><div class="stage">02 · Restore attention mass</div><div class="stage">03 · Weighted value</div></div>
+<svg viewBox="0 0 850 530" role="img" aria-label="Spark-Reweight combines weighted summaries with a log-mass bias."><title>Reweight the summary, restore the mass</title></svg>
 <div class="insight"></div>
 <div class="controls"><button id="play" type="button">Pause</button><button id="replay" type="button">Replay</button><label for="scrub" class="eyebrow">Progress</label><input id="scrub" aria-label="Animation progress" type="range" min="0" max="100" step="0.1" value="0"><output>0%</output></div>
 
@@ -36,7 +36,7 @@ const mass=weights.reduce((a,b)=>a+b,0),value=weights.reduce((a,w,i)=>a+w*values
 const exactMass=8,exactValue=.1,dense=(exactMass*exactValue+mass*value)/(exactMass+mass);
 const orange='#e6a03b',teal='#148d95';
 txt(28,34,'ONE COMPRESSED K/V BLOCK','label');
-txt(28,57,'At the shared query a · four toy tokens');
+txt(28,57,'At representative query a · four toy tokens');
 const bars=[],barLabels=[];
 for(let i=0;i<4;i++){
  const x=44+i*78;
@@ -53,7 +53,7 @@ const massLabel=txt(28,386,'4.00','large');
 txt(205,353,'COMPRESSED VALUE','small');
 const valueLabel=txt(205,386,'0.000','large');
 txt(28,424,'Dashed outlines: exact token contributions.');
-txt(28,448,'Mean logits lose the Jensen gap.');
+txt(28,448,'Mean pooling underestimates the attention mass.');
 txt(455,34,'EXACT + COMPRESSED BRANCHES','label');
 txt(455,57,'Normalize both branches together');
 txt(455,94,'Dense reference at a','label');
@@ -77,16 +77,16 @@ function render(t){
  const share=currentMass/(exactMass+currentMass),output=(exactMass*exactValue+currentMass*currentValue)/(exactMass+currentMass);
  const phase=t<.2?0:t<.6?1:2;
  stage(phase,[
- 'Block means assign each token exp(mean z) = 1. The compressed branch loses both attention mass and the preference for high-scoring values.',
- 'Restore the mass using log-sum-exp. Mass correction alone still leaves the wrong value summary, so the attention output remains inaccurate.',
- 'Use the same within-block softmax weights for the value summary. Mass and numerator now match Dense at the shared query a; nearby queries use an approximation.'
+ 'Mean pooling underestimates attention mass and treats all values equally.',
+ 'A log-mass bias restores the block’s attention mass.',
+ 'The same scores form the block’s weighted value summary.'
  ][phase]);
  bars.forEach((n,i)=>{const w=lerp(1,weights[i],m);n.setAttribute('y',265-w*21);n.setAttribute('height',w*21);barLabels[i].setAttribute('y',255-w*21);barLabels[i].textContent=w.toFixed(2);});
  massLabel.textContent=currentMass.toFixed(2);valueLabel.textContent=currentValue.toFixed(3);
  exactBar.setAttribute('width',width*(1-share));compressedBar.setAttribute('x',455+width*(1-share));compressedBar.setAttribute('width',width*share);
  shareLabel.textContent='Compressed share: '+(share*100).toFixed(1)+'%';
  outputLabel.textContent=output.toFixed(3);errorLabel.textContent='Absolute error: '+Math.abs(output-dense).toFixed(3);
- formula.textContent=phase===0?'Block mean: mass = 4 exp(mean z), value = mean v':phase===1?'Correct mass: exp(log-sum-exp(z)) = Σ exp(z)':'Correct value: Σ softmax(z) · v. Exact at the shared query a.';
+ formula.textContent=phase===0?'Block mean: mass = 4 exp(mean z), value = mean v':phase===1?'Log-mass bias restores log-sum-exp(z)':'Weighted value: Σ softmax(z) · v';
  svg.dataset.mass=currentMass;svg.dataset.value=currentValue;svg.dataset.output=output;svg.dataset.dense=dense;svg.dataset.progress=t;
 }
 
