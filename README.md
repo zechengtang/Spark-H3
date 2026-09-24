@@ -41,10 +41,13 @@ integration. Conditioning video, text, and audio retain exact attention handling
 
 ## 🎬 Demo
 
-The preview compares Dense, Spark-H3, and Sol-H3 with matched seeds, including
-both complete slow-motion detail segments from Case 2.
+The full demo compares Dense, Spark-H3, and Sol-H3 with matched seeds, then
+shows Spark-H3 integrated with the 8-step LightX2V LoRA. The animated preview
+collects the current slow-motion detail segments from Cases 1–3.
 
-![Spark-H3 visual comparison: Dense vs. Spark-H3 vs. Sol-H3](assets/spark-h3-demo-preview.webp)
+[![Spark-H3 visual comparison: Dense vs. Spark-H3 vs. Sol-H3](assets/spark-h3-demo-preview.webp)](assets/spark-h3-demo.mp4)
+
+<p align="center"><a href="assets/spark-h3-demo.mp4">▶ Watch the full demo with sound</a></p>
 
 <a id="quick-start"></a>
 
