@@ -458,6 +458,26 @@ def spark_attention(
 ) -> torch.Tensor:
     """Run official Sol-Attn with exact H3 context K/V and dense context Q."""
 
+    q_bthd, k_bthd, v_bthd = (
+        tensor.permute(0, 2, 1, 3).contiguous() for tensor in (q, k, v)
+    )
+    return spark_attention_bthd(
+        controller, q_bthd, k_bthd, v_bthd, layout, layer,
+        return_bthd=return_bthd,
+    )
+
+
+def spark_attention_bthd(
+    controller: _Controller,
+    q_bthd: torch.Tensor,
+    k_bthd: torch.Tensor,
+    v_bthd: torch.Tensor,
+    layout: PackedLayout,
+    layer: int,
+    *, return_bthd: bool = True,
+) -> torch.Tensor:
+    """Spark attention for native BTHD producers such as ComfyUI's H3 path."""
+
     try:
         from sol_attn import get_sol_attn_backend, sol_attn
     except (ImportError, OSError) as error:
@@ -467,20 +487,21 @@ def spark_attention(
         ) from error
 
     cfg = controller.config
-    if q.dtype != torch.bfloat16 or q.shape[-1] != 128:
+    if q_bthd.dtype != torch.bfloat16 or q_bthd.shape[-1] != 128:
         raise RuntimeError(
             "Sol-Attn requires contiguous BF16 Q/K/V with head dimension 128; "
-            f"got dtype={q.dtype}, head_dim={q.shape[-1]}"
+            f"got dtype={q_bthd.dtype}, head_dim={q_bthd.shape[-1]}"
         )
+    if q_bthd.shape != k_bthd.shape or q_bthd.shape != v_bthd.shape:
+        raise RuntimeError("Spark attention requires matching BTHD Q/K/V tensors")
+    if not q_bthd.is_contiguous() or not k_bthd.is_contiguous() or not v_bthd.is_contiguous():
+        raise RuntimeError("Spark attention requires contiguous BTHD Q/K/V tensors")
 
-    # The common processor has already placed the target-video grid first and
-    # all packed context after it.  The official kernel accepts BTHD tensors.
-    q_bthd, k_bthd, v_bthd = (
-        tensor.permute(0, 2, 1, 3).contiguous() for tensor in (q, k, v)
-    )
+    # The producer has already placed the target-video grid first and all
+    # packed context after it.
     sink_start = layout.video_tokens
     sink_tokens = layout.sequence_length - layout.video_tokens
-    controller.sol_backend = get_sol_attn_backend(q.device)
+    controller.sol_backend = get_sol_attn_backend(q_bthd.device)
     query_inverse_permutation = None
     virtual_query_data = None
     if cfg.sol_landmark_preprocess:

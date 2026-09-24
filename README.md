@@ -69,6 +69,17 @@ with install_h3_spark_attn(pipe.transformer, num_inference_steps=20):
     result = pipe(**inputs, num_inference_steps=20)
 ```
 
+### Step-count convention
+
+MiniMax-H3's PyTorch pipeline uses `num_inference_steps` for denoising grid
+points, so `N` grid points produce `N - 1` model evaluations: the usual 20–50
+range therefore means 19–49 evaluations. Spark follows this convention. In
+ComfyUI, `steps` directly counts evaluations; use 19 ComfyUI steps to match a
+PyTorch run with `num_inference_steps=20`.
+
+For ComfyUI's native MiniMax-H3 implementation, this repository also ships an
+SM120 model-patch node. See the [ComfyUI installation and workflow guide](COMFYUI.md).
+
 `inputs` contains your pipeline's generation arguments. The context manager
 restores the original attention processors on exit.
 
@@ -79,7 +90,7 @@ requirements, defaults, and options.
 
 ## 🗓️ TODO
 
-- [ ] Release the ComfyUI integration.
+- [x] Release the ComfyUI integration.
 - [ ] Release a Ref2VA inference example.
 - [ ] Release the technical report.
 - [ ] Optimize the Spark kernels.
