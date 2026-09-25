@@ -56,18 +56,32 @@ def _use_group1_fastpath(source, group_size, distance, aggregation):
 
 
 def _group1_indexed_scores(source, indices, centers, weights, capacities, distance, aggregation,
-                           fp8_source=None):
+                           fp8_source=None, direct_root=False, directions=None):
     if distance == "euclidean":
         from .landmark_v2_euclidean import euclidean_proxy_scores
         return euclidean_proxy_scores(source, centers, weights, capacities, indices=indices)
-    from .landmark_v2_cosine_fast import build_cosine_directions, fused_cosine_scores_indexed
+    from .landmark_v2_cosine_fast import (
+        _score_block_m,
+        build_cosine_directions,
+        fused_cosine_scores,
+        fused_cosine_scores_indexed,
+    )
     if aggregation == "max":
         from .landmark_v2_max import max_support_scores_indexed
         _, normalized, active = build_cosine_directions(
             centers, weights, capacities, return_partition=True)
         return max_support_scores_indexed(source, indices, normalized, active)
     from .landmark_v2_cosine import FAST_PRECISION
-    directions = build_cosine_directions(centers, weights, capacities)
+    if directions is None:
+        directions = build_cosine_directions(centers, weights, capacities)
+    if direct_root and fp8_source is None:
+        batch, tokens = indices.shape
+        return fused_cosine_scores(
+            source.view(batch, tokens, source.shape[-1]),
+            directions,
+            FAST_PRECISION,
+            block_m=_score_block_m(source),
+        )
     if fp8_source is not None:
         return fused_cosine_scores_indexed(fp8_source, indices, directions, FAST_PRECISION, fp8=True)
     return fused_cosine_scores_indexed(source, indices, directions, FAST_PRECISION)
@@ -90,7 +104,7 @@ class LandmarkTreeV2Result:
     block_indices: torch.Tensor
     excluded_indices: torch.Tensor
     permutation: torch.Tensor
-    inverse_permutation: torch.Tensor
+    inverse_permutation: torch.Tensor | None
     active_tokens: int
     num_excluded: int
     split_stats: tuple[LandmarkTreeV2SplitStats, ...]
@@ -234,13 +248,13 @@ def _root_block_mean_landmarks_and_atoms(
 @torch.no_grad()
 def _normalize_children(children):
     """Freeze a per-level fanout schedule; a scalar applies at every level."""
-    if type(children) is int and children in (2, 4, 8, 16, 32):
+    if type(children) is int and children in (2, 4, 8, 16, 32, 64):
         return children
     if isinstance(children, (list, tuple)) and children:
         values = tuple(children)
-        if all(type(value) is int and value in (2, 4, 8, 16, 32) for value in values):
+        if all(type(value) is int and value in (2, 4, 8, 16, 32, 64) for value in values):
             return values
-    raise ValueError("children must be 2, 4, 8, 16 or 32, or a nonempty list/tuple of those integers")
+    raise ValueError("children must be 2, 4, 8, 16, 32 or 64, or a nonempty list/tuple of those integers")
 
 
 def _normalize_fanout(max_children, fanout):
@@ -291,12 +305,16 @@ def _recursive_landmark_tree_v2(
     landmark_mode: str = "midpoint",
     landmark_count: int = 32,
     aggregation: str = "linear",
+    compute_inverse: bool = True,
+    compact_direct_route: bool = False,
+    initial_order_is_flat: bool = False,
+    precomputed_root_scores: torch.Tensor | None = None,
 ) -> LandmarkTreeV2Result:
     max_children = _normalize_fanout(max_children, fanout)
     fanout_mode = normalize_fanout_mode(fanout_mode)
     landmark_mode = _normalize_landmark_mode(landmark_mode)
-    if landmark_count not in (32, 128, 256):
-        raise ValueError("landmark_count must be 32, 128, or 256")
+    if landmark_count not in (32, 64, 128, 256):
+        raise ValueError("landmark_count must be 32, 64, 128, or 256")
     reuse_group4 = reuse_group4 and landmark_mode == "mean" and landmark_count == 32
     children_schedule = (max_children,) if isinstance(max_children, int) else max_children
     if aggregation not in ("linear", "max") or (aggregation == "max" and distance != "cosine"):
@@ -319,10 +337,20 @@ def _recursive_landmark_tree_v2(
     active_root, excluded = _initial_order_partition(
         flat, grid_shape, initial_indices, validate_order=validate
     )
+    # The ComfyUI direct route accepts int32 permutations and H3's complete
+    # per-head index space is far below 2^31.  Keeping the tree frontier in
+    # int32 halves index traffic through the repeated routing/partition
+    # levels; the reference/Diffusers path retains its historical int64 ABI.
+    index_dtype = torch.int32 if compact_direct_route else torch.long
+    if index_dtype == torch.int32:
+        if batch * tokens >= 2**31:
+            raise ValueError("compact direct reblock exceeds int32 index space")
+        active_root = active_root.to(torch.int32)
+        excluded = excluded.to(torch.int32)
     num_excluded = tokens % 64
     active_tokens = tokens - num_excluded
     active_leaves = active_tokens // 64
-    permutation = torch.empty((batch, tokens), device=samples.device, dtype=torch.long)
+    permutation = torch.empty((batch, tokens), device=samples.device, dtype=index_dtype)
     blocks = permutation[:, :active_tokens].view(batch, active_leaves, 64)
     rows = torch.arange(batch, device=samples.device, dtype=torch.long)
     frontier = [
@@ -394,7 +422,8 @@ def _recursive_landmark_tree_v2(
             if node_tokens % group_size:
                 raise RuntimeError("v2 stage group size does not divide node tokens")
             global_indices = (
-                group.indices + group.rows[:, None] * tokens
+                group.indices
+                + (group.rows[:, None] * tokens).to(group.indices.dtype)
             ).contiguous()
             child_budgets = hierarchy.budgets(level, leaf_budget)
             children = len(child_budgets)
@@ -435,7 +464,12 @@ def _recursive_landmark_tree_v2(
                     midpoint=landmark_mode == "midpoint")
                 scores = _group1_indexed_scores(
                     source, global_indices, centers, weights, child_group_capacities,
-                    distance, aggregation, fp8_source=fp8_source)
+                    distance, aggregation, fp8_source=fp8_source,
+                    direct_root=(
+                        level == 0 and num_excluded == 0
+                        and initial_order_is_flat
+                    ),
+                )
                 if order_mode == "parent_order":
                     mapped = partition_scores(
                         scores, group.indices, child_group_capacities,
@@ -460,10 +494,34 @@ def _recursive_landmark_tree_v2(
                     1,group_order[:,:,None].expand(-1,-1,group_size)).reshape(node_count,node_tokens)
                 landmarks_used = centers.shape[1]
             else:
-                if indexed_group1:
+                precomputed_directions = None
+                use_precomputed_root = (
+                    level == 0 and precomputed_root_scores is not None
+                )
+                if use_precomputed_root:
+                    if precomputed_root_scores.shape != (
+                        node_count, node_tokens, children - 1
+                    ) or precomputed_root_scores.dtype != torch.float32:
+                        raise ValueError("precomputed root scores have invalid shape or dtype")
+                    centers = weights = None
+                elif indexed_group1:
                     from .landmark_tree_v2_triton import indexed_interval_means
                     landmarks = node_landmarks
-                    if fp8_source is not None:
+                    if (
+                        landmark_mode == "midpoint" and landmarks == 32
+                        and distance == "cosine" and aggregation == "linear"
+                    ):
+                        from .landmark_v2_fused_node import fused_midpoint_directions
+
+                        precomputed_directions = fused_midpoint_directions(
+                            source if fp8_source is None else fp8_source,
+                            global_indices,
+                            child_group_capacities,
+                            fp8=fp8_source is not None,
+                            landmarks=landmarks,
+                        )
+                        centers = weights = None
+                    elif fp8_source is not None:
                         centers, weights = indexed_interval_means(
                             fp8_source, global_indices, landmarks, fp8=True,
                             center_dtype=source.dtype, midpoint=landmark_mode == "midpoint")
@@ -496,10 +554,18 @@ def _recursive_landmark_tree_v2(
                         optimized_means=optimized_means,
                         landmark_mode=landmark_mode, landmark_count=landmark_count,
                     )
-                if indexed_group1:
+                if use_precomputed_root:
+                    scores = precomputed_root_scores
+                elif indexed_group1:
                     scores = _group1_indexed_scores(
                         source, global_indices, centers, weights, child_group_capacities,
-                        distance, aggregation, fp8_source=fp8_source)
+                        distance, aggregation, fp8_source=fp8_source,
+                        directions=precomputed_directions,
+                        direct_root=(
+                            level == 0 and num_excluded == 0
+                            and initial_order_is_flat
+                        ),
+                    )
                 elif aggregation == "max":
                     from .landmark_v2_max import cosine_max_proxy_scores, cosine_max_proxy_scores_reference
                     score_fn = cosine_max_proxy_scores if optimized_means else cosine_max_proxy_scores_reference
@@ -522,20 +588,39 @@ def _recursive_landmark_tree_v2(
                 )
                 tie_indices = token_groups[:, :, 0].contiguous()
                 if order_mode == "parent_order":
-                    labels = _exact_tree_route(
-                        scores,
-                        tie_indices,
-                        child_group_capacities,
-                        max_original_index=tokens - 1,
-                        validate=validate,
-                        compact_selection=True,
-                    )
-                    group_order = _stable_counting_partition(
-                        labels,
-                        child_group_capacities,
-                        validate=validate,
-                        source_indices=group.indices if direct_partition else None,
-                    )
+                    if direct_partition and compact_direct_route:
+                        # The ComfyUI compact route quantizes only near-tied
+                        # score ordering into an int32 key while preserving
+                        # exact child capacities and unique token-ID ties.
+                        from .landmark_v2_route import route_scores_cuda
+
+                        group_order = route_scores_cuda(
+                            scores,
+                            tie_indices,
+                            child_group_capacities,
+                            max_original_index=tokens - 1,
+                            partition=True,
+                            # ComfyUI permits numerically equivalent route
+                            # decisions near score ties.  Packing a quantized
+                            # margin plus the unique token ID in int32 keeps
+                            # exact capacities while halving selection traffic.
+                            approximate_key32=True,
+                        )
+                    else:
+                        labels = _exact_tree_route(
+                            scores,
+                            tie_indices,
+                            child_group_capacities,
+                            max_original_index=tokens - 1,
+                            validate=validate,
+                            compact_selection=True,
+                        )
+                        group_order = _stable_counting_partition(
+                            labels,
+                            child_group_capacities,
+                            validate=validate,
+                            source_indices=group.indices if direct_partition else None,
+                        )
                 else:
                     from .landmark_v2_order import scalar_tree_order
                     group_order = scalar_tree_order(scores, tie_indices, child_group_capacities)
@@ -550,7 +635,9 @@ def _recursive_landmark_tree_v2(
                         group_order[:, :, None].expand(-1, -1, group_size),
                     )
                     mapped = reordered_groups.reshape(node_count, node_tokens)
-                landmarks_used = centers.shape[1]
+                landmarks_used = (
+                    node_landmarks if centers is None else centers.shape[1]
+                )
             mapped_features = None
             if reuse_group4:
                 if group.features is None:
@@ -608,12 +695,14 @@ def _recursive_landmark_tree_v2(
 
     if num_excluded:
         permutation[:, active_tokens:].copy_(excluded)
-    inverse = torch.empty_like(permutation)
-    inverse.scatter_(
-        1,
-        permutation,
-        torch.arange(tokens, device=samples.device).expand(batch, -1),
-    )
+    inverse = None
+    if compute_inverse:
+        inverse = torch.empty_like(permutation)
+        inverse.scatter_(
+            1,
+            permutation,
+            torch.arange(tokens, device=samples.device).expand(batch, -1),
+        )
     if validate:
         expected = torch.arange(tokens, device=samples.device).expand(batch, -1)
         if not torch.equal(permutation.sort(1).values, expected):
@@ -623,7 +712,7 @@ def _recursive_landmark_tree_v2(
         block_indices=blocks.reshape(*leading, active_leaves, 64),
         excluded_indices=excluded.reshape(*leading, num_excluded),
         permutation=permutation.reshape(token_shape),
-        inverse_permutation=inverse.reshape(token_shape),
+        inverse_permutation=(inverse.reshape(token_shape) if inverse is not None else None),
         active_tokens=active_tokens,
         num_excluded=num_excluded,
         split_stats=tuple(stats),
@@ -691,7 +780,7 @@ def recursive_landmark_tree_v2_blocks(
 ) -> LandmarkTreeV2Result:
     """Return strict 64-token leaves; defaults are single tokens, eight children and midpoint landmarks.
 
-    group_size (1/2/4/8) and max_children (2/4/8/16/32) each accept a scalar or
+    group_size (1/2/4/8) and max_children (2/4/8/16/32/64) each accept a scalar or
     per-level list/tuple. Defaults are group_size=1, max_children=16 and landmark_mode="midpoint"; levels
     beyond a sequence's length reuse its last value. The schedules are independent.
     fanout_mode="power_of_two_fanout" selects maximum-first power-of-two
@@ -754,8 +843,10 @@ class PreparedLandmarkTreeV2Permutation:
         final_fanout: int | list[int] | tuple[int, ...] | None = None,
         root_fanout: int | None = None,
         landmark_mode: str = "midpoint",
-    landmark_count: int = 32,
+        landmark_count: int = 32,
         aggregation: str = "linear",
+        return_inverse: bool = True,
+        compact_direct_route: bool = False,
     ) -> None:
         if input_unit_means and metric_unit_means:
             raise ValueError("select only one unit-mean space")
@@ -765,13 +856,16 @@ class PreparedLandmarkTreeV2Permutation:
         self.root_fanout = resolve_root_fanout(self.max_children, root_fanout)
         self.final_fanout = resolve_final_fanout(self.max_children, final_fanout, fanout_mode=self.fanout_mode)
         self.landmark_mode = _normalize_landmark_mode(landmark_mode)
-        if landmark_count not in (32, 128, 256):
-            raise ValueError("landmark_count must be 32, 128, or 256")
+        if landmark_count not in (32, 64, 128, 256):
+            raise ValueError("landmark_count must be 32, 64, 128, or 256")
         self.landmark_count = landmark_count
         self.aggregation = aggregation
+        self.return_inverse = bool(return_inverse)
+        self.compact_direct_route = bool(compact_direct_route)
         self.metric_unit_means = metric_unit_means
         self.input_unit_means = input_unit_means
         self._static_inverse_norms: torch.Tensor | None = None
+        self._static_root_scores: torch.Tensor | None = None
         self.group_size = _normalize_group_size(group_size)
         self.order_mode = _normalize_order_mode(order_mode)
         if distance not in ("euclidean", "cosine"):
@@ -795,7 +889,8 @@ class PreparedLandmarkTreeV2Permutation:
         self.split_count = 0
         self.hierarchy = None
 
-    def _compute(self, samples: torch.Tensor, inverse_norms=None) -> tuple[torch.Tensor, torch.Tensor]:
+    def _compute(self, samples: torch.Tensor, inverse_norms=None,
+                 root_scores=None) -> tuple[torch.Tensor, torch.Tensor]:
         fitting = None
         if self.input_unit_means:
             if inverse_norms is None:
@@ -819,6 +914,10 @@ class PreparedLandmarkTreeV2Permutation:
             fanout_mode=self.fanout_mode, final_fanout=self.final_fanout, root_fanout=self.root_fanout,
             landmark_mode=self.landmark_mode, landmark_count=self.landmark_count,
             aggregation=self.aggregation,
+            compute_inverse=self.return_inverse,
+            compact_direct_route=self.compact_direct_route,
+            initial_order_is_flat=self.initial_order == "flat",
+            precomputed_root_scores=root_scores,
         )
         self.split_count = len(result.split_stats)
         self.hierarchy = result.hierarchy
@@ -836,15 +935,22 @@ class PreparedLandmarkTreeV2Permutation:
     def graph_inverse_norms(self) -> torch.Tensor | None:
         return self._static_inverse_norms if self._graph is not None else None
 
+    @property
+    def graph_root_scores(self) -> torch.Tensor | None:
+        return self._static_root_scores if self._graph is not None else None
+
     def replay(self) -> tuple[torch.Tensor, torch.Tensor]:
         if self._graph is None:
             raise RuntimeError("v2 replay requires an active CUDA graph")
         self._graph.replay()
-        assert self._permutation is not None and self._inverse is not None
+        assert self._permutation is not None
+        if self.return_inverse:
+            assert self._inverse is not None
         return self._permutation, self._inverse
 
     @torch.no_grad()
-    def run(self, samples: torch.Tensor, inverse_norms=None) -> tuple[torch.Tensor, torch.Tensor]:
+    def run(self, samples: torch.Tensor, inverse_norms=None,
+            root_scores=None) -> tuple[torch.Tensor, torch.Tensor]:
         expected = (self.batch, self.tokens, self.dim)
         if samples.shape != expected or samples.dtype != torch.bfloat16:
             raise ValueError(
@@ -856,42 +962,61 @@ class PreparedLandmarkTreeV2Permutation:
                 raise ValueError("input-unit means require FP32 [batch,tokens,1] inverse norms")
         elif inverse_norms is not None:
             raise ValueError("raw means do not accept inverse norms")
+        if root_scores is not None and (
+            root_scores.ndim != 3 or root_scores.shape[:2] != (self.batch, self.tokens)
+            or root_scores.dtype != torch.float32 or not root_scores.is_cuda
+        ):
+            raise ValueError("root_scores must be CUDA FP32 [batch,tokens,directions]")
         if self._graph is not None:
             assert self._static_input is not None
+            if (root_scores is None) != (self._static_root_scores is None):
+                raise ValueError("root_scores presence must match the captured plan")
             if self.input_unit_means:
                 self._static_inverse_norms.copy_(inverse_norms)
             self._static_input.copy_(samples)
+            if root_scores is not None:
+                if self._static_root_scores is None:
+                    raise ValueError("captured plan does not accept root scores")
+                self._static_root_scores.copy_(root_scores)
             return self.replay()
         if self._graph_failed or not samples.is_cuda:
-            return self._compute(samples, inverse_norms)
+            return self._compute(samples, inverse_norms, root_scores)
         self._calls += 1
         if self._calls == 1:
-            return self._compute(samples, inverse_norms)
+            return self._compute(samples, inverse_norms, root_scores)
         try:
             torch.cuda.synchronize()
             self._static_input = samples.detach().clone()
             self._static_inverse_norms = inverse_norms.detach().clone() if inverse_norms is not None else None
+            self._static_root_scores = root_scores.detach().clone() if root_scores is not None else None
             warmup_stream = torch.cuda.Stream(device=samples.device)
             warmup_stream.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(warmup_stream):
-                self._compute(self._static_input, self._static_inverse_norms)
+                self._compute(
+                    self._static_input, self._static_inverse_norms,
+                    self._static_root_scores,
+                )
             torch.cuda.current_stream().wait_stream(warmup_stream)
             torch.cuda.synchronize()
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph):
-                self._permutation, self._inverse = self._compute(self._static_input, self._static_inverse_norms)
+                self._permutation, self._inverse = self._compute(
+                    self._static_input, self._static_inverse_norms,
+                    self._static_root_scores,
+                )
             self._graph = graph
         except Exception:
             self._graph = None
             self._graph_failed = True
             self._static_input = None
             self._static_inverse_norms = None
+            self._static_root_scores = None
             self._permutation = None
             self._inverse = None
             torch.cuda.synchronize()
         if self._graph is not None:
             return self.replay()
-        return self._compute(samples, inverse_norms)
+        return self._compute(samples, inverse_norms, root_scores)
 
 
 __all__ = [

@@ -17,6 +17,34 @@ _LOG2_E = math.log2(math.e)
 
 
 @triton.jit
+def _pack_topk_indices_kernel(
+    indices,
+    packed_route,
+    rows,
+    topk: tl.constexpr,
+    words: tl.constexpr,
+    index_tile: tl.constexpr,
+):
+    """Pack one exact Top-K row into 32-bit route words."""
+
+    row = tl.program_id(0)
+    lanes = tl.arange(0, index_tile)
+    key_block = tl.load(
+        indices + row * topk + lanes,
+        mask=(row < rows) & (lanes < topk),
+        other=0,
+    ).to(tl.int32)
+    word = key_block // 32
+    bit = key_block - word * 32
+    value = (1 << bit).to(tl.int32)
+    tl.atomic_or(
+        packed_route + row * words + word,
+        value,
+        mask=(row < rows) & (lanes < topk),
+    )
+
+
+@triton.jit
 def _rms_query_stats_kernel(
     query,
     query_mean,
@@ -345,6 +373,98 @@ def _gemm_score_map(
     ).float()
     scores.mul_(HEAD_DIM**-0.5 * _LOG2_E)
     return scores
+
+
+def _gemm_score_map_prefix(
+    q: torch.Tensor,
+    key_centroids: torch.Tensor,
+    *,
+    query_blocks: int,
+    candidate_blocks: int,
+) -> torch.Tensor:
+    """Build scores only for complete query blocks consumed by Spark."""
+
+    batch, tokens, heads, _ = q.shape
+    query_tokens = query_blocks * BLOCK_SIZE
+    if not 0 < query_tokens <= tokens:
+        raise ValueError("query block prefix is outside Q")
+    query_centroids = q[:, :query_tokens].view(
+        batch, query_blocks, BLOCK_SIZE, heads, HEAD_DIM
+    ).sum(dim=2, dtype=torch.float32).mul_(1.0 / BLOCK_SIZE).to(torch.bfloat16)
+    scores = torch.einsum(
+        "bqhd,bkhd->bqhk",
+        query_centroids,
+        key_centroids[:, :candidate_blocks],
+    ).float()
+    scores.mul_(HEAD_DIM**-0.5 * _LOG2_E)
+    return scores
+
+
+@torch.no_grad()
+def gemm_topk_packed_route(
+    q: torch.Tensor,
+    key_centroids: torch.Tensor,
+    *,
+    video_tokens: int,
+    topk_ratio: float,
+    query_tokens: int,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Compute exact Top-K once and return a 32-bit packed external route.
+
+    Sink/context blocks are intentionally omitted: the attention mainloop
+    forces its configured sink range exact independently of this mask.
+    """
+
+    (
+        batch,
+        tokens,
+        heads,
+        blocks,
+        candidate_blocks,
+        _,
+        target_topk,
+    ) = _validate(q, key_centroids, video_tokens, topk_ratio)
+    if not 0 < query_tokens <= tokens or query_tokens % BLOCK_SIZE:
+        raise ValueError("query_tokens must be a complete block prefix")
+    query_blocks = query_tokens // BLOCK_SIZE
+    scores = _gemm_score_map_prefix(
+        q,
+        key_centroids,
+        query_blocks=query_blocks,
+        candidate_blocks=candidate_blocks,
+    )
+    indices = scores.topk(
+        min(target_topk, candidate_blocks), dim=-1, largest=True, sorted=False
+    ).indices.contiguous()
+    selected = indices.shape[-1]
+    words = math.ceil(blocks / 32)
+    packed = torch.zeros(
+        (batch, query_blocks, heads, words),
+        device=q.device,
+        dtype=torch.int32,
+    )
+    rows = batch * query_blocks * heads
+    _pack_topk_indices_kernel[(rows,)](
+        indices,
+        packed,
+        rows,
+        selected,
+        words,
+        triton.next_power_of_2(selected),
+        num_warps=4,
+        num_stages=1,
+    )
+    return packed, {
+        "block_size": BLOCK_SIZE,
+        "blocks": blocks,
+        "candidate_video_blocks": candidate_blocks,
+        "query_video_blocks": query_blocks,
+        "sink_blocks": max(0, blocks - candidate_blocks),
+        "route_threshold_mode": "gemm_exact_topk_packed_external",
+        "route_topk_ratio": topk_ratio,
+        "target_topk_blocks_per_query": target_topk,
+        "packed_route_words": words,
+    }
 
 
 def _radix_cutoff_from_scores(

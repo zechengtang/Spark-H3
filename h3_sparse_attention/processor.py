@@ -33,6 +33,14 @@ class H3SparseAttentionConfig:
     sol_route_topk_cutoff_mode: Literal[
         "gemm_radix", "gaussian_moments"
     ] = "gemm_radix"
+    sol_route_topk_execution: Literal[
+        "threshold", "packed_external", "fused"
+    ] = "threshold"
+    sol_video_tail_mode: Literal["dense", "pad"] = "dense"
+    # Benchmark-only compatibility switch for the pre-tail-fix behavior.  It
+    # intentionally evaluates the packed context query rows sparsely whenever
+    # the video prefix is not block aligned, before the dense overwrite below.
+    sol_legacy_full_query: bool = False
     sol_log_density: bool = True
     sol_landmark_preprocess: bool = False
     sol_landmark_preprocess_version: Literal["v1", "v2"] = "v1"
@@ -100,6 +108,18 @@ class H3SparseAttentionConfig:
             raise ValueError("sol_route_topk_ratio must lie in (0, 1]")
         if self.sol_route_topk_cutoff_mode not in ("gemm_radix", "gaussian_moments"):
             raise ValueError("invalid sol_route_topk_cutoff_mode")
+        if self.sol_route_topk_execution not in (
+            "threshold", "packed_external", "fused"
+        ):
+            raise ValueError("invalid sol_route_topk_execution")
+        if self.sol_video_tail_mode not in ("dense", "pad"):
+            raise ValueError("sol_video_tail_mode must be 'dense' or 'pad'")
+        if type(self.sol_legacy_full_query) is not bool:
+            raise TypeError("sol_legacy_full_query must be bool")
+        if self.sol_legacy_full_query and self.sol_video_tail_mode != "dense":
+            raise ValueError(
+                "sol_legacy_full_query is incompatible with sol_video_tail_mode='pad'"
+            )
         if self.sol_landmark_preprocess and self.sol_landmark_preprocess_version != "v2":
             raise ValueError("this port supports landmark preprocessing version 'v2' only")
         from .reblock_hierarchy import normalize_fanout_mode
@@ -141,6 +161,14 @@ class H3SparseAttentionConfig:
                 raise ValueError("virtual query summaries require LMv2 Sol preprocessing")
             if self.sol_route_topk_ratio is None and self.sol_virtual_query_route_score != "native_mean":
                 raise ValueError("tau routing with virtual query summaries requires native_mean scores")
+        if (
+            self.sol_video_tail_mode == "pad"
+            and self.sol_route_topk_ratio is None
+            and not virtual_query_enabled
+        ):
+            raise ValueError(
+                "sol_video_tail_mode='pad' requires Top-K or virtual-query routing"
+            )
         if self.landmark_tree_v2_moment_mode not in ("raw", "unit"):
             raise ValueError("landmark_tree_v2_moment_mode must be raw or unit")
         if self.landmark_tree_v2_mean_mode not in ("raw", "input_unit", "metric_unit"):
@@ -172,8 +200,8 @@ class H3SparseAttentionConfig:
         if self.landmark_tree_v2_final_fanout is not None:
             object.__setattr__(self, "landmark_tree_v2_final_fanout",
                                normalize_final_fanout(self.landmark_tree_v2_final_fanout))
-        if self.landmark_tree_v2_landmark_count not in (32, 128, 256):
-            raise ValueError("landmark_tree_v2_landmark_count must be 32, 128, or 256")
+        if self.landmark_tree_v2_landmark_count not in (32, 64, 128, 256):
+            raise ValueError("landmark_tree_v2_landmark_count must be 32, 64, 128, or 256")
         if self.landmark_tree_v2_landmark_mode not in ("mean", "midpoint"):
             raise ValueError("landmark_tree_v2_landmark_mode must be mean or midpoint")
         if self.landmark_tree_v2_aggregation not in ("linear", "max") or (self.landmark_tree_v2_aggregation == "max" and self.landmark_tree_v2_distance != "cosine"):
@@ -201,20 +229,29 @@ class H3SparseAttentionConfig:
 
     @classmethod
     def spark(cls, num_inference_steps: int = 20, **overrides) -> "H3SparseAttentionConfig":
-        """Sol TopK10 + ungrouped fanout-16 LMv2 + target-189 reweighting."""
+        """Sol TopK10 + ungrouped fanout-16 LMv2 + global reweighting."""
         defaults = dict(
             sol_route_topk_ratio=0.1,
             sol_route_topk_cutoff_mode="gemm_radix",
+            sol_route_topk_execution="packed_external",
             sol_force_local_blocks=False,
             sol_landmark_preprocess=True,
             sol_landmark_preprocess_version="v2",
             landmark_tree_v2_children=16,
-            sol_virtual_query_target_blocks=SPARK_REWEIGHT_TARGET_BLOCKS,
-            sol_virtual_query_levels_up=None,
-            sol_virtual_query_min_blocks=SPARK_REWEIGHT_MIN_BLOCKS,
-            sol_virtual_query_max_blocks=SPARK_REWEIGHT_MAX_BLOCKS,
+            # Collapse the completed reblock hierarchy to its video root.  A
+            # deliberately oversized levels-up value makes the global policy
+            # independent of the number of hierarchy levels for a given grid.
+            sol_virtual_query_target_blocks=None,
+            sol_virtual_query_levels_up=99,
             sol_virtual_query_route_score="native_mean",
         )
+        # Preserve target-189 as an explicit compatibility ablation without
+        # making callers clear the global preset manually.
+        if overrides.get("sol_virtual_query_target_blocks") is not None:
+            if "sol_virtual_query_levels_up" not in overrides:
+                defaults["sol_virtual_query_levels_up"] = None
+            defaults["sol_virtual_query_min_blocks"] = SPARK_REWEIGHT_MIN_BLOCKS
+            defaults["sol_virtual_query_max_blocks"] = SPARK_REWEIGHT_MAX_BLOCKS
         if overrides.get("sol_virtual_query_levels_up") is not None and "sol_virtual_query_target_blocks" not in overrides:
             defaults["sol_virtual_query_target_blocks"] = None
         if overrides.get("landmark_tree_v2_fanout") is not None and "landmark_tree_v2_children" not in overrides:
@@ -563,7 +600,7 @@ def install_h3_sol_attn(
 def install_h3_spark_attn(
     transformer, num_inference_steps: int = 20, **config_overrides
 ) -> H3SparseAttentionPlugin:
-    """Return the Spark plugin: Sol TopK10, ungrouped LMv2, target-189 reweight."""
+    """Return the Spark plugin: Sol TopK10, ungrouped LMv2, global reweight."""
     return install_h3_sparse_attention(
         transformer,
         H3SparseAttentionConfig.spark(num_inference_steps, **config_overrides),

@@ -64,7 +64,7 @@ def test_comfy_layout_moves_target_video_first_and_roundtrips():
 
 def test_run_state_uses_comfy_model_evaluation_count_and_resets():
     state = _RunState.create(20, 10.0, 0.1)
-    assert state.controller.config.total_evaluations == 20
+    assert state.steps == 20
     assert state.warmup_evaluations == 2
     state.begin_evaluation({"sigmas": torch.tensor([1.0])})
     assert state.controller.evaluation_index == 0 and state.is_warmup
@@ -74,6 +74,23 @@ def test_run_state_uses_comfy_model_evaluation_count_and_resets():
     assert state.controller.evaluation_index == 2 and not state.is_warmup
     state.begin_evaluation({"sigmas": torch.tensor([1.0])})
     assert state.controller.evaluation_index == 0
+
+
+def test_spark_ablation_modes_are_orthogonal():
+    full = _RunState.create(20, 20.0, 0.1, "full").controller
+    optimized = _RunState.create(20, 20.0, 0.1, "full_group841").controller
+    reuse = _RunState.create(20, 20.0, 0.1, "full_reuse2").controller
+    padded = _RunState.create(20, 20.0, 0.1, "full", "pad").controller
+
+    assert full.config.topk_ratio == 0.1
+    assert full.config.landmark_tree_v2_group_size == 1
+    assert optimized.config.landmark_tree_v2_group_size == (8, 4, 1)
+    assert reuse.reblock_reuse_layers == 2
+    assert reuse.config.landmark_tree_v2_group_size == 1
+    assert padded.config.video_tail_mode == "pad"
+    for legacy in ("full_target189", "topk10_base", "reblock_only", "reweight_only"):
+        with pytest.raises(ValueError, match="only comfy-kitchen global modes"):
+            _RunState.create(20, 20.0, 0.1, legacy)
 
 
 class _FakeAttention:
@@ -143,82 +160,46 @@ def test_spark_node_uses_comfyui_native_block_patches_and_cleanup():
     assert patched.callbacks[0][1] == "spark_h3_native_attention"
 
 
-def test_sol_node_uses_base_sol_config():
+def test_sol_node_delegates_to_comfyui_official_patch(monkeypatch):
     model = _FakePatcher(MiniMaxH3Model())
+    model.model_options = {"transformer_options": {}}
+    captured = {}
+
+    def official(model_arg, **kwargs):
+        captured.update(kwargs)
+        return model_arg.clone()
+
+    import comfy_extras.nodes_sparse_attention as official_module
+    monkeypatch.setattr(official_module, "apply_block_sparse_attention", official)
     (patched,) = MiniMaxH3SolAttentionSM120().patch(
         model, True, 20, 20.0, 1, 4096, True, 1.0
     )
     assert patched is not model
-    forward = patched.object_patches["diffusion_model.blocks.0.attn.forward"]
-    state = next(
-        cell.cell_contents
-        for cell in forward.__closure__
-        if isinstance(cell.cell_contents, _RunState)
-    )
-    assert state.controller.config.sol_tau == 1.0
-    assert state.controller.config.sol_route_topk_ratio is None
-    assert not state.controller.config.sol_landmark_preprocess
+    assert captured["tau"] == 1.0
+    assert captured["topk_ratio"] == 0.0
+    assert captured["start_percent"] == 0.2
+    assert captured["sink_conditioning"] == "exact_kv_and_rows"
+    assert captured["extra_tokens"] == 0
 
 
-@pytest.mark.skipif(
-    not torch.cuda.is_available() or torch.cuda.get_device_capability() != (12, 0),
-    reason="SM120 CUDA device required",
-)
-def test_comfy_adapter_all_exact_matches_dense_on_sm120():
-    from comfyui_nodes import _ActivationLog, _make_attention_forward
+def test_comfyui_module_has_no_legacy_attention_interface():
+    source = (Path(__file__).resolve().parents[1] / "comfyui_nodes.py").read_text()
+    assert "_sol_attention" not in source
+    assert "_make_attention_forward" not in source
+    assert "import triton" not in source
+    assert "cutlass.cute" not in source
 
-    torch.manual_seed(31)
-    heads, dim, hidden = 2, 128, 256
 
-    class Attention(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.heads = heads
-            self.head_dim = dim
-            self.qkv_proj = torch.nn.Linear(hidden, 3 * hidden, bias=False)
-            self.q_norm = torch.nn.RMSNorm(dim, eps=1e-5)
-            self.k_norm = torch.nn.RMSNorm(dim, eps=1e-5)
-            self.out_proj = torch.nn.Linear(hidden, hidden, bias=False)
-
-    attn = Attention().cuda().to(torch.bfloat16).eval().requires_grad_(False)
-    text_tokens, video_tokens = 7, 512
-    sequence_length = text_tokens + video_tokens
-    x = torch.randn(sequence_length, hidden, device="cuda", dtype=torch.bfloat16)
-    positions = torch.zeros(sequence_length, 3, dtype=torch.float64)
-    positions[text_tokens:] = torch.cartesian_prod(
-        torch.arange(8), torch.arange(8), torch.arange(8)
-    )
-    layout = SimpleNamespace(
-        segments=[(0, text_tokens, "text"), (text_tokens, sequence_length, "video")],
-        position_ids=positions,
-    )
-    state = _RunState.create(2, 0.0, 1.0)
-    wrapped = _make_attention_forward(
-        attn,
-        attn.forward,
-        layer=0,
-        dense_layers=0,
-        min_tokens=0,
-        strict=True,
-        state=state,
-        activation_log=_ActivationLog(),
-    )
-
-    with torch.no_grad():
-        q, k, v = attn.qkv_proj(x).chunk(3, dim=-1)
-        q = attn.q_norm(q.view(1, sequence_length, heads, dim)).transpose(1, 2)
-        k = attn.k_norm(k.view(1, sequence_length, heads, dim)).transpose(1, 2)
-        v = v.view(1, sequence_length, heads, dim).transpose(1, 2)
-        dense = torch.nn.functional.scaled_dot_product_attention(q, k, v)
-        dense = attn.out_proj(dense.transpose(1, 2).reshape(sequence_length, hidden))
-        actual = wrapped(
-            x,
-            transformer_options={
-                "sigmas": torch.tensor([1.0], device="cuda"),
-                "minimax_h3_layout": layout,
-            },
-        )
-    torch.testing.assert_close(actual, dense, atol=0.012, rtol=0.035)
+def test_comfyui_pipeline_does_not_import_diffusers_pipeline():
+    root = Path(__file__).resolve().parents[1]
+    node_source = (root / "comfyui_nodes.py").read_text()
+    backend_source = (root / "comfyui_backend.py").read_text()
+    assert "h3_sparse_attention.processor" not in node_source
+    assert "spark_attention_bthd" not in node_source
+    assert "spark_attention_bthd(" not in backend_source
+    assert "spark_integration" not in backend_source
+    assert "H3SparseAttentionConfig" not in backend_source
+    assert "_Controller" not in backend_source
 
 
 @pytest.mark.skipif(

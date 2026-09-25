@@ -19,7 +19,8 @@ attention branch, or merge attention outputs.
 The two tensor functions are direct aliases, not wrappers.
 `install_h3_spark_attn` is the model-level context-manager installer; its
 configuration defaults to power-of-two fanout-16 reblock without temporal grouping
-and target-189 reweight.
+and one global query representative per head. Target-189 remains an explicit
+compatibility ablation.
 See h3_sparse_attention/README.md.
 
 For the tensor aliases, Original names, signatures, internal

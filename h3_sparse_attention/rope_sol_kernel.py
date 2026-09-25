@@ -6,6 +6,7 @@ import inspect
 
 
 import math
+import operator
 
 
 import torch
@@ -75,10 +76,11 @@ def _sol_topk_threshold_attn_cute(
     from sol_attn.common import to_cute_tensor
 
     capability = tuple(torch.cuda.get_device_capability(q.device))
-    batch, tokens, heads, _ = q.shape
-    output = torch.empty_like(v)
+    batch, query_tokens, heads, _ = q.shape
+    tokens = k.shape[1]
+    output = torch.empty_like(q)
     lse = torch.empty(
-        (batch, tokens, heads), device=q.device, dtype=torch.float32
+        (batch, query_tokens, heads), device=q.device, dtype=torch.float32
     )
     hybrid_route = route_mask is not None
     # The route-mask ABI is uniform across backends. Pure stock mode never
@@ -91,7 +93,7 @@ def _sol_topk_threshold_attn_cute(
     )
     stream = cuda.CUstream(torch.cuda.current_stream(q.device).cuda_stream)
     key = (
-        q.device.index, capability, batch, tokens, heads,
+        q.device.index, capability, batch, tokens, query_tokens, heads,
         hybrid_route, force_local_blocks,
     )
     compiled = _CUTE_THRESHOLD_COMPILED.get(key)
@@ -178,6 +180,7 @@ def sol_topk_threshold_attn(
     sink_start: int | None = None,
     sink_tokens: int = 0,
     force_local_blocks: bool = False,
+    _query_tokens: int | None = None,
 ) -> torch.Tensor:
     """Run fixed-ratio SOL through the stock CuTe threshold selector."""
 
@@ -192,6 +195,9 @@ def sol_topk_threshold_attn(
     if not (q.is_contiguous() and k.is_contiguous() and v.is_contiguous()):
         raise ValueError("q, k, and v must be contiguous BTHD tensors")
     batch, tokens, heads, head_dim = q.shape
+    query_tokens = tokens if _query_tokens is None else operator.index(_query_tokens)
+    if not 0 < query_tokens <= tokens or (query_tokens != tokens and query_tokens % BLOCK_SIZE):
+        raise ValueError("_query_tokens must end at a physical query-block boundary")
     blocks = math.ceil(tokens / BLOCK_SIZE)
     expected_summaries = (batch, blocks, heads, head_dim)
     if key_centroids.shape != expected_summaries or value_sums.shape != expected_summaries:
@@ -233,8 +239,9 @@ def sol_topk_threshold_attn(
     sink_start_block = sink_start // BLOCK_SIZE
     sink_end_block = math.ceil((sink_start + sink_tokens) / BLOCK_SIZE)
     scale = head_dim**-0.5 if scale is None else float(scale)
-    return _sol_topk_threshold_attn_cute(
-        q,
+    q_kernel = q if query_tokens == tokens else q[:, :query_tokens].contiguous()
+    output_kernel = _sol_topk_threshold_attn_cute(
+        q_kernel,
         k,
         v,
         key_centroids,
@@ -246,3 +253,8 @@ def sol_topk_threshold_attn(
         sink_end_block=sink_end_block,
         force_local_blocks=force_local_blocks,
     )
+    if query_tokens == tokens:
+        return output_kernel
+    output = torch.empty_like(q)
+    output[:, :query_tokens].copy_(output_kernel)
+    return output

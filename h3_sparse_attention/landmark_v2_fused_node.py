@@ -32,6 +32,81 @@ FUSED_NODE_WARPS = os.environ.get("H3_LMV2_FUSED_NODE_WARPS")
 _LANDMARKS = 32
 
 
+@triton.jit
+def _fused_midpoint_directions_kernel(
+    source, global_indices, directions,
+    N: tl.constexpr, LANDMARKS: tl.constexpr,
+    INTERNAL: tl.constexpr, SPLIT_TREE: tl.constexpr,
+    FP8: tl.constexpr,
+):
+    """Load midpoint landmarks and build the complete proxy tree in one CTA."""
+    parent = tl.program_id(0)
+    dims = tl.arange(0, 128)
+    landmark = tl.arange(0, LANDMARKS)
+    start = landmark * N // LANDMARKS
+    length = (landmark + 1) * N // LANDMARKS - start
+    rows = tl.load(global_indices + parent.to(tl.int64) * N + start + length // 2)
+    if FP8:
+        center = tl.load(
+            source + rows[:, None] * 128 + dims[None, :]
+        ).to(tl.float8e4nv, bitcast=True).to(tl.float32)
+    else:
+        center = tl.load(
+            source + rows[:, None] * 128 + dims[None, :]
+        ).to(tl.float32)
+    unit = center / tl.maximum(
+        libdevice.sqrt_rn(tl.sum(center * center, axis=1)), 1.0e-12
+    )[:, None]
+    distance = 1.0 - tl.dot(unit, tl.trans(unit), input_precision="ieee")
+    weight_nodes = (length.to(tl.int32),)
+    for node in tl.static_range(INTERNAL):
+        direction, left_weight, right_weight = _proxy_split(
+            center, unit, distance,
+            weight_nodes[SPLIT_TREE[node][0]],
+            SPLIT_TREE[node][1], SPLIT_TREE[node][2], LANDMARKS, 2,
+        )
+        weight_nodes += (left_weight, right_weight)
+        tl.store(
+            directions + (parent * INTERNAL + node) * 128 + dims,
+            direction,
+        )
+
+
+def fused_midpoint_directions(
+    source: torch.Tensor,
+    global_indices: torch.Tensor,
+    child_capacities: tuple[int, ...],
+    *,
+    fp8: bool = False,
+    landmarks: int = 32,
+) -> torch.Tensor:
+    """Exact midpoint centers plus proxy directions without intermediates."""
+    expected_dtypes = (torch.uint8,) if fp8 else (torch.float16, torch.bfloat16)
+    if not (
+        source.is_cuda and source.ndim == 2 and source.shape[1] == 128
+        and source.is_contiguous() and source.dtype in expected_dtypes
+    ):
+        raise ValueError("source must be a contiguous CUDA 128-wide feature table")
+    if global_indices.ndim != 2 or global_indices.dtype not in (torch.int32, torch.int64):
+        raise ValueError("global_indices must be int32/int64 [parents,tokens]")
+    if landmarks != 32:
+        raise ValueError("the fused midpoint direction path currently requires 32 landmarks")
+    from .landmark_v2_terminal import split_topology
+    capacities = tuple(int(value) for value in child_capacities)
+    topology = split_topology(capacities)
+    parents, n = global_indices.shape
+    output = torch.empty(
+        (parents, len(topology), 128), device=source.device, dtype=torch.float32
+    )
+    _fused_midpoint_directions_kernel[(parents,)](
+        source, global_indices.contiguous(), output,
+        N=n, LANDMARKS=landmarks, INTERNAL=len(topology),
+        SPLIT_TREE=topology, FP8=fp8,
+        num_warps=2 if torch.cuda.get_device_capability(source.device) == (12, 0) else 4,
+    )
+    return output
+
+
 def use_fused_node(node_tokens: int, children: int, dim: int) -> bool:
     return (
         FUSED_NODE_ENABLED
@@ -93,6 +168,66 @@ def _proxy_split(center, unit, distance, weight, left_cap: tl.constexpr,
         right_center = tl.sum(center * right_weight[:, None].to(tl.float32), axis=0) / right_cap
     direction = _unit_row(right_center) - _unit_row(left_center)
     return direction, left_weight, right_weight
+
+
+@triton.jit
+def _fused_proxy_directions_kernel(
+    centers, root_weight, directions,
+    LANDMARKS: tl.constexpr, INTERNAL: tl.constexpr,
+    SPLIT_TREE: tl.constexpr,
+):
+    parent = tl.program_id(0)
+    landmark = tl.arange(0, LANDMARKS)
+    dims = tl.arange(0, 128)
+    center = tl.load(
+        centers + (parent * LANDMARKS + landmark[:, None]) * 128 + dims[None, :]
+    ).to(tl.float32)
+    unit = center / tl.maximum(
+        libdevice.sqrt_rn(tl.sum(center * center, axis=1)), 1.0e-12
+    )[:, None]
+    # Keep seed selection aligned with fused_midpoint_directions.  A TF32
+    # bmm can change the farthest landmark pair even when its numeric error is
+    # small, which then changes an entire root branch.
+    distance = 1.0 - tl.dot(unit, tl.trans(unit), input_precision="ieee")
+    weight_nodes = (tl.load(root_weight + landmark).to(tl.int32),)
+    for node in tl.static_range(INTERNAL):
+        direction, left_weight, right_weight = _proxy_split(
+            center, unit, distance,
+            weight_nodes[SPLIT_TREE[node][0]],
+            SPLIT_TREE[node][1], SPLIT_TREE[node][2], LANDMARKS, 2,
+        )
+        weight_nodes += (left_weight, right_weight)
+        tl.store(
+            directions + (parent * INTERNAL + node) * 128 + dims,
+            direction,
+        )
+
+
+def fused_proxy_directions(
+    centers: torch.Tensor,
+    weights: torch.Tensor,
+    child_capacities: tuple[int, ...],
+) -> torch.Tensor:
+    """Build all proxy directions in one CTA from legacy-rounded inputs."""
+    if not (
+        centers.is_cuda and centers.dtype == torch.bfloat16
+        and centers.ndim == 3 and centers.shape[1:] == (32, 128)
+    ):
+        raise ValueError("centers must be CUDA BF16 [parents,32,128]")
+    if weights.shape != centers.shape[:2] or weights.dtype != torch.int32:
+        raise ValueError("weights must be int32 [parents,32]")
+    from .landmark_v2_terminal import split_topology
+    topology = split_topology(tuple(int(value) for value in child_capacities))
+    output = torch.empty(
+        (centers.shape[0], len(topology), 128),
+        device=centers.device, dtype=torch.float32,
+    )
+    _fused_proxy_directions_kernel[(centers.shape[0],)](
+        centers, weights[0], output,
+        LANDMARKS=32, INTERNAL=len(topology), SPLIT_TREE=topology,
+        num_warps=2 if torch.cuda.get_device_capability(centers.device) == (12, 0) else 4,
+    )
+    return output
 
 
 @triton.jit
@@ -227,10 +362,10 @@ def _fused_node_split_kernel(
         tl.store(out_base + child_offset + rank, original, mask=member)
 
 
-def _default_warps(n: int) -> int:
+def _default_warps(n: int, device: torch.device) -> int:
     if FUSED_NODE_WARPS is not None:
         return int(FUSED_NODE_WARPS)
-    return 4
+    return 2 if torch.cuda.get_device_capability(device) == (12, 0) else 4
 
 
 def _default_block_t(n: int) -> int:
@@ -271,8 +406,8 @@ def fused_node_split(
             and source.is_contiguous() and source.dtype in expected_dtypes):
         raise ValueError("fused node split requires a contiguous CUDA [rows,128] table "
                          "(FP16/BF16, or uint8-viewed FP8 E4M3 with fp8=True)")
-    if global_indices.ndim != 2 or global_indices.dtype != torch.long:
-        raise ValueError("global_indices must be int64 [parents, tokens]")
+    if global_indices.ndim != 2 or global_indices.dtype not in (torch.int32, torch.long):
+        raise ValueError("global_indices must be int32/int64 [parents, tokens]")
     parents, n = global_indices.shape
     children = len(child_capacities)
     if not 2 <= children <= 16 or min(child_capacities) <= 0:
@@ -294,7 +429,7 @@ def fused_node_split(
     global_indices = global_indices.contiguous()
     row_batch = row_batch.contiguous()
     scratch = torch.empty((parents, n, children - 1), device=source.device, dtype=torch.float32)
-    output = torch.empty((parents, n), device=source.device, dtype=torch.long)
+    output = torch.empty((parents, n), device=source.device, dtype=global_indices.dtype)
     _fused_node_split_kernel[(parents,)](
         source, global_indices, row_batch, scratch, output, int(tokens),
         N=n, BLOCK_N=triton.next_power_of_2(n), MAX_LEN=triton.cdiv(n, landmarks),
@@ -304,6 +439,6 @@ def fused_node_split(
         ROWS_PER_STEP=_default_rows_per_step(n) if rows_per_step is None else rows_per_step,
         MODE=mode, FP8=fp8, MIDPOINT=midpoint,
         SPLIT_TREE=split_tree, INDEX_BITS=index_bits,
-        num_warps=(16 if landmarks >= 128 else 8 if landmarks == 64 else _default_warps(n)) if num_warps is None else num_warps,
+        num_warps=(16 if landmarks >= 128 else 8 if landmarks == 64 else _default_warps(n, source.device)) if num_warps is None else num_warps,
     )
     return output

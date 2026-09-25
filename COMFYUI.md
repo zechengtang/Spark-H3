@@ -6,11 +6,15 @@ GeForce RTX 50-series) and keeps all packed text, image/video reference, and
 audio conditioning exact.
 
 The integration is built on ComfyUI's official MiniMax-H3 sparse-attention
-architecture: it installs `dit/double_block` replacements, follows the native
-sigma-based sparse window, resets state through `ON_CLEANUP`, and projects QKV
-in 4096-token chunks. The projected BTHD tensors then enter Spark-Reblock,
-Spark-Reweight, and Spark Top-K routing. It does not replace each attention
-module's `forward` method.
+architecture and the comfy-kitchen v0.2.35 Sol kernel stack. It installs
+`dit/double_block` replacements, follows the native sigma-based sparse window,
+resets state through `ON_CLEANUP`, and projects QKV in 4096-token chunks. The
+projected BTHD tensors then use comfy-kitchen kernels for Top-K routing and
+global reweighting. The fanout-16, 32-landmark, group-1 reblock permutation is
+consumed directly by Sol preprocessing and its output scatter, without four
+materialized Q/K/V/output gathers. Global reweighting uses the mean
+of all target-video queries as one anchor per head; conditioning queries remain
+dense. It does not replace each attention module's `forward` method.
 
 ## Install
 
@@ -48,7 +52,15 @@ Requirements:
 
 - ComfyUI 0.30.0 or newer with native MiniMax-H3 support.
 - CUDA BF16 execution on a compute-capability 12.0 GPU.
-- A PyTorch/CUDA/Triton/CuTe stack compatible with this repository.
+- The ComfyUI-supported PyTorch/CUDA stack and a comfy-kitchen build containing
+  the Spark Top-K, reblock, and global-reweight extension.
+
+The ComfyUI integration never calls Spark-H3's research Triton/CuTe attention
+backends. The compatibility Sol node delegates to ComfyUI's official
+`apply_block_sparse_attention`, while the Spark node fails explicitly unless
+the comfy-kitchen global Spark backend is selected. The repository's original
+PyTorch pipeline and experimental kernels remain available only through the
+Python API.
 
 The node is compatible with ComfyUI's T2VA, FL2VA, and Ref2VA packed layouts.
 It uses `transformer_options["minimax_h3_layout"]` rather than guessing token

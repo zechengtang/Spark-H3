@@ -22,6 +22,11 @@ requires_route_backend = pytest.mark.skipif(
     or tuple(torch.cuda.get_device_capability(0)) not in ((9, 0), (10, 0)),
     reason="route-mask CuTe backends require SM90/SM100 hardware",
 )
+requires_threshold_backend = pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or tuple(torch.cuda.get_device_capability(0)) not in ((9, 0), (10, 0), (12, 0)),
+    reason="threshold CuTe backend requires SM90/SM100/SM120 hardware",
+)
 
 
 def _sink_blocks(tokens, sink_start, sink_tokens):
@@ -195,6 +200,31 @@ def test_topk_threshold_matches_torch_reference(force_local_blocks):
         force_local_blocks=force_local_blocks,
     )
     torch.testing.assert_close(out.float(), ref, atol=0.008, rtol=0.015)
+
+
+@requires_threshold_backend
+def test_topk_threshold_query_prefix_keeps_full_kv():
+    from h3_sparse_attention.rope_sol_kernel import sol_topk_threshold_attn
+
+    q, k, v, kc, vs = _inputs(t=320)
+    b, _, h, _ = q.shape
+    n = kc.shape[1]
+    threshold = torch.full((b, n, h), 0.25, device="cuda", dtype=torch.float32)
+    query_tokens = 256
+    actual = sol_topk_threshold_attn(
+        q, k, v, kc, vs, threshold,
+        sink_start=257, sink_tokens=63,
+        force_local_blocks=False,
+        _query_tokens=query_tokens,
+    )
+    expected = sol_topk_threshold_attn(
+        q, k, v, kc, vs, threshold,
+        sink_start=257, sink_tokens=63,
+        force_local_blocks=False,
+    )
+    torch.testing.assert_close(
+        actual[:, :query_tokens], expected[:, :query_tokens], atol=0, rtol=0
+    )
 
 
 @requires_route_backend

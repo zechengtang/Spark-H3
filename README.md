@@ -90,7 +90,6 @@ requirements, defaults, and options.
 
 ## 🗓️ TODO
 
-- [x] Release the ComfyUI integration.
 - [ ] Release a Ref2VA inference example.
 - [ ] Release the technical report.
 - [ ] Optimize the Spark kernels.

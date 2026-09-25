@@ -3,6 +3,7 @@ from __future__ import annotations
 
 
 import math
+import os
 
 
 from typing import Any
@@ -15,6 +16,76 @@ import torch.nn.functional as F
 
 
 _LOG2_E = math.log2(math.e)
+_SPARK_BLOCK_SIZE = 64
+_SUPPORTED_SPARK_CAPABILITIES = frozenset({(9, 0), (10, 0), (12, 0)})
+_PROFILE_REBLOCK = os.environ.get("SPARK_PROFILE_REBLOCK") == "1"
+
+
+def _profile_begin(controller, name: str):
+    if not _PROFILE_REBLOCK:
+        return None
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()
+    return name, start, end
+
+
+def _profile_end(controller, sample) -> None:
+    if sample is None:
+        return
+    name, start, end = sample
+    end.record()
+    samples = getattr(controller, "spark_reblock_profile", None)
+    if samples is None:
+        samples = []
+        controller.spark_reblock_profile = samples
+    samples.append((name, start, end))
+
+
+def spark_reblock_profile_summary(controller, *, clear: bool = True):
+    """Synchronize and summarize opt-in reblock CUDA event samples."""
+
+    samples = getattr(controller, "spark_reblock_profile", None)
+    if not samples:
+        return None
+    torch.cuda.synchronize()
+    durations = {}
+    for name, start, end in samples:
+        durations.setdefault(name, []).append(start.elapsed_time(end))
+    if clear:
+        controller.spark_reblock_profile = []
+    return {
+        name: {
+            "total_ms": sum(values),
+            "calls": len(values),
+            "mean_ms": sum(values) / len(values),
+            "median_ms": sorted(values)[len(values) // 2],
+            "max_ms": max(values),
+        }
+        for name, values in durations.items()
+    }
+
+
+def _spark_query_tokens(
+    total_tokens: int,
+    video_tokens: int,
+    tail_mode: str = "dense",
+) -> int:
+    """Return the query prefix evaluated by the sparse attention kernel."""
+
+    if tail_mode == "dense":
+        return min(
+            total_tokens,
+            (video_tokens // _SPARK_BLOCK_SIZE) * _SPARK_BLOCK_SIZE,
+        )
+    if tail_mode != "pad":
+        raise ValueError("tail_mode must be 'dense' or 'pad'")
+    padded_tokens = math.ceil(video_tokens / _SPARK_BLOCK_SIZE) * _SPARK_BLOCK_SIZE
+    if padded_tokens > total_tokens:
+        raise ValueError(
+            "the packed suffix is too short to pad the final video query block"
+        )
+    return padded_tokens
 
 
 @torch.no_grad()
@@ -270,6 +341,7 @@ def _landmark_tree_v2_combined_permutations(
         .permute(0, 2, 1, 3)
         .reshape(flat_batch, video_tokens, dim)
     )
+    profile = _profile_begin(controller, "reblock_metric")
     query_metric, key_metric = landmark_direction_factors(
         query,
         key,
@@ -277,6 +349,7 @@ def _landmark_tree_v2_combined_permutations(
         ridge=controller.config.rope_sol_key_ridge_epsilon,
         moment=controller.config.landmark_tree_v2_moment_mode,
     )
+    _profile_end(controller, profile)
     plan_key = (
         "prepared_landmark_tree_v2_qk",
         controller.config.landmark_tree_v2_initial_order,
@@ -329,6 +402,7 @@ def _landmark_tree_v2_combined_permutations(
             device=query.device,
             dtype=torch.bfloat16,
         )
+    profile = _profile_begin(controller, "reblock_transform_bmm")
     torch.bmm(
         key.to(torch.bfloat16),
         query_metric.to(torch.bfloat16),
@@ -339,6 +413,7 @@ def _landmark_tree_v2_combined_permutations(
         key_metric.to(torch.bfloat16),
         out=transformed[flat_batch:],
     )
+    _profile_end(controller, profile)
     del query_metric, key_metric
     inverse_norms = None
     if controller.config.landmark_tree_v2_mean_mode == "input_unit":
@@ -347,10 +422,12 @@ def _landmark_tree_v2_combined_permutations(
             inverse_norms = torch.empty((2 * flat_batch, video_tokens, 1), device=query.device, dtype=torch.float32)
         inverse_norms[:flat_batch].copy_(key.float().norm(dim=-1, keepdim=True).clamp_min(1e-12).reciprocal())
         inverse_norms[flat_batch:].copy_(query.float().norm(dim=-1, keepdim=True).clamp_min(1e-12).reciprocal())
+    profile = _profile_begin(controller, "reblock_tree")
     if plan.graph_active:
         combined_permutation, combined_inverse = plan.replay()
     else:
         combined_permutation, combined_inverse = plan.run(transformed, inverse_norms=inverse_norms)
+    _profile_end(controller, profile)
     controller.landmark_reblock_hierarchy = plan.hierarchy
     return plan, metric_indices, combined_permutation, combined_inverse
 
@@ -478,14 +555,6 @@ def spark_attention_bthd(
 ) -> torch.Tensor:
     """Spark attention for native BTHD producers such as ComfyUI's H3 path."""
 
-    try:
-        from sol_attn import get_sol_attn_backend, sol_attn
-    except (ImportError, OSError) as error:
-        raise RuntimeError(
-            "Sol-Attn is unavailable; install NVlabs/Sana's "
-            "techniques/sparse_backends package"
-        ) from error
-
     cfg = controller.config
     if q_bthd.dtype != torch.bfloat16 or q_bthd.shape[-1] != 128:
         raise RuntimeError(
@@ -496,29 +565,86 @@ def spark_attention_bthd(
         raise RuntimeError("Spark attention requires matching BTHD Q/K/V tensors")
     if not q_bthd.is_contiguous() or not k_bthd.is_contiguous() or not v_bthd.is_contiguous():
         raise RuntimeError("Spark attention requires contiguous BTHD Q/K/V tensors")
+    if q_bthd.device.type != "cuda":
+        raise RuntimeError("Spark-H3 requires CUDA tensors")
+    capability = tuple(torch.cuda.get_device_capability(q_bthd.device))
+    if capability not in _SUPPORTED_SPARK_CAPABILITIES:
+        supported = ", ".join(
+            f"SM{major}{minor}" for major, minor in sorted(_SUPPORTED_SPARK_CAPABILITIES)
+        )
+        raise RuntimeError(
+            f"Spark-H3 has no supported kernel for SM{capability[0]}{capability[1]}; "
+            f"supported architectures are {supported}"
+        )
 
     # The producer has already placed the target-video grid first and all
     # packed context after it.
     sink_start = layout.video_tokens
     sink_tokens = layout.sequence_length - layout.video_tokens
-    controller.sol_backend = get_sol_attn_backend(q_bthd.device)
+    legacy_full_query = cfg.sol_legacy_full_query
+    sparse_query_tokens = (
+        layout.video_tokens
+        if legacy_full_query and layout.video_tokens % _SPARK_BLOCK_SIZE == 0
+        else q_bthd.shape[1]
+        if legacy_full_query
+        else _spark_query_tokens(
+            q_bthd.shape[1], layout.video_tokens, cfg.sol_video_tail_mode
+        )
+    )
+    needs_query_padding = (
+        cfg.sol_video_tail_mode == "pad"
+        and sparse_query_tokens > layout.video_tokens
+    )
+    controller.sol_backend = "comfy-kitchen-spark"
     query_inverse_permutation = None
     virtual_query_data = None
     if cfg.sol_landmark_preprocess:
         landmark_builder = _landmark_tree_v2_qk_block_permutations
-        (
-            query_permutation,
-            query_inverse_permutation,
-            key_permutation,
-            _,
-            _,
-            _,
-        ) = landmark_builder(
-            controller,
-            q_bthd,
-            k_bthd,
-            layout,
+        reuse_layers = int(getattr(controller, "spark_reblock_reuse_layers", 1))
+        reuse_start = int(getattr(controller, "spark_reblock_reuse_start_layer", 0))
+        reuse_group = (
+            (layer - reuse_start) // reuse_layers
+            if reuse_layers > 1 and layer >= reuse_start
+            else None
         )
+        reuse_key = (controller.evaluation_index, reuse_group)
+        cached_reblock = getattr(controller, "spark_last_reblock", None)
+        group_start = reuse_start + reuse_group * reuse_layers if reuse_group is not None else layer
+        if reuse_group is not None and layer != group_start and cached_reblock is not None and cached_reblock[0] == reuse_key:
+            (
+                query_permutation,
+                query_inverse_permutation,
+                key_permutation,
+                hierarchy,
+            ) = cached_reblock[1]
+            controller.landmark_reblock_hierarchy = hierarchy
+            controller.counts["sol_landmark_reuse_calls"] += 1
+        else:
+            profile = _profile_begin(controller, "reblock_permutation_build_total")
+            (
+                query_permutation,
+                query_inverse_permutation,
+                key_permutation,
+                _,
+                _,
+                _,
+            ) = landmark_builder(
+                controller,
+                q_bthd,
+                k_bthd,
+                layout,
+            )
+            _profile_end(controller, profile)
+            if reuse_group is not None:
+                controller.spark_last_reblock = (
+                    reuse_key,
+                    (
+                        query_permutation,
+                        query_inverse_permutation,
+                        key_permutation,
+                        controller.landmark_reblock_hierarchy,
+                    ),
+                )
         if cfg.sol_virtual_query_levels_up is not None or cfg.sol_virtual_query_target_blocks is not None:
             from .landmark_virtual_q import virtual_query_layout, target_virtual_query_layout
             from .sol_numerator_virtual_q import validate_virtual_layout
@@ -551,29 +677,129 @@ def spark_attention_bthd(
             ranges, mapping, topology_metadata = cache[cache_key]
             controller.sol_virtual_query_layout = topology_metadata
             anchors = None
-            if cfg.sol_virtual_query_fused_permute:
+            if (
+                cfg.sol_virtual_query_fused_permute
+                and not needs_query_padding
+            ):
+                profile = _profile_begin(controller, "reblock_q_and_anchors")
                 q_bthd, anchors = permute_with_virtual_anchors(q_bthd, query_permutation,
                     ranges, video_tokens=layout.video_tokens)
+                _profile_end(controller, profile)
                 controller.counts["sol_virtual_query_fused_permute_calls"] += 1
             else:
+                profile = _profile_begin(controller, "reblock_q")
                 q_bthd = _headwise_permute_video_tokens(
                     q_bthd, query_permutation, video_tokens=layout.video_tokens)
+                _profile_end(controller, profile)
             virtual_query_data = (ranges, mapping, anchors)
         else:
+            profile = _profile_begin(controller, "reblock_q")
             q_bthd = _headwise_permute_video_tokens(
                 q_bthd, query_permutation, video_tokens=layout.video_tokens
             )
-        k_bthd = _headwise_permute_video_tokens(
-            k_bthd, key_permutation, video_tokens=layout.video_tokens
-        )
-        v_bthd = _headwise_permute_video_tokens(
-            v_bthd, key_permutation, video_tokens=layout.video_tokens
-        )
+            _profile_end(controller, profile)
+        profile = _profile_begin(controller, "reblock_kv")
+        if (
+            k_bthd.is_cuda
+            and k_bthd.is_contiguous()
+            and v_bthd.is_contiguous()
+            and key_permutation.is_contiguous()
+        ):
+            from .landmark_tree_v2_triton import headwise_permute_pair_bthd
+
+            k_bthd, v_bthd = headwise_permute_pair_bthd(
+                k_bthd,
+                v_bthd,
+                key_permutation,
+                video_tokens=layout.video_tokens,
+            )
+        else:
+            k_bthd = _headwise_permute_video_tokens(
+                k_bthd, key_permutation, video_tokens=layout.video_tokens
+            )
+            v_bthd = _headwise_permute_video_tokens(
+                v_bthd, key_permutation, video_tokens=layout.video_tokens
+            )
+        _profile_end(controller, profile)
         controller.counts["sol_landmark_preprocess_calls"] += 1
+    elif getattr(controller, "spark_identity_reweight", False):
+        # Ablation-only path: preserve the original physical video-token order
+        # while applying the same target-189 virtual-query reweighting used by
+        # full Spark.  This isolates reweight cost from dynamic reblocking and
+        from .landmark_virtual_q import target_virtual_query_layout
+        from .reblock_hierarchy import build_reblock_hierarchy
+        from .sol_numerator_virtual_q import build_virtual_anchors, validate_virtual_layout
+        from .spark_defaults import (
+            SPARK_REWEIGHT_MAX_BLOCKS,
+            SPARK_REWEIGHT_MIN_BLOCKS,
+            SPARK_REWEIGHT_TARGET_BLOCKS,
+        )
+
+        cache = controller._virtual_query_layout_cache
+        cache_key = ("identity_target189", q_bthd.shape[1], q_bthd.device, layout.grid)
+        if cache_key not in cache:
+            hierarchy = build_reblock_hierarchy(
+                layout.video_tokens,
+                cfg.landmark_tree_v2_children,
+                grid_shape=layout.grid,
+                fanout_mode=cfg.landmark_tree_v2_fanout_mode,
+            )
+            topology = target_virtual_query_layout(
+                layout.video_tokens,
+                q_bthd.shape[1],
+                SPARK_REWEIGHT_TARGET_BLOCKS,
+                SPARK_REWEIGHT_MIN_BLOCKS,
+                SPARK_REWEIGHT_MAX_BLOCKS,
+                hierarchy=hierarchy,
+            )
+            ranges_host, mapping_host = validate_virtual_layout(
+                topology["ranges"], topology["leaf_to_virtual"], q_bthd.shape[1]
+            )
+            cache[cache_key] = (
+                torch.tensor(ranges_host, device=q_bthd.device, dtype=torch.int64),
+                torch.tensor(mapping_host, device=q_bthd.device, dtype=torch.int64),
+                dict(topology["metadata"]),
+            )
+        ranges, mapping, topology_metadata = cache[cache_key]
+        controller.sol_virtual_query_layout = {
+            **topology_metadata,
+            "ablation": "identity_physical_order",
+        }
+        anchors = (
+            None
+            if needs_query_padding
+            else build_virtual_anchors(q_bthd, ranges)
+        )
+        virtual_query_data = (ranges, mapping, anchors)
+        controller.counts["sol_identity_reweight_calls"] += 1
+
+    padded_context_queries = None
+    if needs_query_padding:
+        # Fill after any reblock permutation so the padding preserves the mean
+        # of the actual video rows occupying the final physical query block.
+        # K/V remain the original packed sequence, and the real context Q rows
+        # are restored before dense attention below.
+        tail_start = (layout.video_tokens // _SPARK_BLOCK_SIZE) * _SPARK_BLOCK_SIZE
+        tail_mean = q_bthd[:, tail_start:layout.video_tokens].mean(
+            dim=1, keepdim=True, dtype=torch.float32
+        ).to(q_bthd.dtype)
+        padded_context_queries = q_bthd[
+            :, layout.video_tokens:sparse_query_tokens
+        ].clone()
+        q_bthd = q_bthd.clone()
+        q_bthd[:, layout.video_tokens:sparse_query_tokens].copy_(tail_mean)
+    dense_query_start = sink_start
     if cfg.sol_route_topk_ratio is not None:
+        profile = _profile_begin(controller, "sparse_attention")
         output = _spark_topk_attention(controller, q_bthd, k_bthd, v_bthd,
                                        layout, virtual_query_data,
-                                       _query_tokens=layout.video_tokens if virtual_query_data is not None and layout.video_tokens % 64 == 0 else None)
+                                       _query_tokens=sparse_query_tokens)
+        _profile_end(controller, profile)
+        dense_query_start = (
+            sink_start
+            if needs_query_padding or legacy_full_query
+            else sparse_query_tokens
+        )
     elif virtual_query_data is not None:
         from sol_attn.preprocess import prepare
         from .sol_numerator_virtual_q import virtual_q_attention, virtual_q_backend
@@ -587,34 +813,58 @@ def spark_attention_bthd(
             virtual_anchors=anchors, key_centroids=kc, value_sums=vs,
             threshold=threshold, sink_start=sink_start, sink_tokens=sink_tokens,
             force_local_blocks=cfg.sol_local_blocks_enabled,
-            _query_tokens=layout.video_tokens if layout.video_tokens % 64 == 0 else None)
+            _query_tokens=sparse_query_tokens)
+        dense_query_start = (
+            sink_start
+            if needs_query_padding or legacy_full_query
+            else sparse_query_tokens
+        )
         controller.sol_backend = virtual_q_backend(q_bthd)
         controller.counts["sol_virtual_query_calls"] += 1
         controller.counts["sol_tau_virtual_query_calls"] += 1
     else:
+        try:
+            from sol_attn import get_sol_attn_backend, sol_attn
+        except (ImportError, OSError) as error:
+            raise RuntimeError(
+                "Sol-Attn is unavailable; install NVlabs/Sana's "
+                "techniques/sparse_backends package"
+            ) from error
+        controller.sol_backend = get_sol_attn_backend(q_bthd.device)
         output = sol_attn(q_bthd, k_bthd, v_bthd, tau=cfg.sol_tau,
                           thresh_type=cfg.sol_thresh_type, kv_splits=cfg.sol_kv_splits,
                           sink_start=sink_start, sink_tokens=sink_tokens,
                           force_local_blocks=cfg.sol_local_blocks_enabled)
         controller.counts["sol_official_calls"] += 1
 
-    # Exact sinks apply to K/V blocks.  Match the released H3 integration by
-    # recomputing the corresponding query rows densely.
-    if sink_tokens:
-        output[:, sink_start:] = F.scaled_dot_product_attention(
-            q_bthd[:, sink_start:].transpose(1, 2),
+    if padded_context_queries is not None:
+        q_bthd[:, sink_start:sparse_query_tokens].copy_(padded_context_queries)
+
+    # On every fixed-Top-K path, and on virtual-query tau paths, either keep the
+    # mixed video/context block dense or replace its context query rows with
+    # padding for sparse execution. Every real query still attends to complete
+    # K/V, and every real non-video query is evaluated only by dense attention.
+    # Plain Sol tau retains its stock full-query behavior and starts this dense
+    # overwrite at sink_start.
+    if dense_query_start < q_bthd.shape[1]:
+        profile = _profile_begin(controller, "dense_suffix")
+        output[:, dense_query_start:] = F.scaled_dot_product_attention(
+            q_bthd[:, dense_query_start:].transpose(1, 2),
             k_bthd.transpose(1, 2),
             v_bthd.transpose(1, 2),
             dropout_p=0.0,
             is_causal=False,
         ).transpose(1, 2)
+        _profile_end(controller, profile)
         controller.counts["sol_dense_context_queries"] += 1
     if query_inverse_permutation is not None:
+        profile = _profile_begin(controller, "reblock_output_inverse")
         output = _headwise_permute_video_tokens(
             output,
             query_inverse_permutation,
             video_tokens=layout.video_tokens,
         )
+        _profile_end(controller, profile)
     return output if return_bthd else output.permute(0, 2, 1, 3).contiguous()
 
 
@@ -627,7 +877,11 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         sol_topk_threshold_attn, sol_topk_threshold_backend,
     )
     from .sol_vaware_compensation import exact_attention
-    from .sol_topk_cutoff import gemm_radix_topk_cutoff, triton_gaussian_moment_cutoff
+    from .sol_topk_cutoff import (
+        gemm_radix_topk_cutoff,
+        gemm_topk_packed_route,
+        triton_gaussian_moment_cutoff,
+    )
 
     cfg = controller.config
     from .sol_numerator_virtual_q import virtual_q_backend, reduce_virtual_key_centroids
@@ -664,6 +918,46 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         route, stats = reweighted_route(q, kc, mapping, summaries[0], summaries[2],
             video_tokens=layout.video_tokens, sink_tokens=sink_tokens,
             topk_ratio=cfg.sol_route_topk_ratio, mode=cfg.sol_virtual_query_route_score)
+    elif (
+        backend is not None
+        and not partial_video
+        and cfg.sol_route_topk_execution == "fused"
+        and virtual_query_data is not None
+        and tuple(torch.cuda.get_device_capability(q.device)) == (12, 0)
+        and _query_tokens is not None
+    ):
+        candidate_blocks = layout.video_tokens // 64
+        stats = dict(
+            block_size=64,
+            blocks=math.ceil(q.shape[1] / 64),
+            candidate_video_blocks=candidate_blocks,
+            query_video_blocks=_query_tokens // 64,
+            sink_blocks=math.ceil(sink_tokens / 64),
+            target_topk_blocks_per_query=max(
+                1, round(cfg.sol_route_topk_ratio * candidate_blocks)
+            ),
+            route_topk_ratio=cfg.sol_route_topk_ratio,
+            route_threshold_mode="sm120_cta_local_exact_topk",
+        )
+        controller.counts["sol_topk_fused_route_calls"] += 1
+    elif (
+        backend is not None
+        and not partial_video
+        and cfg.sol_route_topk_execution == "packed_external"
+        and cfg.sol_route_topk_cutoff_mode == "gemm_radix"
+        and tuple(torch.cuda.get_device_capability(q.device)) == (12, 0)
+        and _query_tokens is not None
+        and virtual_query_data is not None
+        and virtual_q_backend(q).endswith("fused_virtual_query")
+    ):
+        route, stats = gemm_topk_packed_route(
+            q,
+            kc,
+            video_tokens=layout.video_tokens,
+            topk_ratio=cfg.sol_route_topk_ratio,
+            query_tokens=_query_tokens,
+        )
+        controller.counts["sol_topk_packed_route_calls"] += 1
     elif backend is not None and not partial_video:
         cutoff = {"gemm_radix": gemm_radix_topk_cutoff,
                   "gaussian_moments": triton_gaussian_moment_cutoff}[cfg.sol_route_topk_cutoff_mode]
@@ -676,7 +970,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
             "topk_explicit_partial_video_fallback" if partial_video else "topk_explicit_no_threshold_backend")
 
     if cfg.sol_log_density and controller.sol_route_density is None:
-        if route is None:
+        if route is None or route.dtype == torch.int32:
             stats.update(_sol_topk_analytic_density(stats))
         else:
             qb, kb = stats["query_video_blocks"], stats["candidate_video_blocks"]
@@ -693,20 +987,27 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
             virtual_anchors=anchors, precomputed_summaries=summaries, key_centroids=kc,
             value_sums=vs, threshold=threshold, route=route, sink_start=layout.video_tokens,
             sink_tokens=sink_tokens, force_local_blocks=cfg.sol_local_blocks_enabled,
-            _query_tokens=_query_tokens)
+            _query_tokens=_query_tokens,
+            fused_topk_ratio=(
+                cfg.sol_route_topk_ratio
+                if cfg.sol_route_topk_execution == "fused"
+                else 0.0
+            ))
         controller.sol_backend = virtual_q_backend(q)
         controller.counts["sol_virtual_query_calls"] += 1
     elif route is None:
         output = sol_topk_threshold_attn(q, k, v, kc, vs, threshold,
             sink_start=layout.video_tokens, sink_tokens=sink_tokens,
-            force_local_blocks=cfg.sol_local_blocks_enabled)
+            force_local_blocks=cfg.sol_local_blocks_enabled,
+            _query_tokens=_query_tokens)
         controller.sol_backend = f"{backend}:{cfg.sol_route_topk_cutoff_mode}"
         controller.counts["sol_topk_threshold_calls"] += 1
     else:
         output, _, _ = exact_attention(
             q, k, v, kc, vs, route=route,
             sink_start=layout.video_tokens, sink_tokens=sink_tokens,
-            force_local_blocks=cfg.sol_local_blocks_enabled)
+            force_local_blocks=cfg.sol_local_blocks_enabled,
+            _query_tokens=_query_tokens)
         output = output.to(v.dtype)
         controller.sol_backend = "vaware_exact_explicit_route"
         controller.counts["sol_topk_explicit_fallback_calls"] += 1

@@ -246,11 +246,15 @@ def _skip_merge_chunk(Q,MAP,AK,AV,LM,R,EO,EL,T:tl.constexpr,H:tl.constexpr,
 
 
 def _streamed_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,route,exact_output,exact_lse,
-                      precomputed_summaries=None):
+                      precomputed_summaries=None,_query_tokens=None):
     """Build parent summaries in bounded chunks and merge into exact_output."""
     b,t,h,d=q.shape;n=triton.cdiv(t,64);p=a.shape[1]
-    parent_chunk=_summary_parent_chunk(b,p,h,n,d,q.dtype)
     ranges=_host_ranges(virtual_ranges)
+    query_tokens=t if _query_tokens is None else operator.index(_query_tokens)
+    if not 0 < query_tokens <= t or (query_tokens != t and query_tokens % 64):
+        raise ValueError('_query_tokens must end at a physical query-block boundary')
+    p=next(i+1 for i,(_,end) in enumerate(ranges) if end>=query_tokens)
+    parent_chunk=_summary_parent_chunk(b,p,h,n,d,q.dtype)
     if precomputed_summaries is None:
         # Reuse one workspace on this stream; retain the full batch stride for
         # the final short chunk and read anchors directly from their input view.
@@ -271,7 +275,7 @@ def _streamed_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,route,exact_output,
             lm=lm0[:,p_start:p_end].contiguous()
             summary_parents=p_end-p_start
         qb_start=ranges[p_start][0]//64
-        qb_end=(ranges[p_end-1][1]+63)//64
+        qb_end=min((ranges[p_end-1][1]+63)//64,triton.cdiv(query_tokens,64))
         _skip_merge_chunk[(qb_end-qb_start,b*h)](
             q,leaf_to_virtual,ak,av,lm,route,exact_output,exact_lse,
             t,h,n,summary_parents,p_start,qb_start,num_warps=4,num_stages=1)
@@ -280,6 +284,7 @@ def _streamed_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,route,exact_output,
 
 @torch.no_grad()
 def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=None,precomputed_summaries=None,key_centroids=None,value_sums=None,threshold=None,route=None,sink_start=None,sink_tokens=0,scale=None,force_local_blocks=True,_query_tokens=None,**kwargs):
+    fused_topk_ratio = float(kwargs.pop("fused_topk_ratio", 0.0))
     if q.ndim != 4 or q.shape[-1] != 128 or q.shape != k.shape or q.shape != v.shape:
         raise ValueError('requires matching BTH128')
     b,t,h,d=q.shape;n=triton.cdiv(t,64)
@@ -302,10 +307,11 @@ def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=N
     if virtual_q_backend(q).endswith('fused_virtual_query'):
         return _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,key_centroids,
                               threshold,route,sink_start,sink_tokens,precomputed_summaries,
-                              force_local_blocks=force_local_blocks,_query_tokens=_query_tokens)
-    eo,el,actual=exact_attention(q,k,v,key_centroids,value_sums,threshold,route,d**-.5,sink_start,sink_tokens,force_local_blocks=force_local_blocks)
+                              force_local_blocks=force_local_blocks,_query_tokens=_query_tokens,
+                              fused_topk_ratio=fused_topk_ratio)
+    eo,el,actual=exact_attention(q,k,v,key_centroids,value_sums,threshold,route,d**-.5,sink_start,sink_tokens,force_local_blocks=force_local_blocks,_query_tokens=_query_tokens)
     return _streamed_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,actual,eo,el,
-                             precomputed_summaries)
+                             precomputed_summaries,_query_tokens=_query_tokens)
 
 
 _FUSED_COMPILED = {}
@@ -329,7 +335,7 @@ def virtual_q_backend(q):
 
 
 def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
-                   sink_start,sink_tokens,precomputed_summaries=None,*,export_route=False,force_local_blocks=True,_query_tokens=None):
+                   sink_start,sink_tokens,precomputed_summaries=None,*,export_route=False,force_local_blocks=True,_query_tokens=None,fused_topk_ratio=0.0):
     """Bounded summaries plus the production mixed exact/approximate mainloop.
 
     Each query CTA reads one parent's summaries. Native centroid routing and
@@ -360,17 +366,26 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     if kc is None:
         from sol_attn.preprocess import _reduce_kv
         kc,_=_reduce_kv(k,v)
+    packed_external=(
+        route is not None and route.dtype == torch.int32 and route.ndim == 4
+    )
     external=threshold is None and route is not None
     hybrid=threshold is not None and route is not None
+    if packed_external and capability != (12,0):
+        raise NotImplementedError("packed external routes currently require SM120")
+    if packed_external and export_route:
+        raise ValueError("packed external routes cannot be exported as a dense mask")
     if threshold is None:
         threshold=torch.zeros((b,n,h),device=q.device,dtype=torch.float32)
     if route is None:
         # The scalar threshold specialization never reads or exports this.
         route=torch.empty((b,n,h,n) if export_route else (1,1,1,1),device=q.device,dtype=torch.uint8)
-    else:
+    elif not packed_external:
         route=route.to(torch.uint8).contiguous()
         if export_route:
             route=route.clone()
+    else:
+        route=route.contiguous()
     out=torch.empty_like(q)
     lse=torch.empty((b,t,h),device=q.device,dtype=torch.float32)
     # Keep all query tiles for a head together. Parent-major streaming reloads
@@ -392,7 +407,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     tensors=(q,k,v,out,kc,avt,threshold,route,lse,akt,lm,leaf_to_virtual)
     args=[to_cute_tensor(x) for x in tensors]
     stream=cuda.CUstream(torch.cuda.current_stream(q.device).cuda_stream)
-    key=(q.device.index,capability,external,hybrid,export_route,force_local_blocks,
+    key=(q.device.index,capability,external,packed_external,hybrid,export_route,force_local_blocks,fused_topk_ratio,
          tuple((tuple(x.shape),tuple(x.stride()),x.dtype) for x in tensors))
     compiled=_FUSED_COMPILED.get(key)
     sink_start=t-sink_tokens if sink_start is None else sink_start
@@ -414,7 +429,13 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
             if compiled is None:
                 kernel=(FusedKernel(t,external_route=external,hybrid_route=hybrid,export_route=export_route,force_local_blocks=force_local_blocks)
                         if capability==(9,0) else
-                        FusedKernel(external_route=external,hybrid_route=hybrid,export_route=export_route,force_local_blocks=force_local_blocks))
+                        FusedKernel(external_route=external,packed_external_route=packed_external,
+                                    fused_topk_ratio=fused_topk_ratio,
+                                    hybrid_route=hybrid,export_route=export_route,
+                                    force_local_blocks=force_local_blocks)
+                        if capability==(12,0) else
+                        FusedKernel(external_route=external,hybrid_route=hybrid,
+                                    export_route=export_route,force_local_blocks=force_local_blocks))
                 compiled=cute.compile(kernel,*args,*scalars,stream=stream,options='--enable-tvm-ffi')
                 _FUSED_COMPILED[key]=compiled
             compiled(*args,*scalars,stream=stream)

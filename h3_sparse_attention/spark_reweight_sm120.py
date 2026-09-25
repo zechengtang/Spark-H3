@@ -51,6 +51,8 @@ class SparkReweightForwardSm120:
         prefetch_first_exact_k: bool = True,
         prefetch_next_route_k: bool = True,
         external_route: bool = False,
+        packed_external_route: bool = False,
+        fused_topk_ratio: float = 0.0,
         hybrid_route: bool = False,
         exact_only: bool = False,
         export_route: bool = False,
@@ -69,6 +71,10 @@ class SparkReweightForwardSm120:
         self.prefetch_first_exact_k = prefetch_first_exact_k
         self.prefetch_next_route_k = prefetch_next_route_k
         self.external_route = external_route
+        self.packed_external_route = packed_external_route
+        self.fused_topk_ratio = fused_topk_ratio
+        self.fused_topk_route = fused_topk_ratio > 0.0
+        self.fused_topk_numerator = round(fused_topk_ratio * 10000)
         self.hybrid_route = hybrid_route
         self.exact_only = exact_only
         self.export_route = export_route
@@ -226,6 +232,9 @@ class SparkReweightForwardSm120:
         route_meta = cute.make_tensor(
             route_i32_ptr + 6 * N, cute.make_layout(2)
         )
+        fused_route_scores = cute.make_tensor(
+            route_f32_ptr + 7 * N, cute.make_layout((mKC.shape[0],))
+        )
 
         mQ_slice = mQ[None, None, head_idx, batch_idx]
         mK_slice = mK[None, None, head_idx, batch_idx]
@@ -368,6 +377,102 @@ class SparkReweightForwardSm120:
         Q_pipeline.consumer_release(Q_consumer)
         Q_consumer.advance()
 
+        # Exact fixed-budget Top-K can be selected CTA-locally before the
+        # mixed mainloop.  The second pass still forms token-level Q.Kc logits
+        # for approximate attention, but never reconstructs block route scores.
+        if cutlass.const_expr(self.fused_topk_route):
+            for route_group in cutlass.range(0, num_route_groups, 1, unroll=1):
+                group_start = route_group * cutlass.Int32(N)
+                valid_blocks = num_blocks - group_start
+                if valid_blocks > N:
+                    valid_blocks = cutlass.Int32(N)
+                if warp == 0:
+                    K_pipeline.producer_acquire(K_producer)
+                    cute.copy(
+                        tma_atom_KC,
+                        tKCgKC[None, route_group],
+                        tKCsK[None, K_producer.index],
+                        tma_bar_ptr=K_pipeline.producer_get_barrier(K_producer),
+                    )
+                    K_pipeline.producer_commit(K_producer)
+                    K_producer.advance()
+                k_wait = K_pipeline.consumer_try_wait(K_consumer)
+                K_pipeline.consumer_wait(K_consumer, k_wait)
+                gemm_smem_zero_acc(
+                    tiled_mma_qk, tSrS, tSrQ, tSrK,
+                    tSsK_copy[None, None, None, K_consumer.index], smem_copy_K,
+                )
+                K_pipeline.consumer_release(K_consumer)
+                K_consumer.advance()
+                reduce_route_columns(
+                    tSrS, tScS, route_sums, warp, lane, q_len
+                )
+                cute.arch.fence_view_async_shared()
+                cute.arch.sync_threads()
+                if warp == 0:
+                    for word in cutlass.range_constexpr(2):
+                        off = cutlass.Int32(word * 32) + lane
+                        if off < valid_blocks:
+                            col_sum = (
+                                cutlass.Float32(route_sums[0, off])
+                                + cutlass.Float32(route_sums[1, off])
+                                + cutlass.Float32(route_sums[2, off])
+                                + cutlass.Float32(route_sums[3, off])
+                            )
+                            fused_route_scores[group_start + off] = (
+                                col_sum * scale_softmax_log2e / cutlass.Float32(q_len)
+                            )
+                cute.arch.sync_threads()
+
+            candidate_blocks = sink_start_block
+            target_topk = (
+                candidate_blocks * cutlass.Int32(self.fused_topk_numerator)
+                + cutlass.Int32(5000)
+            ) // cutlass.Int32(10000)
+            if target_topk < cutlass.Int32(1):
+                target_topk = cutlass.Int32(1)
+            for _ in cutlass.range(
+                cutlass.Int32(0), target_topk, cutlass.Int32(1), unroll=1
+            ):
+                local_max = -cutlass.Float32.inf
+                local_index = cutlass.Int32(-1)
+                index = cutlass.Int32(tidx)
+                while index < candidate_blocks:
+                    value = cutlass.Float32(fused_route_scores[index])
+                    if value != cutlass.Float32.inf and (
+                        value > local_max or (
+                            value == local_max and index < local_index
+                        )
+                    ):
+                        local_max = value
+                        local_index = index
+                    index += cutlass.Int32(THREADS)
+                for offset in (16, 8, 4, 2, 1):
+                    peer_max = cute.arch.shuffle_sync_bfly(local_max, offset=offset)
+                    peer_index = cute.arch.shuffle_sync_bfly(local_index, offset=offset)
+                    if peer_max > local_max or (
+                        peer_max == local_max and peer_index < local_index
+                    ):
+                        local_max = peer_max
+                        local_index = peer_index
+                if lane == 0:
+                    route_sums[0, warp] = local_max
+                    route_indices[warp] = local_index
+                cute.arch.sync_threads()
+                if tidx == 0:
+                    best = cutlass.Float32(route_sums[0, 0])
+                    best_index = cutlass.Int32(route_indices[0])
+                    for owner in cutlass.range_constexpr(1, 4):
+                        value = cutlass.Float32(route_sums[0, owner])
+                        value_index = cutlass.Int32(route_indices[owner])
+                        if value > best or (
+                            value == best and value_index < best_index
+                        ):
+                            best = value
+                            best_index = value_index
+                    fused_route_scores[best_index] = cutlass.Float32.inf
+                cute.arch.sync_threads()
+
         for route_group in cutlass.range(
             0, num_route_groups, 1, unroll=1
         ):
@@ -458,7 +563,7 @@ class SparkReweightForwardSm120:
                     K_pipeline.producer_commit(K_producer)
                     K_producer.advance()
 
-            if cutlass.const_expr(not self.external_route):
+            if cutlass.const_expr(not self.external_route and not self.fused_topk_route):
                 reduce_route_columns(
                     tSrS,
                     tScS,
@@ -481,18 +586,38 @@ class SparkReweightForwardSm120:
                     exact = False
                     if valid:
                         kv_block = group_start + off
-                        if cutlass.const_expr(self.external_route):
+                        if cutlass.const_expr(self.fused_topk_route):
                             exact = (
-                                cutlass.Int32(
+                                cutlass.Float32(fused_route_scores[kv_block])
+                                == cutlass.Float32.inf
+                            ) and valid
+                        elif cutlass.const_expr(self.external_route):
+                            if cutlass.const_expr(self.packed_external_route):
+                                route_word = cutlass.Int32(
                                     mRouteMask[
                                         batch_idx,
                                         q_tile_idx,
                                         head_idx,
-                                        kv_block,
+                                        kv_block // cutlass.Int32(32),
                                     ]
                                 )
-                                != cutlass.Int32(0)
-                            ) and valid
+                                route_bit = kv_block % cutlass.Int32(32)
+                                exact = (
+                                    ((route_word >> route_bit) & cutlass.Int32(1))
+                                    != cutlass.Int32(0)
+                                ) and valid
+                            else:
+                                exact = (
+                                    cutlass.Int32(
+                                        mRouteMask[
+                                            batch_idx,
+                                            q_tile_idx,
+                                            head_idx,
+                                            kv_block,
+                                        ]
+                                    )
+                                    != cutlass.Int32(0)
+                                ) and valid
                         else:
                             col_sum = (
                                 cutlass.Float32(route_sums[0, off])

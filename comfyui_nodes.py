@@ -15,13 +15,22 @@ from pathlib import Path
 
 import torch
 
-from h3_sparse_attention.processor import (
-    H3SparseAttentionConfig,
-    PackedLayout as SparkPackedLayout,
-    _Controller,
-    _sol_attention,
-)
-from h3_sparse_attention.spark_integration import spark_attention_bthd
+try:
+    from .comfyui_backend import (
+        ComfyPackedLayout,
+        ComfySparkConfig,
+        ComfySparkController,
+        comfy_kitchen_spark_attention,
+        reblock_profile_summary,
+    )
+except ImportError:  # standalone source-tree tests
+    from comfyui_backend import (
+        ComfyPackedLayout,
+        ComfySparkConfig,
+        ComfySparkController,
+        comfy_kitchen_spark_attention,
+        reblock_profile_summary,
+    )
 
 
 log = logging.getLogger(__name__)
@@ -48,7 +57,7 @@ def _target_video_span(layout, sequence_length: int) -> tuple[int, int]:
     return start, stop
 
 
-def _make_spark_layout(layout, sequence_length: int, device: torch.device) -> SparkPackedLayout:
+def _make_spark_layout(layout, sequence_length: int, device: torch.device) -> ComfyPackedLayout:
     start, stop = _target_video_span(layout, sequence_length)
     position_ids = getattr(layout, "position_ids", None)
     if not torch.is_tensor(position_ids) or position_ids.shape != (sequence_length, 3):
@@ -70,7 +79,7 @@ def _make_spark_layout(layout, sequence_length: int, device: torch.device) -> Sp
     permutation = torch.cat((video, before, after))
     inverse = torch.empty_like(permutation)
     inverse[permutation] = torch.arange(sequence_length, device=device)
-    return SparkPackedLayout(
+    return ComfyPackedLayout(
         permutation=permutation,
         inverse_permutation=inverse,
         grid=grid,
@@ -84,31 +93,45 @@ def _make_spark_layout(layout, sequence_length: int, device: torch.device) -> Sp
 class _RunState:
     steps: int
     warmup_percent: float
-    controller: _Controller
+    controller: ComfySparkController
     previous_sigma: float | None = None
-    layout_cache: dict[tuple[int, int, str], SparkPackedLayout] = field(default_factory=dict)
+    layout_cache: dict[tuple[int, int, str], ComfyPackedLayout] = field(default_factory=dict)
 
     @classmethod
-    def create(cls, steps: int, warmup_percent: float, topk_ratio: float):
+    def create(
+        cls,
+        steps: int,
+        warmup_percent: float,
+        topk_ratio: float,
+        ablation_mode: str = "full",
+        video_tail_mode: str = "dense",
+        global_anchor_dtype: str = "float32",
+    ):
         # Spark's public factory models the Diffusers pipeline's N-1 evaluations.
         # ComfyUI executes one model evaluation per sampler step, hence steps + 1.
-        config = H3SparseAttentionConfig.spark(
-            steps + 1,
-            warmup_percent=0.0,
-            sol_dense_layers=0,
-            sol_route_topk_ratio=topk_ratio,
+        common = dict(
+            topk_ratio=topk_ratio,
+            video_tail_mode=video_tail_mode,
+            global_anchor_dtype=global_anchor_dtype,
         )
-        return cls(steps, warmup_percent, _Controller(config))
-
-    @classmethod
-    def create_sol(cls, steps: int, warmup_percent: float, tau: float):
-        config = H3SparseAttentionConfig.sol(
-            steps + 1,
-            warmup_percent=0.0,
-            sol_tau=tau,
-            sol_dense_layers=0,
-        )
-        return cls(steps, warmup_percent, _Controller(config))
+        if ablation_mode == "full":
+            config = ComfySparkConfig(**common)
+        elif ablation_mode == "full_reuse2":
+            config = ComfySparkConfig(**common)
+        elif ablation_mode == "full_group841":
+            config = ComfySparkConfig(
+                landmark_tree_v2_group_size=(8, 4, 1),
+                **common,
+            )
+        else:
+            raise ValueError(
+                f"unsupported ComfyUI Spark mode {ablation_mode!r}; only "
+                "comfy-kitchen global modes are available"
+            )
+        state = cls(steps, warmup_percent, ComfySparkController(config))
+        state.controller.reblock_reuse_layers = 2 if ablation_mode == "full_reuse2" else 1
+        state.controller.reblock_reuse_start_layer = 1
+        return state
 
     @property
     def warmup_evaluations(self) -> int:
@@ -249,14 +272,33 @@ def _native_spark_attention(attn, x, rope_freqs, transformer_options, layer, sta
     layout = state.spark_layout(
         transformer_options["minimax_h3_layout"], x.shape[0], x.device
     )
+    qkv_profile = None
+    if os.environ.get("SPARK_PROFILE_REBLOCK") == "1":
+        qkv_start = torch.cuda.Event(enable_timing=True)
+        qkv_end = torch.cuda.Event(enable_timing=True)
+        qkv_start.record()
+        qkv_profile = ("qkv_materialize", qkv_start, qkv_end)
     q, k, v = _native_spark_qkv(attn, x, rope_freqs, layout.permutation)
-    output = spark_attention_bthd(
-        state.controller, q, k, v, layout, layer, return_bthd=True
-    )
+    if qkv_profile is not None:
+        qkv_profile[2].record()
+        state.controller.reblock_profile.append(qkv_profile)
+    output = comfy_kitchen_spark_attention(state.controller, q, k, v, layout, layer)
+    unpack_profile = None
+    if os.environ.get("SPARK_PROFILE_REBLOCK") == "1":
+        unpack_start = torch.cuda.Event(enable_timing=True)
+        unpack_end = torch.cuda.Event(enable_timing=True)
+        unpack_start.record()
+        unpack_profile = ("output_unpack_and_projection", unpack_start, unpack_end)
     output = output.index_select(1, layout.inverse_permutation)
     state.controller.counts["sparse:spark_comfy_native"] += 1
     activation_log.hit(x.shape[0], layout.video_tokens)
-    return attn.out_proj(output.reshape(x.shape[0], int(attn.heads) * int(attn.head_dim)))
+    output = attn.out_proj(
+        output.reshape(x.shape[0], int(attn.heads) * int(attn.head_dim))
+    )
+    if unpack_profile is not None:
+        unpack_profile[2].record()
+        state.controller.reblock_profile.append(unpack_profile)
+    return output
 
 
 def _make_native_spark_block_patch(block, layer, policy, state, activation_log, strict):
@@ -295,124 +337,6 @@ def _make_native_spark_block_patch(block, layer, policy, state, activation_log, 
     return block_patch
 
 
-def _make_attention_forward(
-    attn,
-    fallback_forward,
-    layer: int,
-    dense_layers: int,
-    min_tokens: int,
-    strict: bool,
-    state: _RunState,
-    activation_log: _ActivationLog,
-):
-    heads, head_dim = int(attn.heads), int(attn.head_dim)
-    inner = heads * head_dim
-
-    def forward(x, rope_freqs=None, transformer_options={}):
-        # KJNodes may hand ownership over through a one-element list.  Do not
-        # consume it until every condition that can choose dense fallback passes.
-        handoff = isinstance(x, list) and len(x) == 1 and torch.is_tensor(x[0])
-        tensor = x[0] if handoff else x
-        handoff_released = False
-        try:
-            if layer == 0:
-                state.begin_evaluation(transformer_options)
-            if not torch.is_tensor(tensor) or tensor.ndim != 2:
-                raise _Incompatible("attention input is not a rank-2 tensor")
-            sequence_length = tensor.shape[0]
-            if state.is_warmup:
-                raise _Unsupported(
-                    f"dense warmup evaluation {state.controller.evaluation_index + 1}/"
-                    f"{state.warmup_evaluations}"
-                )
-            if layer < dense_layers:
-                raise _Unsupported(f"transformer layer {layer} is configured dense")
-            if sequence_length < min_tokens or tensor.requires_grad:
-                raise _Unsupported("below min_tokens or autograd requested")
-            if tensor.dtype != torch.bfloat16 or tensor.device.type != "cuda":
-                raise _Incompatible("Spark SM120 requires CUDA bfloat16 activations")
-            if head_dim != 128:
-                raise _Incompatible(f"head_dim {head_dim} != 128")
-            capability = torch.cuda.get_device_capability(tensor.device)
-            if capability != _SM120:
-                raise _Incompatible(
-                    f"this node targets SM120, found SM{capability[0]}{capability[1]}"
-                )
-            comfy_layout = (transformer_options or {}).get("minimax_h3_layout")
-            if comfy_layout is None:
-                raise _Incompatible(
-                    "ComfyUI did not publish minimax_h3_layout; update ComfyUI to 0.30.0+"
-                )
-            spark_layout = state.spark_layout(comfy_layout, sequence_length, tensor.device)
-
-            if handoff:
-                tensor = x.pop()
-            device = tensor.device
-            q, k, v = attn.qkv_proj(tensor).split(inner, dim=-1)
-            if handoff:
-                del tensor
-                handoff_released = True
-            q = q.view(1, sequence_length, heads, head_dim)
-            k = k.view(1, sequence_length, heads, head_dim)
-            v = v.view(1, sequence_length, heads, head_dim)
-
-            if rope_freqs is not None:
-                import comfy.model_management
-                import comfy.quant_ops
-
-                qw = comfy.model_management.cast_to(attn.q_norm.weight, device=device)
-                kw = comfy.model_management.cast_to(attn.k_norm.weight, device=device)
-                comfy.quant_ops.ck.rms_rope_split_half_(
-                    q,
-                    k,
-                    rope_freqs,
-                    qw,
-                    kw,
-                    epsilon=attn.q_norm.eps,
-                    rot_dim=rope_freqs.shape[-3] * 2,
-                )
-            else:
-                q = attn.q_norm(q)
-                k = attn.k_norm(k)
-
-            permutation = spark_layout.permutation
-            q, k, v = (
-                value.index_select(1, permutation).permute(0, 2, 1, 3)
-                for value in (q, k, v)
-            )
-            output = _sol_attention(
-                state.controller,
-                q,
-                k,
-                v,
-                spark_layout,
-                layer,
-                return_bthd=True,
-            )
-            output = output.index_select(1, spark_layout.inverse_permutation)
-            activation_log.hit(sequence_length, spark_layout.video_tokens)
-            return attn.out_proj(output.reshape(sequence_length, inner))
-        except _Incompatible as exc:
-            if strict:
-                raise
-            activation_log.miss(str(exc))
-        except _Unsupported as exc:
-            activation_log.miss(str(exc))
-        except Exception as exc:
-            if strict or handoff_released:
-                raise
-            activation_log.miss(f"{type(exc).__name__}: {exc}")
-
-        if handoff and not x:
-            # The only path that can empty the handoff is followed by either a
-            # successful return or a re-raised kernel error above.
-            raise RuntimeError("Spark-H3 consumed a low-VRAM activation before fallback")
-        return fallback_forward(x, rope_freqs=rope_freqs, transformer_options=transformer_options)
-
-    forward._spark_h3_fallback = fallback_forward
-    return forward
-
-
 class MiniMaxH3SparkAttentionSM120:
     """Run Spark through ComfyUI's native MiniMax-H3 block-patch architecture."""
 
@@ -443,7 +367,19 @@ class MiniMaxH3SparkAttentionSM120:
                     {"default": 4096, "min": 256, "max": 262144, "step": 256},
                 ),
                 "strict": ("BOOLEAN", {"default": True}),
-            }
+            },
+            "optional": {
+                "video_tail_mode": (["dense", "pad"], {"default": "dense"}),
+                "global_anchor_dtype": (
+                    ["float32", "bfloat16"],
+                    {"default": "float32"},
+                ),
+                "ablation_mode": ([
+                    "full",
+                    "full_reuse2",
+                    "full_group841",
+                ], {"default": "full"}),
+            },
         }
 
     RETURN_TYPES = ("MODEL",)
@@ -467,6 +403,9 @@ class MiniMaxH3SparkAttentionSM120:
         dense_layers,
         min_tokens,
         strict,
+        ablation_mode="full",
+        video_tail_mode="dense",
+        global_anchor_dtype="float32",
     ):
         if not enabled:
             return (model,)
@@ -479,7 +418,10 @@ class MiniMaxH3SparkAttentionSM120:
         from comfy_extras.nodes_sparse_attention import SparseAttnPatch
 
         patched = model.clone()
-        state = _RunState.create(int(steps), float(warmup_percent), float(topk_ratio))
+        state = _RunState.create(
+            int(steps), float(warmup_percent), float(topk_ratio),
+            str(ablation_mode), str(video_tail_mode), str(global_anchor_dtype)
+        )
         model_sampling = model.get_model_object("model_sampling")
         policy = SparseAttnPatch(
             tau=1.0,
@@ -508,6 +450,9 @@ class MiniMaxH3SparkAttentionSM120:
             )
 
         def cleanup(_model_patcher):
+            profile = reblock_profile_summary(state.controller)
+            if profile is not None:
+                log.info("[Spark-H3] reblock CUDA profile: %s", profile)
             policy.reset()
             state.controller.reset()
             state.previous_sigma = None
@@ -521,8 +466,11 @@ class MiniMaxH3SparkAttentionSM120:
         )
         log.info(
             "[Spark-H3] installed ComfyUI-native producer on %d H3 blocks "
-            "(Top-K %.0f%%, warmup %.0f%%, dense blocks %s)",
+            "(mode %s, tail %s, anchor %s, Top-K %.0f%%, warmup %.0f%%, dense blocks %s)",
             len(blocks),
+            str(ablation_mode),
+            str(video_tail_mode),
+            str(global_anchor_dtype),
             100.0 * float(topk_ratio),
             float(warmup_percent),
             "none" if int(dense_layers) == 0 else f"0..{int(dense_layers) - 1}",
@@ -531,13 +479,16 @@ class MiniMaxH3SparkAttentionSM120:
 
 
 class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
-    """Patch ComfyUI's native MiniMax-H3 model with Spark-H3's base Sol kernel."""
+    """Compatibility wrapper around ComfyUI's official sparse-attention patch."""
 
     @classmethod
     def INPUT_TYPES(cls):
         inputs = super().INPUT_TYPES()
         required = inputs["required"]
         required.pop("topk_ratio")
+        inputs["optional"].pop("video_tail_mode")
+        inputs["optional"].pop("global_anchor_dtype")
+        inputs["optional"].pop("ablation_mode")
         required["tau"] = (
             "FLOAT",
             {"default": 1.0, "min": 0.0, "max": 4.0, "step": 0.05},
@@ -545,9 +496,9 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
         return inputs
 
     DESCRIPTION = (
-        "Patch ComfyUI's native MiniMax H3 DiT with the base Sol-Attn kernel "
-        "bundled by Spark-H3. Spark-Reblock, Spark-Reweight, and Top-K routing "
-        "are disabled. Set steps to the sampler's model-evaluation count."
+        "Compatibility alias for ComfyUI's official MiniMax H3 Sol-Attn "
+        "implementation. It uses the official block patch, chunked producer, "
+        "and comfy-kitchen kernel; no Spark-H3 Triton/CuTe backend is reachable."
     )
 
     def patch(
@@ -568,31 +519,27 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
         if diffusion_model.__class__.__name__ != "MiniMaxH3Model" or blocks is None:
             raise TypeError("Spark-H3 Sol expects ComfyUI's native MiniMaxH3Model")
 
-        patched = model.clone()
-        state = _RunState.create_sol(int(steps), float(warmup_percent), float(tau))
-        activation_log = _ActivationLog()
-        for layer in range(len(blocks)):
-            path = f"diffusion_model.blocks.{layer}.attn.forward"
-            attn = patched.get_model_object(f"diffusion_model.blocks.{layer}.attn")
-            prior = getattr(patched, "object_patches", {}).get(path)
-            fallback = prior if prior is not None else attn.forward
-            if hasattr(fallback, "_spark_h3_fallback"):
-                fallback = fallback._spark_h3_fallback
-            patched.add_object_patch(
-                path,
-                _make_attention_forward(
-                    attn,
-                    fallback,
-                    layer,
-                    int(dense_layers),
-                    int(min_tokens),
-                    bool(strict),
-                    state,
-                    activation_log,
-                ),
-            )
+        from comfy_extras.nodes_sparse_attention import apply_block_sparse_attention
+
+        # Keep the legacy node's inputs for workflow compatibility.  All actual
+        # patching and attention execution belongs to ComfyUI's official node.
+        del steps, strict
+        patched = apply_block_sparse_attention(
+            model,
+            tau=float(tau),
+            topk_ratio=0.0,
+            vsa=False,
+            start_percent=float(warmup_percent) / 100.0,
+            end_percent=1.0,
+            min_tokens=int(min_tokens),
+            dense_blocks=set(range(int(dense_layers))),
+            sink_conditioning="exact_kv_and_rows",
+            extra_tokens=0,
+            verbose=True,
+        )
         log.info(
-            "[Spark-H3 Sol] patched %d MiniMax H3 blocks (tau %.2f, warmup %.0f%%, dense layers %d)",
+            "[Spark-H3 Sol] delegated %d MiniMax H3 blocks to ComfyUI's official Sol patch "
+            "(tau %.2f, warmup %.0f%%, dense layers %d)",
             len(blocks),
             float(tau),
             float(warmup_percent),
@@ -719,7 +666,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3SparkAttentionSM120": "MiniMax H3 Spark Attention (SM120)",
-    "MiniMaxH3SolAttentionSM120": "MiniMax H3 Sol Attention (Spark-H3 SM120)",
+    "MiniMaxH3SolAttentionSM120": "MiniMax H3 Sol Attention (Official Compatibility)",
     "SaveMiniMaxH3AVLatentCache": "Save MiniMax H3 AV Latent Cache",
     "LoadMiniMaxH3AVLatentCache": "Load MiniMax H3 AV Latent Cache",
     "SaveVideoLosslessUltrafast": "Save Video Lossless (Ultrafast)",

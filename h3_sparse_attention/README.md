@@ -15,10 +15,12 @@ python -m pip install -e '.[cuda]'
 
 The pipeline still needs the H3-capable diffusers build and model dependencies
 listed in the repository's main README and `requirements.txt`. CUDA execution
-requires a matching PyTorch/CUDA installation. CuTe kernels are selected when
-available for the GPU; the bundled Triton backend supports other NVIDIA GPUs
-with compute capability at least 8.0. Spark requires CUDA and Triton for GPU
-execution. Sol-Attn requires contiguous BF16 `[batch, tokens, heads, 128]`
+requires a matching PyTorch/CUDA installation. Plain Sol-Attn selects CuTe
+kernels when available and retains a Triton backend for other NVIDIA GPUs with
+compute capability at least 8.0. Spark-H3 is stricter: its Diffusers integration
+supports only SM90, SM100, and SM120 and raises before reblocking on every other
+architecture. Spark requires CUDA and Triton for its supported execution paths.
+Sol-Attn requires contiguous BF16 `[batch, tokens, heads, 128]`
 tensors. These are forward/inference kernels.
 
 ## H3 pipeline integration
@@ -50,9 +52,20 @@ steps). The first transformer layer remains dense by default.
 
 Only the generated target-video grid is sparse. Conditioning video, text, and
 audio are packed after the target as exact K/V sinks; their query rows are
-recomputed with dense attention. The adapter supports H3's packed batch size
-one and rejects external attention masks. It preserves Q/K normalization,
+computed with dense attention. If the video boundary splits a 64-token block,
+that final mixed block is also computed densely. The adapter supports H3's
+packed batch size one and rejects external attention masks. It preserves Q/K normalization,
 RoPE, fused or separate QKV projections, and the output projection.
+
+`sol_video_tail_mode="dense"` is the default: the incomplete final video block
+is included in the dense suffix. Set `sol_video_tail_mode="pad"` to run all
+video query rows through sparse attention instead. Pad mode fills only the
+non-video Q slots in that physical block with the mean Q of its real video rows
+during sparse execution, preserving the block routing centroid. Real context Q
+rows are still evaluated once by dense attention, and the complete, unmodified
+K/V sequence remains visible to both paths. The
+packed context suffix must contain enough slots to complete the 64-row block.
+The ComfyUI Spark node exposes the same choice as `video_tail_mode`.
 
 ## Spark inference integration
 
@@ -78,10 +91,11 @@ Default Spark settings match the source:
 - Native mean Top-K routing with ratio `0.1` and `gemm_radix` cutoffs.
 - Landmark-v2 Q/K reblocking using opposite second moments, cosine distance,
   fanout 16 with `power_of_two_fanout` scheduling, 32 midpoint landmarks, and no temporal grouping.
-- Query representatives selected from the reblocking hierarchy with target
-  189 physical blocks and bounds 94–284. These are blocks per representative,
-  not a fixed number of representatives; the hierarchy determines actual sizes.
-- Query-conditioned K/V and log-mass summaries merged with exact attention.
+- One global representative per head, formed by averaging all target-video
+  queries after reblocking.
+- Global-anchor K/V and log-mass summaries merged with exact attention. The
+  former target-189 representatives remain available only as an explicit
+  ablation and are not the default Spark-H3 configuration.
 - The positional local band is disabled after reblocking.
 
 Select `landmark_tree_v2_fanout_mode="arbitrary_fanout"` for balanced arbitrary child
@@ -110,8 +124,10 @@ Sol and Spark always avoid redundant Q/K/V layout copies; the former
 
 Set `sol_route_topk_ratio=None` to use native Sol tau routing with Spark
 reweighting (`sol_virtual_query_route_score="native_mean"`). SM120 reweighting
-now skips unused ordinary value sums and avoids computing context query rows
-that the integration replaces with dense attention.
+now skips unused ordinary value sums. Spark evaluates only complete video query
+blocks by default; pad mode additionally evaluates the incomplete video tail
+sparsely with query-only padding. All real context query rows are evaluated
+once by dense attention with the complete K/V set.
 
 Configuration overrides are passed as keyword arguments, for example
 `sol_route_topk_ratio=0.2` or `sol_virtual_query_levels_up=2`. Setting levels-up

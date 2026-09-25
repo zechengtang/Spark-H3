@@ -17,6 +17,17 @@ import triton.language as tl
 from triton.language.extra.cuda import libdevice
 
 
+_SCORE_BLOCK_M_OVERRIDE = os.environ.get("H3_LMV2_SCORE_BLOCK_M")
+if _SCORE_BLOCK_M_OVERRIDE is not None and int(_SCORE_BLOCK_M_OVERRIDE) not in (32, 64, 128):
+    raise ValueError("H3_LMV2_SCORE_BLOCK_M must be 32, 64, or 128")
+
+
+def _score_block_m(source: torch.Tensor) -> int:
+    if _SCORE_BLOCK_M_OVERRIDE is not None:
+        return int(_SCORE_BLOCK_M_OVERRIDE)
+    return 128 if torch.cuda.get_device_capability(source.device) == (12, 0) else 64
+
+
 @triton.jit
 def _fp16x3_dot(a, b):
     """Three FP16 products with scaled residuals; bounded FP32 operands.
@@ -105,8 +116,9 @@ def fused_cosine_scores_indexed(source, indices, directions, mode='tf32x3', *, f
     batch, n = indices.shape
     s = directions.shape[1]
     out = torch.empty((batch, n, s), device=source.device, dtype=torch.float32)
-    _score[(triton.cdiv(n,64),batch)](
-        source, directions, out, indices, N=n, S=s, BM=64, MODE=mode,
+    block_m = _score_block_m(source)
+    _score[(triton.cdiv(n, block_m),batch)](
+        source, directions, out, indices, N=n, S=s, BM=block_m, MODE=mode,
         INDIRECT=True, FP8=fp8, num_warps=4,
     )
     return out
@@ -296,7 +308,7 @@ def _build_cosine_directions_unbatched(centers,weights,child_capacities, *, retu
     from .landmark_v2_cosine_triton import fused_unit128
     batch,landmarks,dim=centers.shape
     children=len(child_capacities);internal=children-1
-    assert 16 <= landmarks <= 256 and dim==128 and 2 <= children <= 32
+    assert 16 <= landmarks <= 256 and dim==128 and 2 <= children <= 64
     normalized=fused_unit128(centers)
     if landmarks > 128:
         distance=torch.bmm(normalized,normalized.transpose(1,2))
@@ -343,4 +355,3 @@ def _build_cosine_directions_unbatched(centers,weights,child_capacities, *, retu
     if return_partition:
         return directions[:, :internal], normalized, active
     return directions[:, :internal].contiguous()
-

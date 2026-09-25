@@ -1,24 +1,56 @@
 import pytest
 import torch
 from h3_sparse_attention import H3SparseAttentionConfig, install_h3_spark_attn
-from h3_sparse_attention.landmark_virtual_q import target_virtual_query_layout
+from h3_sparse_attention.landmark_virtual_q import virtual_query_layout
 from h3_sparse_attention.reblock_hierarchy import build_reblock_hierarchy
 
 
-def test_installer_defaults_and_target_frontier():
+def test_installer_defaults_and_global_frontier():
     plugin=install_h3_spark_attn(object(),num_inference_steps=20)
     cfg=plugin.config
     assert cfg.method=='sol' and cfg.total_evaluations==19
     assert cfg.sol_route_topk_ratio==.1 and cfg.sol_route_topk_cutoff_mode=='gemm_radix'
+    assert cfg.sol_route_topk_execution=='packed_external'
+    assert cfg.sol_video_tail_mode=='dense'
     assert cfg.sol_landmark_preprocess and cfg.sol_landmark_preprocess_version=='v2'
-    assert cfg.sol_virtual_query_target_blocks==189 and cfg.sol_virtual_query_levels_up is None
+    assert cfg.sol_virtual_query_target_blocks is None and cfg.sol_virtual_query_levels_up==99
     assert not cfg.sol_local_blocks_enabled
     assert cfg.landmark_tree_v2_children==16 and cfg.landmark_tree_v2_landmark_mode=='midpoint'
     assert cfg.landmark_tree_v2_landmark_count==32
     h=build_reblock_hierarchy(72576,cfg.landmark_tree_v2_children,grid_shape=(72,24,42))
-    layout=target_virtual_query_layout(72576,73565,hierarchy=h)
+    layout=virtual_query_layout(72576,73565,cfg.sol_virtual_query_levels_up,hierarchy=h)
     assert h.roots==((0,1134),)
-    assert layout['metadata']['active_size_counts']=={4480:2,4544:14}
+    assert layout['metadata']['active_size_counts']=={72576:1}
+    assert layout['metadata']['active_virtual_blocks']==1
+    assert layout['metadata']['global_video_representative']
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
+def test_paired_headwise_permutation_matches_two_independent_launches():
+    from h3_sparse_attention.landmark_tree_v2_triton import (
+        headwise_permute_bthd,
+        headwise_permute_pair_bthd,
+    )
+
+    torch.manual_seed(91)
+    first = torch.randn(2, 193, 3, 128, device='cuda', dtype=torch.bfloat16)
+    second = torch.randn_like(first)
+    video_tokens = 128
+    permutation = torch.stack([
+        torch.randperm(video_tokens, device='cuda')
+        for _ in range(first.shape[0] * first.shape[2])
+    ]).reshape(first.shape[0], first.shape[2], video_tokens)
+    expected_first = headwise_permute_bthd(
+        first, permutation, video_tokens=video_tokens
+    )
+    expected_second = headwise_permute_bthd(
+        second, permutation, video_tokens=video_tokens
+    )
+    actual_first, actual_second = headwise_permute_pair_bthd(
+        first, second, permutation, video_tokens=video_tokens
+    )
+    torch.testing.assert_close(actual_first, expected_first, rtol=0, atol=0)
+    torch.testing.assert_close(actual_second, expected_second, rtol=0, atol=0)
 
 
 def test_overrides_and_plain_sol_opt_in():
@@ -26,11 +58,42 @@ def test_overrides_and_plain_sol_opt_in():
     assert cfg.sol_virtual_query_levels_up==2 and cfg.sol_virtual_query_target_blocks is None
     assert cfg.landmark_tree_v2_children==8
     assert H3SparseAttentionConfig.sol(20).sol_virtual_query_target_blocks is None
+    assert H3SparseAttentionConfig.sol(20).sol_route_topk_execution == 'threshold'
+    assert H3SparseAttentionConfig.spark(
+        20, sol_route_topk_execution='threshold'
+    ).sol_route_topk_execution == 'threshold'
+    target=H3SparseAttentionConfig.spark(20,sol_virtual_query_target_blocks=189)
+    assert target.sol_virtual_query_levels_up is None
+    assert target.sol_virtual_query_target_blocks==189
+    assert (target.sol_virtual_query_min_blocks,target.sol_virtual_query_max_blocks)==(94,284)
+    with pytest.raises(ValueError,match="requires Top-K or virtual-query"):
+        H3SparseAttentionConfig.sol(20,sol_video_tail_mode='pad')
     with pytest.raises(ValueError,match='choose either'):
         H3SparseAttentionConfig.spark(sol_virtual_query_levels_up=2,sol_virtual_query_target_blocks=189)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
+def test_diffusers_spark_rejects_unsupported_sm(monkeypatch):
+    from h3_sparse_attention.processor import PackedLayout, _Controller
+    from h3_sparse_attention.spark_integration import spark_attention_bthd
+
+    q = torch.empty((1, 64, 1, 128), device='cuda', dtype=torch.bfloat16)
+    layout = PackedLayout(
+        permutation=torch.arange(64, device='cuda'),
+        inverse_permutation=torch.arange(64, device='cuda'),
+        grid=(1, 8, 8),
+        video_tokens=64,
+        sequence_length=64,
+        video_positions=torch.zeros((64, 3), device='cuda'),
+    )
+    controller = _Controller(H3SparseAttentionConfig.spark(3))
+    monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device=None: (8, 0))
+    with pytest.raises(RuntimeError, match='no supported kernel for SM80'):
+        spark_attention_bthd(controller, q, q, q, layout, 0)
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
 @pytest.mark.parametrize('fused', ['0', '1'])
-def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused):
+@pytest.mark.parametrize('tail_mode', ['dense', 'pad'])
+def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused, tail_mode):
     from test_sol_spark import TinyTransformer
     monkeypatch.setenv('H3_SPARK_REWEIGHT_FUSED', fused)
     if fused == '1' and torch.cuda.get_device_capability() not in ((9, 0), (10, 0), (12, 0)):
@@ -40,14 +103,15 @@ def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused)
     attn = model.transformer_blocks[0].attn
     original = attn.get_processor()
     # Include a partial video block and context so sink alignment is exercised.
-    x = torch.randn(1, 521, 128, device='cuda', dtype=torch.bfloat16)
-    tags = torch.cat([torch.ones(7), torch.zeros(514)]).to(device='cuda', dtype=torch.long)
-    pos = torch.zeros(521, 3, device='cuda', dtype=torch.long)
-    pos[7:, 2] = torch.arange(514, device='cuda')
+    x = torch.randn(1, 577, 128, device='cuda', dtype=torch.bfloat16)
+    tags = torch.cat([torch.ones(63), torch.zeros(514)]).to(device='cuda', dtype=torch.long)
+    pos = torch.zeros(577, 3, device='cuda', dtype=torch.long)
+    pos[63:, 2] = torch.arange(514, device='cuda')
     with torch.no_grad():
         expected = model(x)
         with install_h3_spark_attn(model, num_inference_steps=3, warmup_percent=0,
-                                   sol_dense_layers=0, sol_route_topk_ratio=1.0) as plugin:
+                                   sol_dense_layers=0, sol_route_topk_ratio=1.0,
+                                   sol_video_tail_mode=tail_mode) as plugin:
             actual = model(x, token_tags=tags, position_ids=pos)
             torch.testing.assert_close(actual, expected, atol=.008, rtol=.025)
             stats = plugin.summary()

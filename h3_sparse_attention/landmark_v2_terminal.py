@@ -15,8 +15,8 @@ def split_topology(capacities):
     Negative tags encode completed children as -1-child. Only unfinished
     branches get internal node IDs. No power-of-two child count is required.
     """
-    if not 1 <= len(capacities) <= 32 or any(c <= 0 for c in capacities):
-        raise ValueError('expected 1 to 32 positive child capacities')
+    if not 1 <= len(capacities) <= 64 or any(c <= 0 for c in capacities):
+        raise ValueError('expected 1 to 64 positive child capacities')
     pending = [(0, len(capacities), 0, 0)] if len(capacities) > 1 else []
     records = []
     for start, end, slot, depth in pending:

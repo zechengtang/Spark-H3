@@ -44,7 +44,7 @@ def test_final_round_has_precedence_for_one_round_tree():
     assert h.budgets(0,14) == (1,)*14
 
 
-@pytest.mark.parametrize('bad', [0,1,3,64,True,'8',()])
+@pytest.mark.parametrize('bad', [0,1,3,63,True,'8',()])
 def test_invalid_root_is_rejected(bad):
     with pytest.raises(ValueError,match='root_fanout'):
         H3SparseAttentionConfig.sol(20,landmark_tree_v2_root_fanout=bad)

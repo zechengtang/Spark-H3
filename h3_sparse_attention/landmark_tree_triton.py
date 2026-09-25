@@ -1246,14 +1246,14 @@ def _validate_partition_inputs(
         raise ValueError("offsets must be a CUDA int64 vector")
     if source_indices is not None and (
         source_indices.shape != labels.shape
-        or source_indices.dtype != torch.long
+        or source_indices.dtype not in (torch.int32, torch.int64)
         or source_indices.stride(1) != 1
     ):
-        raise ValueError("source_indices must be contiguous int64 with label shape")
+        raise ValueError("source_indices must be contiguous int32/int64 with label shape")
     batch, tokens = labels.shape
     children = offsets.numel()
-    if not 2 <= children <= 32:
-        raise ValueError("stable partition supports 2 to 32 labels")
+    if not 2 <= children <= 64:
+        raise ValueError("stable partition supports 2 to 64 labels")
     return batch, tokens, children
 
 
@@ -1301,7 +1301,10 @@ def _stable_label_partition_impl(
         BLOCK_T=block_t,
         num_warps=4,
     )
-    order = torch.empty((batch, tokens), device=labels.device, dtype=torch.long)
+    order = torch.empty(
+        (batch, tokens), device=labels.device,
+        dtype=(source_indices.dtype if source_indices is not None else torch.long),
+    )
     destinations = (
         torch.empty_like(labels) if samples is not None else order
     )
@@ -1535,4 +1538,3 @@ def build_weighted_proxy_tree(
             num_warps=8,
         )
     return alpha, bias
-

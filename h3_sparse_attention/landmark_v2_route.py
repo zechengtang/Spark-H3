@@ -21,20 +21,33 @@ def _ordered_bits(score):
 
 
 @triton.jit
-def _root_keys(S, I, K, N: tl.constexpr, C: tl.constexpr, B: tl.constexpr):
+def _root_keys(S, I, K, N: tl.constexpr, C: tl.constexpr, B: tl.constexpr,
+               APPROX_KEY32: tl.constexpr, ID_BITS: tl.constexpr):
     row = tl.program_id(1)
     pos = tl.program_id(0) * B + tl.arange(0, B)
     valid = pos < N
     score = tl.load(S + (row * N + pos) * C, valid, 0)
     original = tl.load(I + row * N + pos, valid, 0)
-    key = (_ordered_bits(score).to(tl.int64) - 0x80000000) * 0x100000000 + original
+    if APPROX_KEY32:
+        # Scores are cosine margins in [-2, 2].  Use every high bit left by
+        # the global token ID, then flip the sign bit so signed int32 order is
+        # identical to the packed unsigned order.  The ID keeps keys unique,
+        # hence every child still receives its exact requested capacity.
+        levels: tl.constexpr = (1 << (32 - ID_BITS)) - 1
+        quantized = ((score + 2.0) * (levels / 4.0)).to(tl.int32)
+        quantized = tl.maximum(0, tl.minimum(levels, quantized))
+        packed = (quantized.to(tl.uint32) << ID_BITS) | original.to(tl.uint32)
+        key = (packed ^ 0x80000000).to(tl.int32, bitcast=True)
+    else:
+        key = (_ordered_bits(score).to(tl.int64) - 0x80000000) * 0x100000000 + original
     tl.store(K + row * N + pos, key, valid)
 
 
 @triton.jit
 def _compact_keys(S, I, T, M, OFFSETS, COUNTS, K, PACKED,
                   N: tl.constexpr, C: tl.constexpr, CHILDREN: tl.constexpr,
-                  GROUPS: tl.constexpr, B: tl.constexpr):
+                  GROUPS: tl.constexpr, B: tl.constexpr,
+                  APPROX_KEY32: tl.constexpr, ID_BITS: tl.constexpr):
     row = tl.program_id(1)
     pos = tl.program_id(0) * B + tl.arange(0, B)
     valid = pos < N
@@ -42,7 +55,14 @@ def _compact_keys(S, I, T, M, OFFSETS, COUNTS, K, PACKED,
     active = valid & (tag >= 0)
     score = tl.load(S + (row * N + pos) * C + tl.maximum(tag, 0), active, 0)
     original = tl.load(I + row * N + pos, active, 0)
-    key = (_ordered_bits(score).to(tl.int64) - 0x80000000) * 0x100000000 + original
+    if APPROX_KEY32:
+        levels: tl.constexpr = (1 << (32 - ID_BITS)) - 1
+        quantized = ((score + 2.0) * (levels / 4.0)).to(tl.int32)
+        quantized = tl.maximum(0, tl.minimum(levels, quantized))
+        packed_key = (quantized.to(tl.uint32) << ID_BITS) | original.to(tl.uint32)
+        key = (packed_key ^ 0x80000000).to(tl.int32, bitcast=True)
+    else:
+        key = (_ordered_bits(score).to(tl.int64) - 0x80000000) * 0x100000000 + original
     label = tl.load(M + tag + CHILDREN)
     tl.store(K + row * N + pos, key, active)
     # Internal compaction need not be stable: kth selection compares unique
@@ -159,11 +179,15 @@ def _tables(capacities, device):
     return left, right, torch.tensor(cut_positions, device=device, dtype=torch.int32), tuple(levels)
 
 
-def route_scores_cuda(scores, original, capacities, *, max_original_index=None, partition=False):
-    """Route without changing any scores or capacity/tie semantics.
+def route_scores_cuda(scores, original, capacities, *, max_original_index=None,
+                      partition=False, approximate_key32=False):
+    """Route scores with exact capacities and optional quantized ordering.
 
     ``max_original_index`` is an optional upper bound on nonnegative IDs. It
     enables packed on-chip routing for small nodes without a GPU-to-CPU read.
+    ``approximate_key32`` retains as many score bits as fit beside the unique
+    token ID in an int32 key.  It may reorder near-tied scores but never changes
+    child capacities.
     """
     capacities = tuple(capacities)
     batch, tokens = original.shape
@@ -172,38 +196,50 @@ def route_scores_cuda(scores, original, capacities, *, max_original_index=None, 
         return original.clone() if partition else torch.zeros_like(original)
     if scores.device != original.device:
         raise ValueError('scores and original IDs must share a device')
-    if scores.dtype != torch.float32 or original.dtype != torch.int64:
-        raise ValueError('routing requires FP32 scores and int64 original IDs')
+    if scores.dtype != torch.float32 or original.dtype not in (torch.int32, torch.int64):
+        raise ValueError('routing requires FP32 scores and int32/int64 original IDs')
     scores = scores.contiguous()
     original = original.contiguous()
+    id_bits = max(1, int(max_original_index).bit_length()) if max_original_index is not None else 32
+    if approximate_key32 and id_bits >= 31:
+        raise ValueError("approximate int32 route requires at least two score bits")
     small = (tokens <= 1024 and max_original_index is not None
              and max_original_index >= 0
              and max_original_index.bit_length() + 32 + (children-1).bit_length() <= 64)
     if partition and not small:
         from .landmark_tree_clustering import _stable_counting_partition
-        labels = route_scores_cuda(scores, original, capacities, max_original_index=max_original_index)
+        labels = route_scores_cuda(
+            scores, original, capacities,
+            max_original_index=max_original_index,
+            approximate_key32=approximate_key32,
+        )
         return _stable_counting_partition(labels, capacities, validate=False, source_indices=original)
     left, right, cut_positions, levels = _tables(capacities, scores.device)
     result = torch.empty_like(original)
     if small:
         _small_route[(batch,)](scores, original, cut_positions, left, right, result,
-                              tokens, children-1, len(levels), max(1, max_original_index.bit_length()),
+                              tokens, children-1, len(levels), id_bits,
                               triton.next_power_of_2(tokens), partition, num_warps=8 if tokens >= 512 else 4)
         return result
     tags = torch.empty((batch, tokens), dtype=torch.int32, device=scores.device)
-    keys = torch.empty_like(original)
+    # The ComfyUI approximate path uses int32 score/ID keys; reproducibility-
+    # sensitive callers retain the exact int64 key.
+    key_dtype = torch.int32 if approximate_key32 else torch.long
+    keys = torch.empty(original.shape, dtype=key_dtype, device=original.device)
     for depth, (mapping, offsets, runs, start, active) in enumerate(levels):
         if depth == 0:
             _root_keys[(triton.cdiv(tokens, 256), batch)](
-                scores, original, keys, tokens, children-1, 256)
+                scores, original, keys, tokens, children-1, 256,
+                approximate_key32, id_bits)
             packed = keys
         else:
             packed = torch.empty_like(keys)
             counts = torch.zeros((batch, offsets.numel()), device=scores.device, dtype=torch.int32)
             _compact_keys[(triton.cdiv(tokens, 256), batch)](
                 scores, original, tags, mapping, offsets, counts, keys, packed,
-                tokens, children-1, children, offsets.numel(), 256, num_warps=4)
-        cuts = torch.empty((batch, active), device=scores.device, dtype=torch.long)
+                tokens, children-1, children, offsets.numel(), 256,
+                approximate_key32, id_bits, num_warps=4)
+        cuts = torch.empty((batch, active), device=scores.device, dtype=key_dtype)
         for node, offset, size, target, count in runs:
             segment = packed[:, offset:offset+count*size].view(batch, count, size)
             indices = torch.empty((batch, count), device=scores.device, dtype=torch.long)

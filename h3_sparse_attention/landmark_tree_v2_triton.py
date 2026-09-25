@@ -50,6 +50,44 @@ if triton is not None:
         tl.store(output + output_offset, value, mask=mask)
 
     @triton.jit
+    def _headwise_permute_pair_bthd_kernel(
+        first,
+        second,
+        permutation,
+        first_output,
+        second_output,
+        total_elements,
+        tokens,
+        heads,
+        video_tokens,
+        dim: tl.constexpr,
+        BLOCK: tl.constexpr,
+    ):
+        output_offset = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+        mask = output_offset < total_elements
+        feature = output_offset % dim
+        row = output_offset // dim
+        head = row % heads
+        token_batch = row // heads
+        token = token_batch % tokens
+        batch = token_batch // tokens
+        is_video = token < video_tokens
+        safe_token = tl.where(is_video, token, 0)
+        source_video_token = tl.load(
+            permutation + (batch * heads + head) * video_tokens + safe_token,
+            mask=mask & is_video,
+            other=0,
+        )
+        source_token = tl.where(is_video, source_video_token, token)
+        source_offset = (
+            ((batch * tokens + source_token) * heads + head) * dim + feature
+        )
+        first_value = tl.load(first + source_offset, mask=mask)
+        second_value = tl.load(second + source_offset, mask=mask)
+        tl.store(first_output + output_offset, first_value, mask=mask)
+        tl.store(second_output + output_offset, second_value, mask=mask)
+
+    @triton.jit
     def _indexed_group_mean_kernel(
         source,
         indices,
@@ -225,6 +263,47 @@ def headwise_permute_bthd(
     return output
 
 
+def headwise_permute_pair_bthd(
+    first: torch.Tensor,
+    second: torch.Tensor,
+    permutation: torch.Tensor,
+    *,
+    video_tokens: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply one per-head permutation to two contiguous BTHD tensors."""
+
+    if triton is None or not first.is_cuda:
+        raise ValueError("headwise_permute_pair_bthd requires CUDA and Triton")
+    if first.shape != second.shape or first.dtype != second.dtype:
+        raise ValueError("paired values must have matching shape and dtype")
+    if first.ndim != 4 or permutation.ndim != 3:
+        raise ValueError("values/permutation must be BTHD/BHN")
+    batch, tokens, heads, dim = first.shape
+    if permutation.shape != (batch, heads, video_tokens):
+        raise ValueError("permutation shape does not match BTHD values")
+    if not first.is_contiguous() or not second.is_contiguous() or not permutation.is_contiguous():
+        raise ValueError("fused paired permutation requires contiguous inputs")
+    first_output = torch.empty_like(first)
+    second_output = torch.empty_like(second)
+    elements = first.numel()
+    block = 1024
+    _headwise_permute_pair_bthd_kernel[(triton.cdiv(elements, block),)](
+        first,
+        second,
+        permutation,
+        first_output,
+        second_output,
+        elements,
+        tokens,
+        heads,
+        video_tokens,
+        dim=dim,
+        BLOCK=block,
+        num_warps=8,
+    )
+    return first_output, second_output
+
+
 def indexed_group_mean(
     source: torch.Tensor,
     global_indices: torch.Tensor,
@@ -390,4 +469,3 @@ def indexed_interval_means(
         BLOCK_D=triton.next_power_of_2(dim), INDIRECT=True, FP8=fp8, MIDPOINT=midpoint, num_warps=4,
     )
     return centers, weights.expand(parents, -1)
-

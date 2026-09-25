@@ -1648,7 +1648,8 @@ def _sol_attn_sm100_bf16_host(
     v_nkl, vc_nkl = [
         layout_utils.select(t, [3, 1, 2, 0]) for t in (v, vc)
     ]
-    token_count = cute.size(q_mkl.shape[0])
+    token_count = cute.size(k_nkl.shape[0])
+    num_query_blocks = cute.ceil_div(cute.size(q_mkl.shape[0]), M)
     num_blocks = cute.size(kc_nkl.shape[0])
     num_heads = cute.size(q_mkl.shape[2])
     num_batches = cute.size(q_mkl.shape[3])
@@ -1804,7 +1805,7 @@ def _sol_attn_sm100_bf16_host(
         export_route,
         force_local_blocks,
     ).launch(
-        grid=(num_blocks, num_heads, num_batches),
+        grid=(num_query_blocks, num_heads, num_batches),
         block=(THREADS, 1, 1),
         stream=stream,
         min_blocks_per_mp=2,

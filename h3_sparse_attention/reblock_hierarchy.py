@@ -11,13 +11,13 @@ from functools import lru_cache
 
 
 def normalize_final_fanout(final_fanout):
-    if type(final_fanout) is int and 2 <= final_fanout <= 32:
+    if type(final_fanout) is int and (2 <= final_fanout <= 32 or final_fanout == 64):
         return final_fanout
     if isinstance(final_fanout, (tuple, list)) and final_fanout:
         values = tuple(final_fanout)
-        if all(type(v) is int and 2 <= v <= 32 for v in values):
+        if all(type(v) is int and (2 <= v <= 32 or v == 64) for v in values):
             return values[0] if len(set(values)) == 1 else values
-    raise ValueError('final_fanout must be an integer from 2 to 32 or a nonempty schedule')
+    raise ValueError('final_fanout must be an integer from 2 to 64 or a nonempty schedule')
 
 
 def resolve_final_fanout(children, final_fanout=None, *,
@@ -45,8 +45,8 @@ def resolve_root_fanout(children, root_fanout=None):
     """Maximum fanout of the first nonfinal splitting round in each tree."""
     if root_fanout is None:
         root_fanout = children if isinstance(children, int) else children[0]
-    if type(root_fanout) is not int or root_fanout not in (2, 4, 8, 16, 32):
-        raise ValueError('root_fanout must be 2, 4, 8, 16 or 32, or None')
+    if type(root_fanout) is not int or root_fanout not in (2, 4, 8, 16, 32, 64):
+        raise ValueError('root_fanout must be 2, 4, 8, 16, 32 or 64, or None')
     return root_fanout
 
 
@@ -128,7 +128,7 @@ def tree_frontiers(leaves, children=(16,), roots=None,
     children = _fanout_alias(children, fanout)
     if leaves<1:raise ValueError('at least one complete video leaf is required')
     if isinstance(children,int):children=(children,)
-    if not children or any(c not in (2,4,8,16,32) for c in children):raise ValueError('invalid LMv2 child schedule')
+    if not children or any(c not in (2,4,8,16,32,64) for c in children):raise ValueError('invalid LMv2 child schedule')
     final_fanout = resolve_final_fanout(children, final_fanout, fanout_mode=fanout_mode,
                                        terminal_leaf_blocks=terminal_leaf_blocks)
     root_fanout = resolve_root_fanout(children, root_fanout)

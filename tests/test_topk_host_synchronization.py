@@ -56,3 +56,20 @@ def test_score_map_matches_original_partial_block_mean(tokens):
     expected.mul_(128 ** -.5 * _LOG2_E)
     actual = _gemm_score_map(q, kc, blocks=blocks, candidate_blocks=15)
     assert torch.equal(actual, expected)
+
+
+def test_packed_route_has_exact_budget_and_query_prefix():
+    from h3_sparse_attention.sol_topk_cutoff import gemm_topk_packed_route
+
+    torch.manual_seed(44)
+    tokens, video, query_tokens, heads = 1152, 1024, 960, 2
+    blocks = (tokens + 63) // 64
+    q = torch.randn(1, tokens, heads, 128, device="cuda", dtype=torch.bfloat16)
+    kc = torch.randn(1, blocks, heads, 128, device="cuda", dtype=torch.bfloat16)
+    route, stats = gemm_topk_packed_route(
+        q, kc, video_tokens=video, topk_ratio=.25, query_tokens=query_tokens
+    )
+    assert route.shape == (1, query_tokens // 64, heads, (blocks + 31) // 32)
+    bits = torch.arange(32, device="cuda", dtype=torch.int32)
+    counts = ((route[..., None] >> bits) & 1).sum((-1, -2))
+    assert torch.all(counts == stats["target_topk_blocks_per_query"])
