@@ -1,6 +1,7 @@
 # Spark-H3: Better Block Sparse Attention for MiniMax-H3
 
-September 23, 2026 · SparkH3 Team<br>
+Officially published September 23, 2026 · Last updated September 28, 2026<br>
+SparkH3 Team<br>
 <!-- <span class="hero-affiliations">PKU · NJU</span> -->
 
 <!-- VDN10_SHOWCASE -->
@@ -113,9 +114,7 @@ At the same 10% density, Spark-Reweight reduces mean absolute log-mass error by 
 
 ## Benchmark Results
 
-*~3 min read*
-
-**Evaluation setup.** We compare Dense, Sol-Attn, and two Spark-H3 variants on VBench prompts using 20 steps, 1344×768 resolution, and 240 frames at 24 fps. Sol-Attn uses its official setting. Spark-H3-10pct uses 90% sparse BSA with reblock and reweight; Spark-H3-20pct uses an 80% sparse budget with the same components. Quality is paired against dense references with identical prompts and seeds.
+**Evaluation setup.** We compare Dense, Sol-Attn, and three Spark-H3 variants on VBench prompts using a 20-point MiniMax-H3 schedule (19 denoiser steps), 1344×768 resolution, and 240 frames at 24 fps. Sol-Attn uses its official setting. Spark-H3-10pct, -20pct, and -30pct use 90%, 80%, and 70% sparse BSA, respectively, with reblock and reweight. Quality is paired against dense references with identical prompts and seeds.
 
 | Method | DiT<br>latency (s) ↓ | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ | DiT<br>speedup ↑ | ATTN<br>speedup ↑ | density ↓ |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -123,6 +122,7 @@ At the same 10% density, Spark-Reweight reduces mean absolute log-mass error by 
 | Sol-H3 | 364.9 | 20.36 | 0.71 | 0.20 | 1.59× | 2.19× | — |
 | Spark-H3-10pct | 341.7 | 23.30 | 0.80 | 0.14 | 1.70× | 2.33× | 10% |
 | Spark-H3-20pct | 378.2 | 25.38 | 0.85 | 0.09 | 1.54× | 1.96× | 20% |
+| Spark-H3-30pct | 408.6 | 27.07 | 0.88 | 0.07 | 1.42× | 1.76× | 30% |
 
 On the same videos, VBench measures subject and background consistency, motion smoothness, imaging quality, and aesthetic quality; higher is better for every dimension.
 
@@ -132,12 +132,11 @@ On the same videos, VBench measures subject and background consistency, motion s
 | Sol-H3 | 91.14 | 94.10 | 98.96 | 72.12 | 67.49 |
 | Spark-H3-10pct | 90.77 | 94.24 | 99.01 | 71.81 | 68.22 |
 | Spark-H3-20pct | 90.92 | 94.25 | 99.01 | 72.08 | 67.73 |
+| Spark-H3-30pct | 90.90 | 93.99 | 99.02 | 72.01 | 67.72 |
 
-At 10% density, Spark-H3 achieves lower DiT latency than Sol-H3 (341.7 versus 364.9 seconds) while preserving the dense output more faithfully across PSNR, SSIM, and LPIPS. Increasing the density to 20% further improves fidelity, reaching 25.38 dB PSNR, 0.85 SSIM, and 0.09 LPIPS with a modest latency trade-off. Both Spark-H3 variants also closely track the Dense baseline across the reported VBench dimensions, with no broad degradation in visual quality. Together, these results show that Spark-H3 offers a strong fidelity–efficiency trade-off for attention acceleration.
+At 10% density, Spark-H3 achieves lower DiT latency than Sol-H3 (341.7 versus 364.9 seconds) while preserving the dense output more faithfully across PSNR, SSIM, and LPIPS. Increasing the density to 20% further improves fidelity, reaching 25.38 dB PSNR, 0.85 SSIM, and 0.09 LPIPS with a modest latency trade-off. The Spark-H3 variants remain close to Dense across the reported VBench dimensions. Together, these results show that Spark-H3 offers a strong fidelity–efficiency trade-off for attention acceleration.
 
 ## Spark-Integration
-
-*~3 min read*
 
 Few-step distillation reduces the number of denoising steps, while attention acceleration reduces the cost of each step. FastH3 and OpenVDN already combine these two complementary approaches. The experiments below follow the same strategy by integrating Spark-H3 into FastH3's Dense pipeline and the few-step LoRA pipelines from LightX2V and Larryvrh.
 
@@ -190,15 +189,11 @@ The compressed branch is a shared design element, but its construction differs a
 
 ## Visual Comparisons
 
-*~1 min read*
-
 The comparisons below show 10-second videos at 1344×768 resolution. Dense and Spark-H3-10pct use matching prompts and seeds, and each video shows its measured DiT latency.
 
 <!-- VIDEO_GALLERY -->
 
 ## Related Works
-
-*~2 min read*
 
 **MiniMax-H3.** MiniMax-H3 provides the underlying multimodal video-and-audio generation model used in our experiments. Spark-H3 targets the attention computation within this model. [Official repository](https://github.com/MiniMax-AI/MiniMax-H3), [Hugging Face model](https://huggingface.co/MiniMaxAI/MiniMax-H3).
 
@@ -211,3 +206,8 @@ The comparisons below show 10-second videos at 1344×768 resolution. Dense and S
 **VC-Attention.** VC-Attention is a training-free low-bit attention framework. Its V-Smooth module uses online $k$-means to reorder keys and values so that similar value tokens tend to share a quantization block, while ExpCast-FP8 directly encodes attention probabilities in FP8. [Paper: VC-Attention — Value Smoothing and Softmax Casting for Low-bit Attention](https://arxiv.org/html/2609.15810).
 
 **LLSA.** LLSA is a trainable $O(N\log N)$ sparse attention method that recursively mean-pools fixed blocks, performs hierarchical coarse-to-fine Top-K selection, and enriches the selected fine tokens with coarse keys and values to preserve global context. [Paper: Trainable Log-linear Sparse Attention for Efficient Diffusion Transformers](https://arxiv.org/abs/2512.16615).
+
+## Update history
+
+- **September 28, 2026:** Added Spark-H3-30pct benchmark results; updated the reported benchmark step count to 19 denoiser steps, corresponding to MiniMax-H3's 20-point sigma schedule.
+- **September 23, 2026:** Official publication ([release](https://github.com/zechengtang/Spark-H3/releases/tag/blog-20260923)).

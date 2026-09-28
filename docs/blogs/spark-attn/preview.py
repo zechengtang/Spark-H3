@@ -47,6 +47,25 @@ window.addEventListener('message', event => {
 });
 </script>'''
 
+MARK_SCRIPT = '''<script>
+(() => {
+  const button = document.querySelector('.brand-switch');
+  const setMark = mark => {
+    button.dataset.mark = mark;
+    button.setAttribute('aria-pressed', String(mark === 'green'));
+    button.setAttribute('aria-label', `Show ${mark === 'green' ? 'orange' : 'green'} Spark wordmark`);
+  };
+  let saved = 'orange';
+  try { saved = localStorage.getItem('spark-h3-wordmark-color') || 'orange'; } catch (_) {}
+  setMark(saved === 'green' ? 'green' : 'orange');
+  button.addEventListener('click', () => {
+    const next = button.dataset.mark === 'orange' ? 'green' : 'orange';
+    setMark(next);
+    try { localStorage.setItem('spark-h3-wordmark-color', next); } catch (_) {}
+  });
+})();
+</script>'''
+
 STYLE = (HERE / 'blog.css').read_text()
 
 
@@ -150,7 +169,7 @@ def article_layout(content):
             f'<h1 id="blog-title">{name}</h1><p class="hero-subtitle">{subtitle}</p>'
             f'<p class="hero-meta">{meta}</p><div class="hero-actions">'
             '<a class="button primary" href="#overview">Explore the method <span aria-hidden="true">↓</span></a>'
-            '<a class="button" href="https://github.com/zechengtang/Spark-H3">Code <span aria-hidden="true">↗</span></a>'
+            '<a class="button secondary" href="https://github.com/zechengtang/Spark-H3">View the code <span aria-hidden="true">↗</span></a>'
             '</div></div>' + attention_art() + '</div>'
             '<div class="component-links">' + ''.join(links) + '</div></div></section>')
     overview = ('<section class="overview" id="overview" aria-labelledby="overview-title">'
@@ -158,6 +177,15 @@ def article_layout(content):
                 '<h2 id="overview-title">Better BSA</h2></div>'
                 '<div class="overview-copy">' + intro + '</div></section>')
     chapters = []
+    chapter_kinds = {
+        'spark-reblock': 'METHOD',
+        'spark-reweight': 'METHOD',
+        'benchmark-results': 'EVALUATION',
+        'spark-integration': 'APPLICATIONS',
+        'visual-comparisons': 'SHOWCASE',
+        'related-works': 'REFERENCES',
+        'update-history': 'CHANGELOG',
+    }
     figure_index = 0
     table_index = 0
     def figure(match):
@@ -199,7 +227,8 @@ def article_layout(content):
         chapters.append(f'<section class="chapter" id="{section.group(1)}" '
                         f'aria-labelledby="{section.group(1)}-title">'
                         '<div class="section-heading">'
-                        f'<span class="chapter-number">0{index + 1} / METHOD</span>'
+                        f'<span class="chapter-number">{index + 1:02d} / '
+                        f'{chapter_kinds.get(section.group(1), "ARTICLE")}</span>'
                         f'<h2 id="{section.group(1)}-title"><a href="#{section.group(1)}">'
                         f'{section.group(2)}</a></h2>{reading_html}</div><div class="chapter-body">{body}</div></section>')
     return hero + overview + ''.join(chapters)
@@ -228,9 +257,9 @@ def gallery_html():
                 f'<span class="timing-value">{item["denoise_seconds"]:.2f}<small> s</small></span>'
                 f'<span class="timing-speedup">{speedup:.2f}×</span>'
                 '</span></figcaption>'
-                f'<video autoplay muted loop playsinline preload="metadata" disablepictureinpicture disableremoteplayback '
+                f'<video muted playsinline preload="none" disablepictureinpicture disableremoteplayback '
                 f'aria-label="{label}: {sid}" poster="/gallery/{item["poster"]}" '
-                f'src="/gallery/{item["file"]}"></video></figure>')
+                f'data-src="/gallery/{item["file"]}"></video></figure>')
         cards.append(
             f'<article class="comparison-card" aria-labelledby="case-{sid}">'
             '<div class="comparison-heading"><div class="comparison-identity">'
@@ -296,7 +325,7 @@ def integration_html(data, family, only_model=None):
         cards = []
         for variant, title, detail in models:
             record = records[variant]
-            video = ('<video autoplay muted loop playsinline preload="none" disablepictureinpicture disableremoteplayback '
+            video = ('<video muted playsinline preload="none" disablepictureinpicture disableremoteplayback '
                      f'aria-label="{html.escape(title)}: {prompt_index:02d}" '
                      f'data-src="{html.escape(record["preview"], quote=True)}"></video>')
             cards.append(
@@ -482,32 +511,107 @@ VDN10_SCRIPT = """<script>
 
 INTEGRATION_SCRIPT = """<script>
 (() => {
-  const prepare = video => {
-    if (video.dataset.src) {
+  const groups = [...document.querySelectorAll('.comparison-card, .integration-group')].map(element => ({
+    element, videos: [...element.querySelectorAll('video')], visible: false, token: 0, syncing: false,
+  }));
+  const states = new WeakMap(groups.map(group => [group.element, group]));
+
+  const waitFor = (video, ready, event) => new Promise((resolve, reject) => {
+    if (ready()) { resolve(); return; }
+    const cleanup = () => {
+      video.removeEventListener(event, onReady);
+      video.removeEventListener('error', onError);
+    };
+    const onReady = () => { cleanup(); resolve(); };
+    const onError = () => { cleanup(); reject(video.error || new Error('Video failed to load')); };
+    video.addEventListener(event, onReady);
+    video.addEventListener('error', onError);
+  });
+  const canPlay = video => waitFor(video, () => video.readyState >= 3, 'canplay');
+  const seekTo = (video, time) => {
+    if (Math.abs(video.currentTime - time) < 0.02) return Promise.resolve();
+    const seeked = waitFor(video, () => Math.abs(video.currentTime - time) < 0.02 && !video.seeking, 'seeked');
+    video.currentTime = time;
+    return seeked;
+  };
+  const prepare = group => {
+    for (const video of group.videos) {
+      if (!video.dataset.src) continue;
+      video.preload = 'auto';
       video.src = video.dataset.src;
       delete video.dataset.src;
-      video.preload = 'metadata';
       video.load();
     }
   };
+  const synchronize = async (group, restart = false) => {
+    const token = ++group.token;
+    group.syncing = true;
+    group.videos.forEach(video => video.pause());
+    prepare(group);
+    try {
+      await Promise.all(group.videos.map(canPlay));
+      if (token !== group.token || !group.visible) return;
+      const time = restart ? 0 : group.videos[0].currentTime;
+      await Promise.all(group.videos.map(video => seekTo(video, time)));
+      if (token !== group.token || !group.visible) return;
+      await Promise.all(group.videos.map(video => video.play()));
+    } catch (error) {
+      group.videos.forEach(video => video.pause());
+      console.warn('Could not synchronize comparison videos', error);
+    } finally {
+      if (token === group.token) group.syncing = false;
+    }
+  };
+
+  for (const group of groups) {
+    for (const video of group.videos) {
+      video.addEventListener('waiting', () => {
+        if (group.visible && !group.syncing) synchronize(group);
+      });
+      video.addEventListener('ended', () => {
+        if (group.visible) synchronize(group, true);
+      });
+    }
+  }
   const observer = new IntersectionObserver(entries => {
-    for (const entry of entries) if (entry.isIntersecting) {
-      prepare(entry.target);
-      entry.target.play().catch(() => {});
-      observer.unobserve(entry.target);
+    for (const entry of entries) {
+      const group = states.get(entry.target);
+      if (!group) continue;
+      if (group.visible === entry.isIntersecting) continue;
+      group.visible = entry.isIntersecting;
+      if (group.visible) synchronize(group, !group.videos[0].hasAttribute('src'));
+      else {
+        group.token++;
+        group.videos.forEach(video => video.pause());
+      }
     }
   }, {rootMargin: '200px'});
-  document.querySelectorAll('.integration-video video').forEach(v => observer.observe(v));
+  groups.forEach(group => observer.observe(group.element));
+  document.addEventListener('visibilitychange', () => {
+    for (const group of groups) {
+      if (!group.visible) continue;
+      if (document.hidden) {
+        group.token++;
+        group.videos.forEach(video => video.pause());
+      } else synchronize(group);
+    }
+  });
+  setInterval(() => {
+    if (document.hidden) return;
+    for (const group of groups) {
+      if (!group.visible || group.syncing || group.videos.some(video => video.paused)) continue;
+      const time = group.videos[0].currentTime;
+      for (const video of group.videos.slice(1)) {
+        if (video.readyState >= 2 && Math.abs(video.currentTime - time) > 0.12)
+          video.currentTime = time;
+      }
+    }
+  }, 500);
   document.addEventListener('click', event => {
     const button = event.target.closest('.video-reset');
     if (!button) return;
-    const group = button.closest('.comparison-card, .integration-group');
-    if (!group) return;
-    for (const video of group.querySelectorAll('video')) {
-      prepare(video);
-      video.currentTime = 0;
-      video.play().catch(() => {});
-    }
+    const group = states.get(button.closest('.comparison-card, .integration-group'));
+    if (group) { group.visible = true; synchronize(group, true); }
   });
 })();
 </script>"""
@@ -562,14 +666,18 @@ def render():
                 '<style>' + style + '</style></head><body id="top">'
                 '<a class="skip-link" href="#overview">Skip to article</a>'
                 '<header class="site-nav"><nav class="nav-inner" aria-label="Main navigation">'
-                '<a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">✳</span>Spark-H3</a>'
+                '<button class="brand brand-switch" type="button" data-mark="orange" '
+                'aria-pressed="false" aria-label="Show green Spark wordmark" title="Switch wordmark color">'
+                '<img class="brand-logo brand-logo-orange" src="/brand/spark-h3-wordmark.png" alt="">'
+                '<img class="brand-logo brand-logo-light-green" '
+                'src="/brand/spark-h3-wordmark-light-green.png" alt=""></button>'
                 '<div class="nav-links"><a href="#spark-reblock">Reblock</a><a href="#spark-reweight">Reweight</a>'
                 '<a class="nav-source" href="https://github.com/zechengtang/Spark-H3">Code ↗</a></div></nav></header><main>'
                 + content + '</main><footer class="site-footer"><div class="footer-inner">'
                 '<div><strong>Spark-H3</strong><br>SparkH3 Team · MiniMax-H3</div>'
                 '<div class="footer-links"><a href="/source.md">Markdown source ↗</a>'
                 '<a href="#top">Back to top ↑</a></div></div></footer>'
-                + RESIZE_ANIMATIONS + INTEGRATION_SCRIPT + VDN10_SCRIPT + '</body></html>')
+                + RESIZE_ANIMATIONS + INTEGRATION_SCRIPT + VDN10_SCRIPT + MARK_SCRIPT + '</body></html>')
         result = (page.encode(), len(fragments))
         CACHE.update(fingerprint=fingerprint, result=result)
         return result
@@ -579,6 +687,8 @@ def resolve_file(route):
     distilled = resolve_integration_file(route)
     if distilled is not None:
         return distilled
+    if route in {'/brand/spark-h3-wordmark.png', '/brand/spark-h3-wordmark-light-green.png'}:
+        return REPO / 'assets' / route.removeprefix('/brand/')
     if route.startswith('/gallery/'):
         data = gallery_data()
         allowed = {c[m][kind] for c in data['cases'] for m in ('dense', 'ours') for kind in ('file', 'poster')}
@@ -684,7 +794,10 @@ def check():
     assert len(re.findall(r'class="article-figure"', text)) == 2
     assert len(re.findall(r'class="table-wrap"', text)) == 5
     assert len(re.findall(r'class="table-toolbar"', text)) == 5
-    assert len(re.findall(r'<tr class="is-highlight">', text)) == 10
+    assert len(re.findall(r'<tr class="is-highlight">', text)) == 12
+    assert '<span class="chapter-number">03 / EVALUATION</span>' in text
+    assert '<span class="chapter-number">06 / REFERENCES</span>' in text
+    assert '<span class="chapter-number">07 / CHANGELOG</span>' in text
     assert '<tr class="is-highlight">\n<td>BSA + Reblock</td>' in text
     assert '<tr class="is-highlight">\n<td>BSA</td>' not in text
     assert '<tr class="is-highlight">\n<td>Dense</td>' not in text
