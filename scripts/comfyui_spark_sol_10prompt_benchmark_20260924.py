@@ -81,7 +81,7 @@ def patch_node(method, steps):
     if method == "spark_topk10":
         return {"class_type": "MiniMaxH3SparkAttentionSM120", "inputs": {
             "model": ["1", 0], "enabled": True, "steps": steps,
-            "warmup_percent": 20.0, "topk_ratio": 0.1,
+            "warmup_ratio": 0.2, "topk_ratio": 0.1,
             "dense_layers": 1, "min_tokens": 4096, "strict": True,
         }}, ["2", 0]
     raise ValueError(method)

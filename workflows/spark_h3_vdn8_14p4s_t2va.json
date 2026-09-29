@@ -407,11 +407,11 @@
           }
         },
         {
-          "name": "warmup_percent",
+          "name": "warmup_ratio",
           "type": "FLOAT",
           "link": null,
           "widget": {
-            "name": "warmup_percent"
+            "name": "warmup_ratio"
           }
         },
         {
@@ -504,28 +504,28 @@
       "widgets_values": [
         true,
         20,
-        20.0,
+        0.2,
         0.2,
         1,
         12288,
         true,
         "topk_blocks",
         228,
-        "warmup_percent",
+        "warmup_ratio",
         4,
         "query"
       ],
       "widgets_values_named": {
         "enabled": true,
         "steps": 20,
-        "warmup_percent": 20.0,
+        "warmup_ratio": 0.2,
         "topk_ratio": 0.2,
         "dense_layers": 1,
         "min_tokens": 12288,
         "strict": true,
         "topk_mode": "topk_blocks",
         "topk_blocks": 228,
-        "warmup_mode": "warmup_percent",
+        "warmup_mode": "warmup_ratio",
         "warmup_steps": 4,
         "tail_granularity": "query"
       },

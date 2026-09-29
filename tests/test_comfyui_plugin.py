@@ -63,7 +63,7 @@ def test_comfy_layout_moves_target_video_first_and_roundtrips():
 
 
 def test_run_state_uses_comfy_model_evaluation_count_and_resets():
-    state = _RunState.create(20, 10.0, 0.1)
+    state = _RunState.create(20, 0.1, 0.1)
     assert state.steps == 20
     assert state.warmup_evaluations == 2
     state.begin_evaluation({"sigmas": torch.tensor([1.0])})
@@ -77,36 +77,39 @@ def test_run_state_uses_comfy_model_evaluation_count_and_resets():
 
 
 def test_spark_warmup_steps_mode_and_limits():
-    fixed = _RunState.create(20, 10.0, 0.1, warmup_mode="warmup_steps", warmup_steps=4)
+    fixed = _RunState.create(20, 0.1, 0.1, warmup_mode="warmup_steps", warmup_steps=4)
     assert fixed.warmup_evaluations == 4
-    assert _RunState.create(3, 10.0, 0.1, warmup_mode="warmup_steps", warmup_steps=4).warmup_evaluations == 3
-    assert _RunState.create(20, 10.0, 0.1, warmup_mode="warmup_steps", warmup_steps=0).warmup_evaluations == 0
-    assert _RunState.create(20, 10.0, 0.1).warmup_evaluations == 2
-    assert _RunState.create(20, 20.0, 0.2).warmup_evaluations == 4
+    assert _RunState.create(3, 0.1, 0.1, warmup_mode="warmup_steps", warmup_steps=4).warmup_evaluations == 3
+    assert _RunState.create(20, 0.1, 0.1, warmup_mode="warmup_steps", warmup_steps=0).warmup_evaluations == 0
+    assert _RunState.create(20, 0.1, 0.1).warmup_evaluations == 2
+    assert _RunState.create(20, 0.2, 0.2).warmup_evaluations == 4
     for index in range(5):
         fixed.begin_evaluation({"sigmas": torch.tensor([1.0 - index * 0.1])})
         assert fixed.is_warmup == (index < 4)
     inputs = MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]
-    assert inputs["warmup_mode"][0] == ["warmup_percent", "warmup_steps"]
-    assert list(inputs).index("warmup_mode") < list(inputs).index("warmup_percent") < list(inputs).index("warmup_steps")
+    assert inputs["warmup_mode"][0] == ["warmup_ratio", "warmup_steps"]
+    assert inputs["warmup_ratio"][1]["default"] == 0.2
+    assert list(inputs).index("warmup_mode") < list(inputs).index("warmup_ratio") < list(inputs).index("warmup_steps")
     assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["topk_ratio"][1]["default"] == 0.2
     assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["min_tokens"][1]["default"] == 12288
     assert "warmup_mode" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["required"]
     with pytest.raises(ValueError, match="warmup_mode"):
-        _RunState.create(20, 10.0, 0.1, warmup_mode="invalid")
+        _RunState.create(20, 0.1, 0.1, warmup_mode="invalid")
     with pytest.raises(ValueError, match="warmup_steps"):
-        _RunState.create(20, 10.0, 0.1, warmup_steps=-1)
+        _RunState.create(20, 0.1, 0.1, warmup_steps=-1)
+    with pytest.raises(ValueError, match="warmup_ratio"):
+        _RunState.create(20, 20.0, 0.1)
 
 
 def test_spark_ablation_modes_are_orthogonal():
-    full = _RunState.create(20, 20.0, 0.1, "full").controller
-    optimized = _RunState.create(20, 20.0, 0.1, "full_group841").controller
-    reuse = _RunState.create(20, 20.0, 0.1, "full_reuse2").controller
+    full = _RunState.create(20, 0.2, 0.1, "full").controller
+    optimized = _RunState.create(20, 0.2, 0.1, "full_group841").controller
+    reuse = _RunState.create(20, 0.2, 0.1, "full_reuse2").controller
 
     assert full.config.topk_ratio == 0.1
     assert full.config.topk_mode == "topk_ratio"
     assert full.config.topk_blocks == 228
-    fixed = _RunState.create(20, 20.0, 0.1, topk_mode="topk_blocks", topk_blocks=12)
+    fixed = _RunState.create(20, 0.2, 0.1, topk_mode="topk_blocks", topk_blocks=12)
     assert fixed.controller.config.topk_mode == "topk_blocks"
     assert fixed.controller.config.topk_blocks == 12
     assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["topk_mode"][0] == [
@@ -127,17 +130,17 @@ def test_spark_ablation_modes_are_orthogonal():
     assert full.config.global_anchor_dtype == "float32"
     assert "global_anchor_dtype" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
     assert "global_anchor_dtype" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
-    fused_midpoint = _RunState.create(20, 20.0, 0.1, midpoint_direction_mode="fused")
+    fused_midpoint = _RunState.create(20, 0.2, 0.1, midpoint_direction_mode="fused")
     assert fused_midpoint.controller.config.landmark_tree_v2_midpoint_direction_mode == "fused"
     with pytest.raises(ValueError, match="midpoint_direction_mode"):
-        _RunState.create(20, 20.0, 0.1, midpoint_direction_mode="invalid")
+        _RunState.create(20, 0.2, 0.1, midpoint_direction_mode="invalid")
     for legacy in ("full_target189", "topk10_base", "reblock_only", "reweight_only"):
         with pytest.raises(ValueError, match="only comfy-kitchen global modes"):
-            _RunState.create(20, 20.0, 0.1, legacy)
+            _RunState.create(20, 0.2, 0.1, legacy)
     with pytest.raises(ValueError, match="topk_mode"):
-        _RunState.create(20, 20.0, 0.1, topk_mode="invalid")
+        _RunState.create(20, 0.2, 0.1, topk_mode="invalid")
     with pytest.raises(ValueError, match="topk_blocks"):
-        _RunState.create(20, 20.0, 0.1, topk_blocks=0)
+        _RunState.create(20, 0.2, 0.1, topk_blocks=0)
 
 
 def test_comfy_video_tail_rejects_unimplemented_pad():
@@ -149,17 +152,17 @@ def test_comfy_video_tail_rejects_unimplemented_pad():
         with pytest.raises(ValueError, match="only supports 'dense'"):
             ComfySparkConfig(video_tail_mode=mode)
         with pytest.raises(ValueError, match="only supports 'dense'"):
-            _RunState.create(20, 20., .1, video_tail_mode=mode)
+            _RunState.create(20, .2, .1, video_tail_mode=mode)
 
 
 def test_spark_tail_granularity_is_independent():
     for grain in ("block", "query"):
-        state = _RunState.create(20, 20., .1, tail_granularity=grain)
+        state = _RunState.create(20, .2, .1, tail_granularity=grain)
         assert state.controller.config.tail_granularity == grain
         assert state.controller.config.global_anchor_dtype == "float32"
-    assert _RunState.create(20, 20., .1).controller.config.tail_granularity == "query"
+    assert _RunState.create(20, .2, .1).controller.config.tail_granularity == "query"
     with pytest.raises(ValueError, match="tail_granularity"):
-        _RunState.create(20, 20., .1, tail_granularity="invalid")
+        _RunState.create(20, .2, .1, tail_granularity="invalid")
     assert "tail_granularity" in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
 
 
@@ -287,7 +290,7 @@ class _FakePatcher:
 def test_spark_node_uses_comfyui_native_block_patches_and_cleanup():
     model = _FakePatcher(MiniMaxH3Model())
     (patched,) = MiniMaxH3SparkAttentionSM120().patch(
-        model, True, 20, 10.0, 0.1, 1, 4096, True
+        model, True, 20, 0.1, 0.1, 1, 4096, True
     )
     assert patched is not model
     assert sorted(patched.block_patches) == [
@@ -310,7 +313,7 @@ def test_sol_node_delegates_to_comfyui_official_patch(monkeypatch):
     import comfy_extras.nodes_sparse_attention as official_module
     monkeypatch.setattr(official_module, "apply_block_sparse_attention", official)
     (patched,) = MiniMaxH3SolAttentionSM120().patch(
-        model, True, 20, 20.0, 1, 4096, True, 1.0
+        model, True, 20, 0.2, 1, 4096, True, 1.0
     )
     assert patched is not model
     assert captured["tau"] == 1.0

@@ -58,7 +58,7 @@ def prepare():
             "width": source.WIDTH, "height": source.HEIGHT,
             "requested_frames": source.REQUESTED_FRAMES,
             "duration_seconds": 5.0, "topk_ratio": 0.1,
-            "warmup_percent": 20.0, "dense_layers": [0],
+            "warmup_ratio": 0.2, "dense_layers": [0],
             "pairing": "both methods for each prompt run on the same GPU; order alternates",
             "timing": "SamplerCustomAdvanced only",
         },

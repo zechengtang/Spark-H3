@@ -54,8 +54,8 @@ already present under the local ComfyUI LoRA model path.
 The defaults select a 20% Top-K ratio, 20% dense warmup, and the first
 transformer block kept dense. Set `steps` to the
 number of model evaluations made by the sampler (normally the sampler's step
-count). Warmup remains an exact percentage of those model evaluations for
-workflow compatibility; minimum-token and dense-layer gating use the same
+count). The warmup ratio is converted to an exact number of model evaluations;
+minimum-token and dense-layer gating use the same
 policy object as ComfyUI's official sparse node.
 The public Spark node uses the full reweight path and a dense video tail;
 research ablation and tail-mode controls are not exposed in the node UI.
@@ -66,9 +66,12 @@ The default `topk_mode=topk_ratio` selects a fraction of the target video's
 of candidate video blocks, while conditioning/sink blocks remain exact and
 do not consume the Top-K budget. To use a 10% ratio, set `topk_mode=topk_ratio`
 and `topk_ratio=0.1`.
-`warmup_mode=warmup_percent` (default) computes dense warmup as the ceiling of
-`steps * warmup_percent / 100`; `warmup_mode=warmup_steps` uses the fixed
+`warmup_mode=warmup_ratio` (default) computes dense warmup as the ceiling of
+`steps * warmup_ratio`, where `0.2` means 20%; `warmup_mode=warmup_steps`
+uses the fixed
 `warmup_steps` count (default 4). Both modes cap warmup at `steps`.
+The frontend migrates legacy workflow values such as `warmup_percent=20` to
+`warmup_ratio=0.2` when loading the graph.
 `strict=true` is recommended: it reports an incompatible ComfyUI build,
 dtype, GPU, or kernel error instead of silently switching to dense attention.
 

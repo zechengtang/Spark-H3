@@ -483,10 +483,10 @@
           "link": null
         },
         {
-          "name": "warmup_percent",
+          "name": "warmup_ratio",
           "type": "FLOAT",
           "widget": {
-            "name": "warmup_percent"
+            "name": "warmup_ratio"
           },
           "link": null
         },
@@ -573,8 +573,8 @@
       "widgets_values": [
         true,
         8,
-        "warmup_percent",
-        25.0,
+        "warmup_ratio",
+        0.25,
         2,
         "topk_ratio",
         0.2,
@@ -587,8 +587,8 @@
       "widgets_values_named": {
         "enabled": true,
         "steps": 8,
-        "warmup_mode": "warmup_percent",
-        "warmup_percent": 25.0,
+        "warmup_mode": "warmup_ratio",
+        "warmup_ratio": 0.25,
         "warmup_steps": 2,
         "topk_mode": "topk_ratio",
         "topk_ratio": 0.2,
@@ -1157,10 +1157,10 @@
       "title": "Example guide · 14.4s",
       "properties": {},
       "widgets_values": [
-        "# Spark-H3 + larryvrh 8-step LoRA\n\n- LoRA: `minimax_h3_turbo_v4_step600_ema.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_percent=25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=1`.\n- Sampler: `MiniMaxH3TurboSampler`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n- Larryvrh uses its dedicated Turbo LoRA node with `low_vram=false`; do not use the stock LoRA loader for this weight.\n"
+        "# Spark-H3 + larryvrh 8-step LoRA\n\n- LoRA: `minimax_h3_turbo_v4_step600_ema.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_ratio=0.25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=1`.\n- Sampler: `MiniMaxH3TurboSampler`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n- Larryvrh uses its dedicated Turbo LoRA node with `low_vram=false`; do not use the stock LoRA loader for this weight.\n"
       ],
       "widgets_values_named": {
-        "text": "# Spark-H3 + larryvrh 8-step LoRA\n\n- LoRA: `minimax_h3_turbo_v4_step600_ema.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_percent=25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=1`.\n- Sampler: `MiniMaxH3TurboSampler`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n- Larryvrh uses its dedicated Turbo LoRA node with `low_vram=false`; do not use the stock LoRA loader for this weight.\n"
+        "text": "# Spark-H3 + larryvrh 8-step LoRA\n\n- LoRA: `minimax_h3_turbo_v4_step600_ema.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_ratio=0.25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=1`.\n- Sampler: `MiniMaxH3TurboSampler`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n- Larryvrh uses its dedicated Turbo LoRA node with `low_vram=false`; do not use the stock LoRA loader for this weight.\n"
       },
       "color": "#222",
       "bgcolor": "#000"

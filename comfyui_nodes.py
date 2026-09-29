@@ -96,9 +96,9 @@ def _make_spark_layout(layout, sequence_length: int, device: torch.device) -> Co
 @dataclass
 class _RunState:
     steps: int
-    warmup_percent: float
+    warmup_ratio: float
     controller: ComfySparkController
-    warmup_mode: str = "warmup_percent"
+    warmup_mode: str = "warmup_ratio"
     warmup_steps: int = 4
     previous_sigma: float | None = None
     layout_cache: dict[tuple[int, int, str], ComfyPackedLayout] = field(default_factory=dict)
@@ -107,7 +107,7 @@ class _RunState:
     def create(
         cls,
         steps: int,
-        warmup_percent: float,
+        warmup_ratio: float,
         topk_ratio: float,
         ablation_mode: str = "full",
         video_tail_mode: str = "dense",
@@ -116,13 +116,13 @@ class _RunState:
         midpoint_direction_mode: str = "fused",
         topk_mode: str = "topk_ratio",
         topk_blocks: int = 228,
-        warmup_mode: str = "warmup_percent",
+        warmup_mode: str = "warmup_ratio",
         warmup_steps: int = 4,
     ):
-        if warmup_mode not in ("warmup_percent", "warmup_steps"):
-            raise ValueError("warmup_mode must be 'warmup_percent' or 'warmup_steps'")
-        if not 0.0 <= warmup_percent <= 100.0:
-            raise ValueError("warmup_percent must lie in [0, 100]")
+        if warmup_mode not in ("warmup_ratio", "warmup_steps"):
+            raise ValueError("warmup_mode must be 'warmup_ratio' or 'warmup_steps'")
+        if not 0.0 <= warmup_ratio <= 1.0:
+            raise ValueError("warmup_ratio must lie in [0, 1]")
         if type(warmup_steps) is not int or warmup_steps < 0:
             raise ValueError("warmup_steps must be a nonnegative integer")
         # Spark's public factory models the Diffusers pipeline's N-1 evaluations.
@@ -153,7 +153,7 @@ class _RunState:
                 "comfy-kitchen global modes are available"
             )
         state = cls(
-            steps, warmup_percent, ComfySparkController(config),
+            steps, warmup_ratio, ComfySparkController(config),
             warmup_mode=warmup_mode, warmup_steps=warmup_steps,
         )
         state.controller.topk_only = ablation_mode == "topk_only"
@@ -168,7 +168,7 @@ class _RunState:
     def warmup_evaluations(self) -> int:
         if self.warmup_mode == "warmup_steps":
             return min(self.steps, self.warmup_steps)
-        return min(self.steps, math.ceil(self.steps * self.warmup_percent / 100.0))
+        return min(self.steps, math.ceil(self.steps * self.warmup_ratio))
 
     def begin_evaluation(self, transformer_options) -> None:
         sigmas = (transformer_options or {}).get("sigmas")
@@ -517,13 +517,13 @@ class MiniMaxH3SparkAttentionSM120:
                     {"default": 20, "min": 1, "max": 200, "step": 1,
                      "tooltip": "本次采样的模型调用次数，通常与采样器 steps 相同；用于计算预热阶段。"},
                 ),
-                "warmup_mode": (["warmup_percent", "warmup_steps"],
-                                {"default": "warmup_percent",
-                                 "tooltip": "选择 dense 预热长度的表示法：百分比或固定模型调用次数；只会使用对应的 warmup 参数。"}),
-                "warmup_percent": (
+                "warmup_mode": (["warmup_ratio", "warmup_steps"],
+                                {"default": "warmup_ratio",
+                                 "tooltip": "选择 dense 预热长度的表示法：0–1 比例或固定模型调用次数；只会使用对应的 warmup 参数。"}),
+                "warmup_ratio": (
                     "FLOAT",
-                    {"default": 20.0, "min": 0.0, "max": 100.0, "step": 1.0,
-                     "tooltip": "前多少百分比的采样调用保持 dense。建议输入 20–25（代表 20%–25%，不是 0.2–0.25）；仅在 warmup_mode=warmup_percent 时生效。"},
+                    {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01,
+                     "tooltip": "开始时保持 dense 的采样调用比例。0.2 表示 20%；仅在 warmup_mode=warmup_ratio 时生效。"},
                 ),
                 "warmup_steps": (
                     "INT",
@@ -579,7 +579,7 @@ class MiniMaxH3SparkAttentionSM120:
         model,
         enabled,
         steps,
-        warmup_percent,
+        warmup_ratio,
         topk_ratio,
         dense_layers,
         min_tokens,
@@ -589,7 +589,7 @@ class MiniMaxH3SparkAttentionSM120:
         tail_granularity="query",
         topk_mode="topk_ratio",
         topk_blocks=228,
-        warmup_mode="warmup_percent",
+        warmup_mode="warmup_ratio",
         warmup_steps=4,
         global_anchor_dtype="float32",
         midpoint_direction_mode="fused",
@@ -606,7 +606,7 @@ class MiniMaxH3SparkAttentionSM120:
 
         patched = model.clone()
         state = _RunState.create(
-            int(steps), float(warmup_percent), float(topk_ratio),
+            int(steps), float(warmup_ratio), float(topk_ratio),
             ablation_mode=str(ablation_mode),
             video_tail_mode=str(video_tail_mode),
             global_anchor_dtype=str(global_anchor_dtype),
@@ -671,7 +671,7 @@ class MiniMaxH3SparkAttentionSM120:
             (f"{int(topk_blocks)} blocks" if topk_mode == "topk_blocks"
              else f"{100.0 * float(topk_ratio):.0f}%"),
             (f"{state.warmup_evaluations} steps" if warmup_mode == "warmup_steps"
-             else f"{float(warmup_percent):.0f}%"),
+             else f"{100.0 * float(warmup_ratio):.0f}%"),
             "none" if int(dense_layers) == 0 else f"0..{int(dense_layers) - 1}",
         )
         return (patched,)
@@ -707,7 +707,7 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
         model,
         enabled,
         steps,
-        warmup_percent,
+        warmup_ratio,
         dense_layers,
         min_tokens,
         strict,
@@ -722,15 +722,15 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
 
         from comfy_extras.nodes_sparse_attention import apply_block_sparse_attention
 
-        # Keep the legacy node's inputs for workflow compatibility.  All actual
-        # patching and attention execution belongs to ComfyUI's official node.
+        # All actual patching and attention execution belongs to ComfyUI's
+        # official node. Spark and BSA now share the same 0..1 progress scale.
         del steps, strict
         patched = apply_block_sparse_attention(
             model,
             tau=float(tau),
             topk_ratio=0.0,
             vsa=False,
-            start_percent=float(warmup_percent) / 100.0,
+            start_percent=float(warmup_ratio),
             end_percent=1.0,
             min_tokens=int(min_tokens),
             dense_blocks=set(range(int(dense_layers))),
@@ -743,7 +743,7 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
             "(tau %.2f, warmup %.0f%%, dense layers %d)",
             len(blocks),
             float(tau),
-            float(warmup_percent),
+            100.0 * float(warmup_ratio),
             int(dense_layers),
         )
         return (patched,)

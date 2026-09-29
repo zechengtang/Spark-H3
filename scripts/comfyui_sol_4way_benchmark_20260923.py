@@ -92,7 +92,7 @@ def patch_node(method: str, steps: int):
     if method == "spark_h3_sol":
         return {"class_type": "MiniMaxH3SolAttentionSM120", "inputs": {
             "model": ["1", 0], "enabled": True, "steps": steps,
-            "warmup_percent": 20.0, "dense_layers": 1,
+            "warmup_ratio": 0.2, "dense_layers": 1,
             "min_tokens": 4096, "strict": True, "tau": 1.0,
         }}, ["2", 0]
     raise ValueError(method)
@@ -253,7 +253,7 @@ def prepare():
             "dense": {"gpu": 0, "patch": None},
             "xmarre_sol": {"gpu": 1, "node": "SolH3Experimental", "tau": 1.0, "dense_evaluations": 1, "dense_layers": 2},
             "comfyui_sol": {"gpu": 2, "node": "BlockSparseAttention", "tau": 1.3, "start_percent": 0.2, "extra_tokens": 256, "sink_conditioning": "exact_kv_and_rows"},
-            "spark_h3_sol": {"gpu": 3, "node": "MiniMaxH3SolAttentionSM120", "tau": 1.0, "warmup_percent": 20.0, "dense_layers": 1, "spark_features": False},
+            "spark_h3_sol": {"gpu": 3, "node": "MiniMaxH3SolAttentionSM120", "tau": 1.0, "warmup_ratio": 0.2, "dense_layers": 1, "spark_features": False},
         },
         "cases": cases(),
         "settings": {"seed": SEED, "steps": STEPS, "sampler": "res_multistep", "scheduler": "simple",

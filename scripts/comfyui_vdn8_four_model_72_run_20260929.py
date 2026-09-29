@@ -98,7 +98,7 @@ def patched_model(nodes, model, method, steps):
         blocks = 114 if method == "spark_114blocks" else 228
         nodes["6"] = {"class_type": "MiniMaxH3SparkAttentionSM120", "inputs": {
             "model": source, "enabled": True, "steps": steps,
-            "warmup_percent": 20.0, "warmup_mode": "warmup_percent",
+            "warmup_ratio": 0.2, "warmup_mode": "warmup_ratio",
             "topk_mode": topk_mode, "topk_ratio": ratio, "topk_blocks": blocks,
             "dense_layers": 1, "min_tokens": 12288, "strict": True,
             "tail_granularity": "query"}}
@@ -277,7 +277,7 @@ def main():
           cases=cases(), methods=METHODS, seed=SEED,
           sol=dict(tau=1.3, start_percent=0.2, end_percent=1.0, dense_blocks="",
                    min_tokens=12288, extra_tokens=256, sink_conditioning="exact_kv_and_rows"),
-          spark=dict(warmup_percent=20, dense_layers=1, min_tokens=12288,
+          spark=dict(warmup_ratio=0.2, dense_layers=1, min_tokens=12288,
                      tail_granularity="query", global_anchor_dtype="float32",
                      midpoint_direction_mode="fused"),
           sources={str(path): api.sha256(path) for path in

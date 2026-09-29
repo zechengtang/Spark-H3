@@ -100,7 +100,7 @@ def main() -> None:
         "cases": {d: {"frames": cases[d]["frames"], "workflow": cases[d]["workflow"],
                        "workflow_sha256": cases[d]["workflow_sha256"]} for d in DURATIONS},
         "settings": {"sol": {"tau": 1.3, "start_percent": .2, "min_tokens": 12288},
-                     "spark": {"warmup_percent": 20, "dense_layers": 1,
+                     "spark": {"warmup_ratio": 0.2, "dense_layers": 1,
                                "min_tokens": 12288, "topk_ratio": .1,
                                "topk_blocks": 114}},
     })
