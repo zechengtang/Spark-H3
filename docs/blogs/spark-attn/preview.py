@@ -408,6 +408,8 @@ VDN10_SCRIPT = """<script>
   if (!cards.length) return;
   let activeIndex = 0;
   let heightFrame = 0;
+  let playbackWanted = true;
+  const automaticPauses = new WeakSet();
 
   const prepare = video => {
     if (video.dataset.src) {
@@ -425,16 +427,24 @@ VDN10_SCRIPT = """<script>
       if (activeCard) strip.style.setProperty('--vdn-carousel-height', `${activeCard.offsetHeight}px`);
     });
   };
+  const pauseWithoutChangingIntent = video => {
+    if (video.paused) return;
+    automaticPauses.add(video);
+    video.pause();
+  };
   const updatePlayback = () => {
     const rect = showcase.getBoundingClientRect();
     const visible = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
     if (document.hidden || visible < Math.min(120, rect.height * 0.25)) {
-      videos.forEach(video => video.pause());
+      videos.forEach(pauseWithoutChangingIntent);
       return;
     }
     videos.forEach((video, index) => {
-      if (index === activeIndex) { prepare(video); video.play().catch(() => {}); }
-      else video.pause();
+      if (index === activeIndex) {
+        prepare(video);
+        if (playbackWanted) video.play().catch(() => {});
+        else pauseWithoutChangingIntent(video);
+      } else pauseWithoutChangingIntent(video);
     });
   };
   let playbackFrame = 0;
@@ -454,7 +464,7 @@ VDN10_SCRIPT = """<script>
       card.setAttribute('aria-hidden', String(!isCurrent));
       card.inert = !isCurrent;
       if (!isCurrent) {
-        videos[index].pause();
+        pauseWithoutChangingIntent(videos[index]);
         const prompt = card.querySelector('.comparison-prompt');
         if (prompt && prompt.open) prompt.open = false;
       }
@@ -474,7 +484,7 @@ VDN10_SCRIPT = """<script>
   });
   let pointerStartX = null;
   strip.addEventListener('pointerdown', event => {
-    if (event.pointerType === 'mouse') return;
+    if (event.pointerType === 'mouse' || event.target.closest('video, button, a, summary, input')) return;
     pointerStartX = event.clientX;
   });
   strip.addEventListener('pointerup', event => {
@@ -487,8 +497,15 @@ VDN10_SCRIPT = """<script>
 
   videos.forEach((video, index) => {
     video.addEventListener('play', () => {
-      if (index !== activeIndex) { video.pause(); return; }
-      videos.forEach((other, otherIndex) => { if (otherIndex !== activeIndex) other.pause(); });
+      if (index !== activeIndex) { pauseWithoutChangingIntent(video); return; }
+      playbackWanted = true;
+      videos.forEach((other, otherIndex) => {
+        if (otherIndex !== activeIndex) pauseWithoutChangingIntent(other);
+      });
+    });
+    video.addEventListener('pause', () => {
+      if (automaticPauses.delete(video)) return;
+      if (index === activeIndex && !video.ended) playbackWanted = false;
     });
     video.addEventListener('loadedmetadata', updateHeight);
   });
