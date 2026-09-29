@@ -1,12 +1,12 @@
 {
-  "directory": "/autodl-fs/data/h3_experiments/spark_h3_blog_deploy_20260928_v1/site",
-  "archive": "/autodl-fs/data/h3_experiments/spark_h3_blog_deploy_20260928_v1/spark-h3-site.zip",
-  "archive_bytes": 435884809,
-  "archive_sha256": "c372c6d97c9a6b699d3558d29cd52b342a2d695de492c9463fb02f4d19f20d01",
-  "site_bytes": 435836369,
+  "directory": "/autodl-fs/data/h3_experiments/spark_h3_blog_deploy_20260929_v1/site",
+  "archive": "/autodl-fs/data/h3_experiments/spark_h3_blog_deploy_20260929_v1/spark-h3-site.zip",
+  "archive_bytes": 435885458,
+  "archive_sha256": "701d46f31038c20e387ca04bddd09eba5a544ee7648e3d0f396e2e99e9191f59",
+  "site_bytes": 435837018,
   "files": 142,
   "video_count": 48,
-  "created_utc": "2026-09-28T07:27:24.756543+00:00",
+  "created_utc": "2026-09-29T05:38:32.840242+00:00",
   "verification": {
     "archive_integrity": "passed",
     "relative_links": "passed",
