@@ -1,16 +1,16 @@
 <div align="center">
 
-<h1>⚡ Spark-H3</h1>
+<h1><img src="assets/spark-h3-wordmark.png" alt="Spark-H3" width="270"></h1>
 <h3>Block sparse attention for MiniMax-H3 video generation</h3>
 
-<p><strong>Reblock similar tokens · Reweight unselected blocks</strong></p>
+<p><strong>Reblock similar tokens · Reweight tail tokens</strong></p>
 
 <p>
-  <a href="https://github.com/zechengtang/Spark-H3"><img src="https://img.shields.io/badge/GitHub-Spark--H3-24292f?style=flat-square&amp;logo=github&amp;logoColor=white" alt="Spark-H3 on GitHub"></a>
   <a href="https://zechengtang.github.io/Spark-H3/"><img src="https://img.shields.io/badge/Blog-Spark--H3-f97316?style=flat-square" alt="Spark-H3 technical blog"></a>
+  <a href="comfyui/README.md"><img src="https://img.shields.io/badge/ComfyUI-Spark_Node-f97316?style=flat-square" alt="Spark-H3 ComfyUI node"></a>
   <a href="h3_sparse_attention/README.md"><img src="https://img.shields.io/badge/Docs-Usage_%26_Configuration-2563eb?style=flat-square" alt="Usage and configuration guide"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-15803d?style=flat-square" alt="License: Apache 2.0"></a>
   <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3"><img src="https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-MiniMax--H3-ffc107?style=flat-square" alt="MiniMax-H3 model weights on Hugging Face"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-15803d?style=flat-square" alt="License: Apache 2.0"></a>
 </p>
 
 <p>
@@ -31,8 +31,8 @@ It combines two operations:
 
 - **🧩 Reblocking** groups similar tokens into blocks so sparse attention can
   select more relevant interactions.
-- **⚖️ Reweighting** uses query-conditioned key/value summaries to approximate
-  unselected blocks while preserving their attention mass and value contribution.
+- **⚖️ Reweighting** assigns different weights to tokens within each tail block
+  when building key/value summaries, with a correction for attention mass.
 
 Spark-H3 provides the Spark attention kernels and MiniMax-H3 inference
 integration. Conditioning video, text, and audio retain exact attention handling.
@@ -71,29 +71,39 @@ with install_h3_spark_attn(pipe.transformer, num_inference_steps=20):
 
 ### Step-count convention
 
-MiniMax-H3's PyTorch pipeline uses `num_inference_steps` for denoising grid
-points, so `N` grid points produce `N - 1` model evaluations: the usual 20–50
-range therefore means 19–49 evaluations. Spark follows this convention. In
-ComfyUI, `steps` directly counts evaluations; use 19 ComfyUI steps to match a
-PyTorch run with `num_inference_steps=20`.
+As explained in the [Hugging Face MiniMaxH3Scheduler documentation](https://huggingface.co/docs/diffusers/main/api/schedulers/minimax_h3),
+`num_inference_steps=N` specifies **N sigma grid points**, including the final
+`0`. The default schedule evaluates the transformer only at the preceding
+points (`self.timesteps = 1 - sigmas[:-1]`), so `N=20` produces **19 model
+evaluations**. Spark follows that pipeline convention.
 
-For ComfyUI's native MiniMax-H3 implementation, this repository also ships an
-SM120 model-patch node. See the [ComfyUI installation and workflow guide](COMFYUI.md).
+<!-- ### Benchmark comparability
+
+Match the **actual** `torch.compile` state across all Diffusers runs before
+comparing quality or speed. In a controlled 25-prompt H3 check, switching
+denoising compilation changed Spark PSNR by **3.15 dB**, despite otherwise
+matched settings. This is a protocol difference, not evidence of a Spark
+kernel regression; see the [compile discrepancy audit](docs/diffusers_compile_psnr_attribution_20260927.md).
+The sibling MiniMax-H3-Benchmark's standard Diffusers denoising runner and
+radial/attention harnesses require compilation and verify that all transformer
+blocks were wrapped. Do not mix their results
+with historical uncompiled experiments.
 
 `inputs` contains your pipeline's generation arguments. The context manager
 restores the original attention processors on exit.
 
 → See the [usage and configuration guide](h3_sparse_attention/README.md) for
-requirements, defaults, and options.
+requirements, defaults, and options. -->
 
 <a id="todo"></a>
 
 ## 🗓️ TODO
 
-- [ ] Release a Ref2VA inference example.
+- [x] Release the ComfyUI implementation.
+- [ ] Release Ref2VA inference examples.
 - [ ] Release the technical report.
-- [ ] Optimize the Spark kernels.
-- [ ] Verify the kernels on SM90 and implement SM80 support.
+- [ ] Optimize the ComfyUI implementation for better end-to-end efficiency.
+- [ ] Implement SM80, SM90 support.
 
 ## 🤝 Acknowledgments
  

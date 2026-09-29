@@ -29,7 +29,7 @@ increases the influence of a poor compressed-V direction.
 
 ## Independent v3 results
 
-V3 used previously uninspected VBench samples 5/6 with the registered 20-step,
+V3 used previously uninspected VBench samples 5/6 with the registered 20-point schedule,
 seed-42, 240-frame, 1344x768 corrected-radix trajectory.
 
 | Diagnostic | V3 result | Frozen decision |

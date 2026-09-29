@@ -28,13 +28,21 @@ class H3SparseAttentionConfig:
     sol_extra_dense_evaluations: tuple[int, ...] = ()
     sol_extra_dense_layers: tuple[int, ...] = ()
     sol_force_local_blocks: bool | None = None
+    sol_tail_granularity: Literal["query", "block", "block8x8"] = "query"
+    sol_global_anchor_dtype: Literal["bfloat16", "float32"] = "float32"
+    # Numeric ablations for virtual-query K/V summaries. The default preserves
+    # the existing tensor-core path and its stored-key log-mass convention.
+    sol_reweight_summary_math: Literal["tensorcore", "comfy_fp32"] = "tensorcore"
+    sol_reweight_logmass_key: Literal["stored", "pre_round"] = "stored"
+    # Orthogonal ablation of anchor-weighted K/V and the per-block log-mass bias.
+    sol_reweight_components: Literal["full", "weights_only", "bias_only", "none"] = "full"
 
     sol_route_topk_ratio: float | None = None
     sol_route_topk_cutoff_mode: Literal[
         "gemm_radix", "gaussian_moments"
     ] = "gemm_radix"
     sol_route_topk_execution: Literal[
-        "threshold", "packed_external", "fused"
+        "threshold", "packed_external", "packed_external_no_route_qk", "fused"
     ] = "threshold"
     sol_video_tail_mode: Literal["dense", "pad"] = "dense"
     # Benchmark-only compatibility switch for the pre-tail-fix behavior.  It
@@ -65,6 +73,9 @@ class H3SparseAttentionConfig:
     landmark_tree_v2_root_fanout: int | None = None
     landmark_tree_v2_landmark_mode: Literal["mean", "midpoint"] = "midpoint"
     landmark_tree_v2_landmark_count: int = 32
+    # Preserve the frozen Spark routing arithmetic by default. The fused
+    # direction builder is faster locally but can change near-tie partitions.
+    landmark_tree_v2_midpoint_direction_mode: Literal["legacy", "fused"] = "legacy"
     landmark_tree_v2_aggregation: Literal["linear", "max"] = "linear"
     rope_sol_key_ridge_epsilon: float = 1e-3
 
@@ -103,13 +114,23 @@ class H3SparseAttentionConfig:
                            tuple(sorted(set(self.sol_extra_dense_layers))))
         if self.sol_force_local_blocks is not None and type(self.sol_force_local_blocks) is not bool:
             raise ValueError("sol_force_local_blocks must be bool")
+        if self.sol_tail_granularity not in ("query", "block", "block8x8"):
+            raise ValueError("sol_tail_granularity must be 'query', 'block', or 'block8x8'")
+        if self.sol_global_anchor_dtype not in ("bfloat16", "float32"):
+            raise ValueError("sol_global_anchor_dtype must be 'bfloat16' or 'float32'")
+        if self.sol_reweight_summary_math not in ("tensorcore", "comfy_fp32"):
+            raise ValueError("invalid sol_reweight_summary_math")
+        if self.sol_reweight_logmass_key not in ("stored", "pre_round"):
+            raise ValueError("invalid sol_reweight_logmass_key")
+        if self.sol_reweight_components not in ("full", "weights_only", "bias_only", "none"):
+            raise ValueError("invalid sol_reweight_components")
 
         if self.sol_route_topk_ratio is not None and not 0 < self.sol_route_topk_ratio <= 1:
             raise ValueError("sol_route_topk_ratio must lie in (0, 1]")
         if self.sol_route_topk_cutoff_mode not in ("gemm_radix", "gaussian_moments"):
             raise ValueError("invalid sol_route_topk_cutoff_mode")
         if self.sol_route_topk_execution not in (
-            "threshold", "packed_external", "fused"
+            "threshold", "packed_external", "packed_external_no_route_qk", "fused"
         ):
             raise ValueError("invalid sol_route_topk_execution")
         if self.sol_video_tail_mode not in ("dense", "pad"):
@@ -138,6 +159,16 @@ class H3SparseAttentionConfig:
             self.sol_virtual_query_levels_up is not None
             or self.sol_virtual_query_target_blocks is not None
         )
+        if (self.sol_reweight_summary_math != "tensorcore"
+                or self.sol_reweight_logmass_key != "stored"
+                or self.sol_reweight_components != "full") and not virtual_query_enabled:
+            raise ValueError("reweight numeric ablations require virtual query summaries")
+        if self.sol_tail_granularity in ("block", "block8x8") and not virtual_query_enabled:
+            raise ValueError("block tail requires virtual query summaries")
+        if (self.sol_tail_granularity in ("block", "block8x8")
+                and self.sol_route_topk_ratio is not None
+                and self.sol_route_topk_execution == "fused"):
+            raise ValueError("block tail requires threshold or packed_external Top-K routing")
         if self.sol_virtual_query_route_score != "native_mean" and not virtual_query_enabled:
             raise ValueError("reweighted routing requires virtual query summaries")
         if self.sol_virtual_query_levels_up is not None and self.sol_virtual_query_target_blocks is not None:
@@ -204,6 +235,8 @@ class H3SparseAttentionConfig:
             raise ValueError("landmark_tree_v2_landmark_count must be 32, 64, 128, or 256")
         if self.landmark_tree_v2_landmark_mode not in ("mean", "midpoint"):
             raise ValueError("landmark_tree_v2_landmark_mode must be mean or midpoint")
+        if self.landmark_tree_v2_midpoint_direction_mode not in ("legacy", "fused"):
+            raise ValueError("landmark_tree_v2_midpoint_direction_mode must be legacy or fused")
         if self.landmark_tree_v2_aggregation not in ("linear", "max") or (self.landmark_tree_v2_aggregation == "max" and self.landmark_tree_v2_distance != "cosine"):
             raise ValueError("max aggregation requires cosine distance")
         if self.landmark_tree_v2_distance not in ("euclidean", "cosine"):
@@ -233,11 +266,14 @@ class H3SparseAttentionConfig:
         defaults = dict(
             sol_route_topk_ratio=0.1,
             sol_route_topk_cutoff_mode="gemm_radix",
-            sol_route_topk_execution="packed_external",
-            sol_force_local_blocks=False,
+            # Match the compiled Table 4 Spark path by default. The packed
+            # external route and FP32 anchor remain explicit ablations.
+            sol_route_topk_execution="threshold",
+            sol_global_anchor_dtype="bfloat16",
             sol_landmark_preprocess=True,
             sol_landmark_preprocess_version="v2",
             landmark_tree_v2_children=16,
+            landmark_tree_v2_midpoint_direction_mode="legacy",
             # Collapse the completed reblock hierarchy to its video root.  A
             # deliberately oversized levels-up value makes the global policy
             # independent of the number of hierarchy levels for a given grid.
@@ -394,9 +430,11 @@ class _Controller:
                     sol_route_density=self.sol_route_density,
                     sol_virtual_query_layout=self.sol_virtual_query_layout,
                     sol_force_local_blocks=self.config.sol_local_blocks_enabled,
+                    sol_tail_granularity=self.config.sol_tail_granularity,
                     sol_landmark_preprocess=self.config.sol_landmark_preprocess,
                     landmark_tree_v2_children=self.config.landmark_tree_v2_children,
-                    landmark_tree_v2_fanout_mode=self.config.landmark_tree_v2_fanout_mode)
+                    landmark_tree_v2_fanout_mode=self.config.landmark_tree_v2_fanout_mode,
+                    landmark_tree_v2_midpoint_direction_mode=self.config.landmark_tree_v2_midpoint_direction_mode)
 
 
 def _sol_attention(controller, q, k, v, layout, layer, *, return_bthd=False):

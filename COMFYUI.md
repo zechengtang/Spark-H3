@@ -1,12 +1,14 @@
 # ComfyUI plugin (SM120)
 
 This repository is also a ComfyUI custom node for the native MiniMax-H3 model.
+Its current implementation and cross-pipeline differences are described in the
+[ComfyUI guide](comfyui/README.md#实现说明).
 The node uses the bundled Spark-H3 kernels on NVIDIA SM120 GPUs (for example,
 GeForce RTX 50-series) and keeps all packed text, image/video reference, and
 audio conditioning exact.
 
 The integration is built on ComfyUI's official MiniMax-H3 sparse-attention
-architecture and the comfy-kitchen v0.2.35 Sol kernel stack. It installs
+architecture and the comfy-kitchen v0.2.36 Sol kernel stack. It installs
 `dit/double_block` replacements, follows the native sigma-based sparse window,
 resets state through `ON_CLEANUP`, and projects QKV in 4096-token chunks. The
 projected BTHD tensors then use comfy-kitchen kernels for Top-K routing and
@@ -18,18 +20,10 @@ dense. It does not replace each attention module's `forward` method.
 
 ## Install
 
-Clone the repository directly under `ComfyUI/custom_nodes`, then install the
-kernel package into the same Python environment that runs ComfyUI:
-
-```bash
-cd /path/to/ComfyUI/custom_nodes
-git clone https://github.com/zechengtang/Spark-H3.git
-cd Spark-H3
-/path/to/ComfyUI/venv/bin/python -m pip install -e '.[cuda]'
-```
-
-Restart ComfyUI. The node appears as **MiniMax H3 Spark Attention (SM120)** in
-`model_patches/attention`.
+See the dedicated [ComfyUI installation and workflow guide](comfyui/README.md).
+The installer builds the patched comfy-kitchen Spark CUDA backend alongside
+the custom node. Restart ComfyUI afterward; the node appears as **MiniMax H3
+Spark Attention (SM120)** in `model_patches/attention`.
 
 ## Workflow
 
@@ -39,12 +33,42 @@ Insert the node after `UNETLoader` and before `BasicGuider`:
 UNETLoader -> MiniMax H3 Spark Attention (SM120) -> BasicGuider
 ```
 
-The defaults reproduce the repository's current Spark policy: Top-K 10%, 20%
-dense warmup, and the first transformer block kept dense. Set `steps` to the
+The [14.4 s native model example](workflows/spark_h3_vdn8_14p4s_t2va.json)
+uses the complete three-shot VDN prompt 8, 345 frames at 1344×768, and a
+20-step sampler. It has one Spark patch in the model path, without a Turbo
+LoRA or a second sparse-attention patch.
+
+Three matching 14.4-second, 8-step LoRA examples use the same full prompt,
+seed, resolution, Spark 20% Top-K ratio, and two dense warmup evaluations:
+
+| Workflow | LoRA loader | Sampler |
+| --- | --- | --- |
+| [MiniMax-H3 / ComfyUI 8-step LoRA](workflows/spark_h3_minimax_h3_comfyui_8step_lora_14p4s_t2va.json) | `LoraLoaderModelOnly` | `res_multistep` |
+| [LightX2V 768p 8-step LoRA](workflows/spark_h3_lightx2v_768p_8step_lora_14p4s_t2va.json) | `LoraLoaderModelOnly` | `res_multistep` |
+| [Larryvrh v4 8-step LoRA](workflows/spark_h3_larryvrh_8step_lora_14p4s_t2va.json) | `MiniMaxH3TurboLoRA` | `MiniMaxH3TurboSampler` |
+
+Larryvrh's LoRA requires its custom loader; the stock LoRA loader cannot
+apply that file to the local pruned base. The three examples use the filenames
+already present under the local ComfyUI LoRA model path.
+
+The defaults select a 20% Top-K ratio, 20% dense warmup, and the first
+transformer block kept dense. Set `steps` to the
 number of model evaluations made by the sampler (normally the sampler's step
 count). Warmup remains an exact percentage of those model evaluations for
 workflow compatibility; minimum-token and dense-layer gating use the same
 policy object as ComfyUI's official sparse node.
+The public Spark node uses the full reweight path and a dense video tail;
+research ablation and tail-mode controls are not exposed in the node UI.
+The default `topk_mode=topk_ratio` selects a fraction of the target video's
+64-token key blocks with `topk_ratio` (default 0.2). Set
+`topk_mode=topk_blocks` to request a fixed number with `topk_blocks` (default
+228); the ratio field is ignored in this mode. The block count is capped at the number
+of candidate video blocks, while conditioning/sink blocks remain exact and
+do not consume the Top-K budget. To use a 10% ratio, set `topk_mode=topk_ratio`
+and `topk_ratio=0.1`.
+`warmup_mode=warmup_percent` (default) computes dense warmup as the ceiling of
+`steps * warmup_percent / 100`; `warmup_mode=warmup_steps` uses the fixed
+`warmup_steps` count (default 4). Both modes cap warmup at `steps`.
 `strict=true` is recommended: it reports an incompatible ComfyUI build,
 dtype, GPU, or kernel error instead of silently switching to dense attention.
 

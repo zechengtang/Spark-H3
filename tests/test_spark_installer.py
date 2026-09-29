@@ -10,13 +10,16 @@ def test_installer_defaults_and_global_frontier():
     cfg=plugin.config
     assert cfg.method=='sol' and cfg.total_evaluations==19
     assert cfg.sol_route_topk_ratio==.1 and cfg.sol_route_topk_cutoff_mode=='gemm_radix'
-    assert cfg.sol_route_topk_execution=='packed_external'
+    assert cfg.sol_route_topk_execution=='threshold'
+    assert cfg.sol_global_anchor_dtype=='bfloat16'
+    assert cfg.sol_force_local_blocks is None and not cfg.sol_local_blocks_enabled
     assert cfg.sol_video_tail_mode=='dense'
     assert cfg.sol_landmark_preprocess and cfg.sol_landmark_preprocess_version=='v2'
     assert cfg.sol_virtual_query_target_blocks is None and cfg.sol_virtual_query_levels_up==99
     assert not cfg.sol_local_blocks_enabled
     assert cfg.landmark_tree_v2_children==16 and cfg.landmark_tree_v2_landmark_mode=='midpoint'
     assert cfg.landmark_tree_v2_landmark_count==32
+    assert cfg.landmark_tree_v2_midpoint_direction_mode == 'legacy'
     h=build_reblock_hierarchy(72576,cfg.landmark_tree_v2_children,grid_shape=(72,24,42))
     layout=virtual_query_layout(72576,73565,cfg.sol_virtual_query_levels_up,hierarchy=h)
     assert h.roots==((0,1134),)
@@ -59,9 +62,26 @@ def test_overrides_and_plain_sol_opt_in():
     assert cfg.landmark_tree_v2_children==8
     assert H3SparseAttentionConfig.sol(20).sol_virtual_query_target_blocks is None
     assert H3SparseAttentionConfig.sol(20).sol_route_topk_execution == 'threshold'
+    assert H3SparseAttentionConfig.sol(20).sol_local_blocks_enabled
+    assert H3SparseAttentionConfig.spark(20).sol_force_local_blocks is None
+    assert H3SparseAttentionConfig.spark(
+        20, sol_landmark_preprocess=False, sol_virtual_query_levels_up=None
+    ).sol_local_blocks_enabled
+    assert not H3SparseAttentionConfig.sol(
+        20, sol_landmark_preprocess=True, sol_landmark_preprocess_version='v2'
+    ).sol_local_blocks_enabled
+    assert H3SparseAttentionConfig.spark(20, sol_force_local_blocks=True).sol_local_blocks_enabled
+    assert not H3SparseAttentionConfig.sol(20, sol_force_local_blocks=False).sol_local_blocks_enabled
     assert H3SparseAttentionConfig.spark(
         20, sol_route_topk_execution='threshold'
     ).sol_route_topk_execution == 'threshold'
+    assert H3SparseAttentionConfig.spark(
+        20, landmark_tree_v2_midpoint_direction_mode='fused'
+    ).landmark_tree_v2_midpoint_direction_mode == 'fused'
+    with pytest.raises(ValueError, match='midpoint_direction_mode'):
+        H3SparseAttentionConfig.spark(
+            20, landmark_tree_v2_midpoint_direction_mode='invalid'
+        )
     target=H3SparseAttentionConfig.spark(20,sol_virtual_query_target_blocks=189)
     assert target.sol_virtual_query_levels_up is None
     assert target.sol_virtual_query_target_blocks==189

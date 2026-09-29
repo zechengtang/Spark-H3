@@ -359,6 +359,7 @@ def _landmark_tree_v2_combined_permutations(
         controller.config.landmark_tree_v2_root_fanout,
         controller.config.landmark_tree_v2_landmark_mode,
         controller.config.landmark_tree_v2_landmark_count,
+        controller.config.landmark_tree_v2_midpoint_direction_mode,
         controller.config.landmark_tree_v2_aggregation,
         controller.config.landmark_tree_v2_distance,
         controller.config.landmark_tree_v2_mean_mode,
@@ -382,6 +383,7 @@ def _landmark_tree_v2_combined_permutations(
             root_fanout=controller.config.landmark_tree_v2_root_fanout,
             landmark_mode=controller.config.landmark_tree_v2_landmark_mode,
             landmark_count=controller.config.landmark_tree_v2_landmark_count,
+            midpoint_direction_mode=controller.config.landmark_tree_v2_midpoint_direction_mode,
             aggregation=controller.config.landmark_tree_v2_aggregation,
             input_unit_means=controller.config.landmark_tree_v2_mean_mode == "input_unit",
             metric_unit_means=controller.config.landmark_tree_v2_mean_mode == "metric_unit",
@@ -479,6 +481,7 @@ def _landmark_tree_v2_qk_block_permutations(
         "order_mode": controller.config.landmark_tree_v2_order_mode,
         "landmark_initialization": ("contiguous_mean_token_interval_mean" if controller.config.landmark_tree_v2_landmark_mode == "mean" else "contiguous_interval_midpoint_token"),
         "landmark_mode": controller.config.landmark_tree_v2_landmark_mode,
+        "midpoint_direction_mode": controller.config.landmark_tree_v2_midpoint_direction_mode,
         "coarse_landmarks": controller.config.landmark_tree_v2_landmark_count,
         "coarse_assignment_passes": 0,
         "group_size": controller.config.landmark_tree_v2_group_size,
@@ -683,7 +686,8 @@ def spark_attention_bthd(
             ):
                 profile = _profile_begin(controller, "reblock_q_and_anchors")
                 q_bthd, anchors = permute_with_virtual_anchors(q_bthd, query_permutation,
-                    ranges, video_tokens=layout.video_tokens)
+                    ranges, video_tokens=layout.video_tokens,
+                    anchor_dtype=(torch.float32 if cfg.sol_global_anchor_dtype == "float32" else q_bthd.dtype))
                 _profile_end(controller, profile)
                 controller.counts["sol_virtual_query_fused_permute_calls"] += 1
             else:
@@ -768,7 +772,8 @@ def spark_attention_bthd(
         anchors = (
             None
             if needs_query_padding
-            else build_virtual_anchors(q_bthd, ranges)
+            else build_virtual_anchors(q_bthd, ranges,
+                dtype=(torch.float32 if cfg.sol_global_anchor_dtype == "float32" else q_bthd.dtype))
         )
         virtual_query_data = (ranges, mapping, anchors)
         controller.counts["sol_identity_reweight_calls"] += 1
@@ -813,6 +818,11 @@ def spark_attention_bthd(
             virtual_anchors=anchors, key_centroids=kc, value_sums=vs,
             threshold=threshold, sink_start=sink_start, sink_tokens=sink_tokens,
             force_local_blocks=cfg.sol_local_blocks_enabled,
+            tail_granularity=cfg.sol_tail_granularity,
+            anchor_dtype=(torch.float32 if cfg.sol_global_anchor_dtype == "float32" else q_bthd.dtype),
+            summary_math=cfg.sol_reweight_summary_math,
+            logmass_key=cfg.sol_reweight_logmass_key,
+            reweight_components=cfg.sol_reweight_components,
             _query_tokens=sparse_query_tokens)
         dense_query_start = (
             sink_start
@@ -885,7 +895,9 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
 
     cfg = controller.config
     from .sol_numerator_virtual_q import virtual_q_backend, reduce_virtual_key_centroids
-    if virtual_query_data is not None and virtual_q_backend(q).endswith("fused_virtual_query"):
+    if (virtual_query_data is not None
+            and cfg.sol_tail_granularity == "query"
+            and virtual_q_backend(q).endswith("fused_virtual_query")):
         kc, vs = reduce_virtual_key_centroids(k), None
     else:
         kc, vs = _reduce_kv(k, v)
@@ -913,8 +925,12 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         from .spark_route import reweighted_route
         ranges, mapping, anchors = virtual_query_data
         if anchors is None:
-            anchors = build_virtual_anchors(q, ranges)
-        summaries = virtual_summaries(anchors, k, v)
+            anchors = build_virtual_anchors(q, ranges,
+                dtype=(torch.float32 if cfg.sol_global_anchor_dtype == "float32" else q.dtype))
+        summaries = virtual_summaries(anchors, k, v,
+            summary_math=cfg.sol_reweight_summary_math,
+            logmass_key=cfg.sol_reweight_logmass_key,
+            reweight_components=cfg.sol_reweight_components)
         route, stats = reweighted_route(q, kc, mapping, summaries[0], summaries[2],
             video_tokens=layout.video_tokens, sink_tokens=sink_tokens,
             topk_ratio=cfg.sol_route_topk_ratio, mode=cfg.sol_virtual_query_route_score)
@@ -943,7 +959,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     elif (
         backend is not None
         and not partial_video
-        and cfg.sol_route_topk_execution == "packed_external"
+        and cfg.sol_route_topk_execution in ("packed_external", "packed_external_no_route_qk")
         and cfg.sol_route_topk_cutoff_mode == "gemm_radix"
         and tuple(torch.cuda.get_device_capability(q.device)) == (12, 0)
         and _query_tokens is not None
@@ -987,11 +1003,19 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
             virtual_anchors=anchors, precomputed_summaries=summaries, key_centroids=kc,
             value_sums=vs, threshold=threshold, route=route, sink_start=layout.video_tokens,
             sink_tokens=sink_tokens, force_local_blocks=cfg.sol_local_blocks_enabled,
+            tail_granularity=cfg.sol_tail_granularity,
+            anchor_dtype=(torch.float32 if cfg.sol_global_anchor_dtype == "float32" else q.dtype),
+            summary_math=cfg.sol_reweight_summary_math,
+            logmass_key=cfg.sol_reweight_logmass_key,
+            reweight_components=cfg.sol_reweight_components,
             _query_tokens=_query_tokens,
             fused_topk_ratio=(
                 cfg.sol_route_topk_ratio
                 if cfg.sol_route_topk_execution == "fused"
                 else 0.0
+            ),
+            skip_external_route_qk=(
+                cfg.sol_route_topk_execution == "packed_external_no_route_qk"
             ))
         controller.sol_backend = virtual_q_backend(q)
         controller.counts["sol_virtual_query_calls"] += 1

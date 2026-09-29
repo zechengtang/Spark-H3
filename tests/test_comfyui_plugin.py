@@ -1,6 +1,6 @@
 from pathlib import Path
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import torch
 import pytest
@@ -76,21 +76,159 @@ def test_run_state_uses_comfy_model_evaluation_count_and_resets():
     assert state.controller.evaluation_index == 0
 
 
+def test_spark_warmup_steps_mode_and_limits():
+    fixed = _RunState.create(20, 10.0, 0.1, warmup_mode="warmup_steps", warmup_steps=4)
+    assert fixed.warmup_evaluations == 4
+    assert _RunState.create(3, 10.0, 0.1, warmup_mode="warmup_steps", warmup_steps=4).warmup_evaluations == 3
+    assert _RunState.create(20, 10.0, 0.1, warmup_mode="warmup_steps", warmup_steps=0).warmup_evaluations == 0
+    assert _RunState.create(20, 10.0, 0.1).warmup_evaluations == 2
+    assert _RunState.create(20, 20.0, 0.2).warmup_evaluations == 4
+    for index in range(5):
+        fixed.begin_evaluation({"sigmas": torch.tensor([1.0 - index * 0.1])})
+        assert fixed.is_warmup == (index < 4)
+    inputs = MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]
+    assert inputs["warmup_mode"][0] == ["warmup_percent", "warmup_steps"]
+    assert list(inputs).index("warmup_mode") < list(inputs).index("warmup_percent") < list(inputs).index("warmup_steps")
+    assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["topk_ratio"][1]["default"] == 0.2
+    assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["min_tokens"][1]["default"] == 12288
+    assert "warmup_mode" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["required"]
+    with pytest.raises(ValueError, match="warmup_mode"):
+        _RunState.create(20, 10.0, 0.1, warmup_mode="invalid")
+    with pytest.raises(ValueError, match="warmup_steps"):
+        _RunState.create(20, 10.0, 0.1, warmup_steps=-1)
+
+
 def test_spark_ablation_modes_are_orthogonal():
     full = _RunState.create(20, 20.0, 0.1, "full").controller
     optimized = _RunState.create(20, 20.0, 0.1, "full_group841").controller
     reuse = _RunState.create(20, 20.0, 0.1, "full_reuse2").controller
-    padded = _RunState.create(20, 20.0, 0.1, "full", "pad").controller
 
     assert full.config.topk_ratio == 0.1
+    assert full.config.topk_mode == "topk_ratio"
+    assert full.config.topk_blocks == 228
+    fixed = _RunState.create(20, 20.0, 0.1, topk_mode="topk_blocks", topk_blocks=12)
+    assert fixed.controller.config.topk_mode == "topk_blocks"
+    assert fixed.controller.config.topk_blocks == 12
+    assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["topk_mode"][0] == [
+        "topk_ratio", "topk_blocks",
+    ]
+    assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["topk_mode"][1]["default"] == "topk_ratio"
+    assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["topk_blocks"][1]["default"] == 228
+    assert list(MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]).index("topk_mode") < list(MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]).index("topk_ratio") < list(MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]).index("topk_blocks")
+    assert "topk_blocks" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["required"]
     assert full.config.landmark_tree_v2_group_size == 1
     assert optimized.config.landmark_tree_v2_group_size == (8, 4, 1)
     assert reuse.reblock_reuse_layers == 2
     assert reuse.config.landmark_tree_v2_group_size == 1
-    assert padded.config.video_tail_mode == "pad"
+    assert full.config.video_tail_mode == "dense"
+    assert full.config.landmark_tree_v2_midpoint_direction_mode == "fused"
+    assert "midpoint_direction_mode" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
+    assert "midpoint_direction_mode" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
+    assert full.config.global_anchor_dtype == "float32"
+    assert "global_anchor_dtype" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
+    assert "global_anchor_dtype" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
+    fused_midpoint = _RunState.create(20, 20.0, 0.1, midpoint_direction_mode="fused")
+    assert fused_midpoint.controller.config.landmark_tree_v2_midpoint_direction_mode == "fused"
+    with pytest.raises(ValueError, match="midpoint_direction_mode"):
+        _RunState.create(20, 20.0, 0.1, midpoint_direction_mode="invalid")
     for legacy in ("full_target189", "topk10_base", "reblock_only", "reweight_only"):
         with pytest.raises(ValueError, match="only comfy-kitchen global modes"):
             _RunState.create(20, 20.0, 0.1, legacy)
+    with pytest.raises(ValueError, match="topk_mode"):
+        _RunState.create(20, 20.0, 0.1, topk_mode="invalid")
+    with pytest.raises(ValueError, match="topk_blocks"):
+        _RunState.create(20, 20.0, 0.1, topk_blocks=0)
+
+
+def test_comfy_video_tail_rejects_unimplemented_pad():
+    from comfyui_backend import ComfySparkConfig
+
+    assert "video_tail_mode" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
+    assert "ablation_mode" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
+    for mode in ("pad", "invalid"):
+        with pytest.raises(ValueError, match="only supports 'dense'"):
+            ComfySparkConfig(video_tail_mode=mode)
+        with pytest.raises(ValueError, match="only supports 'dense'"):
+            _RunState.create(20, 20., .1, video_tail_mode=mode)
+
+
+def test_spark_tail_granularity_is_independent():
+    for grain in ("block", "query"):
+        state = _RunState.create(20, 20., .1, tail_granularity=grain)
+        assert state.controller.config.tail_granularity == grain
+        assert state.controller.config.global_anchor_dtype == "float32"
+    assert _RunState.create(20, 20., .1).controller.config.tail_granularity == "query"
+    with pytest.raises(ValueError, match="tail_granularity"):
+        _RunState.create(20, 20., .1, tail_granularity="invalid")
+    assert "tail_granularity" in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
+
+
+def test_spark_local_exact_override_validation():
+    from comfyui_backend import ComfySparkConfig
+
+    assert ComfySparkConfig().force_local_blocks is None
+    assert ComfySparkConfig(force_local_blocks=True).force_local_blocks is True
+    assert ComfySparkConfig(force_local_blocks=False).force_local_blocks is False
+    with pytest.raises(ValueError, match="force_local_blocks"):
+        ComfySparkConfig(force_local_blocks=1)
+    assert "tail_granularity" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
+
+
+@pytest.mark.parametrize("video_tokens,total_tokens,topk_mode,topk_blocks,expected_ratio", [
+    (64, 70, "topk_ratio", 128, 0.2),
+    (65, 70, "topk_blocks", 1, 1.0),
+    (640, 646, "topk_blocks", 3, 0.3),
+    (640, 646, "topk_blocks", 20, 1.0),
+    (64, 64, "topk_ratio", 128, 0.2),
+])
+def test_spark_only_target_video_queries_use_sparse_output(
+    monkeypatch, video_tokens, total_tokens, topk_mode, topk_blocks, expected_ratio
+):
+    import comfyui_reblock_plan
+    from comfyui_backend import (
+        ComfyPackedLayout, ComfySparkConfig, ComfySparkController,
+        comfy_kitchen_spark_attention,
+    )
+
+    generator = torch.Generator().manual_seed(42)
+    q, k, v = (
+        torch.randn(1, total_tokens, 2, 128, generator=generator).to(torch.bfloat16)
+        for _ in range(3)
+    )
+    identity = torch.arange(video_tokens).view(1, 1, -1).expand(1, 2, -1).contiguous()
+    monkeypatch.setattr(
+        comfyui_reblock_plan, "build_comfy_reblock_permutations",
+        lambda controller, query, key, layout: (identity, None, identity, None),
+    )
+    call = {}
+
+    def fake_spark(query, key, value, **kwargs):
+        call.update(kwargs)
+        return torch.full_like(query, 7)
+
+    cuda_module = ModuleType("comfy_kitchen.backends.cuda")
+    cuda_module.spark_attn = fake_spark
+    monkeypatch.setitem(sys.modules, "comfy_kitchen.backends.cuda", cuda_module)
+    layout = ComfyPackedLayout(
+        permutation=torch.arange(total_tokens),
+        inverse_permutation=torch.arange(total_tokens),
+        grid=(1, 1, video_tokens),
+        video_tokens=video_tokens,
+        sequence_length=total_tokens,
+        video_positions=torch.zeros(video_tokens, 3),
+    )
+    controller = ComfySparkController(ComfySparkConfig(
+        topk_mode=topk_mode, topk_blocks=topk_blocks,
+    ))
+    output = comfy_kitchen_spark_attention(controller, q, k, v, layout, layer=1)
+
+    assert call["topk_ratio"] == pytest.approx(expected_ratio)
+    assert call["sink_q"] == [video_tokens // 64, (total_tokens + 63) // 64]
+    assert call["sink_blocks"] == [video_tokens // 64, (total_tokens + 63) // 64]
+    torch.testing.assert_close(output[:, :video_tokens], torch.full_like(q[:, :video_tokens], 7))
+    if video_tokens < total_tokens:
+        torch.testing.assert_close(output[:, video_tokens:], torch.full_like(q[:, video_tokens:], 7))
+    assert "sink_query_mode" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
 
 
 class _FakeAttention:

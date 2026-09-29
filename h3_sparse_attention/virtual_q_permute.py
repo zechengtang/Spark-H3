@@ -55,11 +55,15 @@ def _reduce_parts(PART, RANGES, A, H: tl.constexpr, N: tl.constexpr, P: tl.const
     tl.store(A + ((b * P + parent) * H + h) * 128 + dd, acc / (end - start))
 
 
-def permute_with_virtual_anchors(q, permutation, virtual_ranges, *, video_tokens, split=False):
+def permute_with_virtual_anchors(q, permutation, virtual_ranges, *, video_tokens, split=False,
+                                 anchor_dtype=None):
     """Return reordered Q and parent anchors; inputs use validated LMv2 topology."""
     if q.ndim != 4 or q.shape[-1] != 128 or not q.is_cuda or not q.is_contiguous() or q.dtype not in (torch.bfloat16, torch.float16):
         raise ValueError('requires contiguous CUDA BTH128 BF16/FP16 Q')
     b, t, h, d = q.shape
+    anchor_dtype = q.dtype if anchor_dtype is None else anchor_dtype
+    if anchor_dtype not in (q.dtype, torch.float32):
+        raise ValueError('anchor_dtype must match Q or be float32')
     if not 0 < video_tokens <= t or permutation.shape != (b, h, video_tokens):
         raise ValueError('invalid video token count or permutation shape')
     if virtual_ranges.ndim != 2 or virtual_ranges.shape[1] != 2 or not virtual_ranges.shape[0]:
@@ -69,7 +73,7 @@ def permute_with_virtual_anchors(q, permutation, virtual_ranges, *, video_tokens
             raise ValueError('permutation and ranges require contiguous CUDA int64')
     p, n = virtual_ranges.shape[0], triton.cdiv(t, 64)
     out = torch.empty_like(q)
-    anchors = torch.empty((b, p, h, d), device=q.device, dtype=q.dtype)
+    anchors = torch.empty((b, p, h, d), device=q.device, dtype=anchor_dtype)
     partial = torch.empty((b, n, h, d), device=q.device, dtype=torch.float32) if split else anchors
     _permute_anchor[(n if split else p, b * h)](
         q, permutation, virtual_ranges, out, anchors, partial, t, h, video_tokens, p, n, split,
@@ -77,4 +81,3 @@ def permute_with_virtual_anchors(q, permutation, virtual_ranges, *, video_tokens
     if split:
         _reduce_parts[(p, b * h)](partial, virtual_ranges, anchors, h, n, p, num_warps=4)
     return out, anchors
-

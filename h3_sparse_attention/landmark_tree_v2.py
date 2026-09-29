@@ -304,6 +304,7 @@ def _recursive_landmark_tree_v2(
     root_fanout: int | None = None,
     landmark_mode: str = "midpoint",
     landmark_count: int = 32,
+    midpoint_direction_mode: str = "legacy",
     aggregation: str = "linear",
     compute_inverse: bool = True,
     compact_direct_route: bool = False,
@@ -315,6 +316,8 @@ def _recursive_landmark_tree_v2(
     landmark_mode = _normalize_landmark_mode(landmark_mode)
     if landmark_count not in (32, 64, 128, 256):
         raise ValueError("landmark_count must be 32, 64, 128, or 256")
+    if midpoint_direction_mode not in ("legacy", "fused"):
+        raise ValueError("midpoint_direction_mode must be legacy or fused")
     reuse_group4 = reuse_group4 and landmark_mode == "mean" and landmark_count == 32
     children_schedule = (max_children,) if isinstance(max_children, int) else max_children
     if aggregation not in ("linear", "max") or (aggregation == "max" and distance != "cosine"):
@@ -508,7 +511,8 @@ def _recursive_landmark_tree_v2(
                     from .landmark_tree_v2_triton import indexed_interval_means
                     landmarks = node_landmarks
                     if (
-                        landmark_mode == "midpoint" and landmarks == 32
+                        midpoint_direction_mode == "fused"
+                        and landmark_mode == "midpoint" and landmarks == 32
                         and distance == "cosine" and aggregation == "linear"
                     ):
                         from .landmark_v2_fused_node import fused_midpoint_directions
@@ -776,6 +780,7 @@ def recursive_landmark_tree_v2_blocks(
     root_fanout: int | None = None,
     landmark_mode: str = "midpoint",
     landmark_count: int = 32,
+    midpoint_direction_mode: str = "legacy",
     aggregation: str = "linear",
 ) -> LandmarkTreeV2Result:
     """Return strict 64-token leaves; defaults are single tokens, eight children and midpoint landmarks.
@@ -814,6 +819,7 @@ def recursive_landmark_tree_v2_blocks(
         max_children=max_children,
         fanout_mode=fanout_mode, fanout=fanout, final_fanout=final_fanout, root_fanout=root_fanout,
         landmark_mode=landmark_mode, landmark_count=landmark_count,
+        midpoint_direction_mode=midpoint_direction_mode,
         aggregation=aggregation,
         distance=distance,
         order_mode=order_mode,
@@ -844,6 +850,7 @@ class PreparedLandmarkTreeV2Permutation:
         root_fanout: int | None = None,
         landmark_mode: str = "midpoint",
         landmark_count: int = 32,
+        midpoint_direction_mode: str = "legacy",
         aggregation: str = "linear",
         return_inverse: bool = True,
         compact_direct_route: bool = False,
@@ -858,7 +865,10 @@ class PreparedLandmarkTreeV2Permutation:
         self.landmark_mode = _normalize_landmark_mode(landmark_mode)
         if landmark_count not in (32, 64, 128, 256):
             raise ValueError("landmark_count must be 32, 64, 128, or 256")
+        if midpoint_direction_mode not in ("legacy", "fused"):
+            raise ValueError("midpoint_direction_mode must be legacy or fused")
         self.landmark_count = landmark_count
+        self.midpoint_direction_mode = midpoint_direction_mode
         self.aggregation = aggregation
         self.return_inverse = bool(return_inverse)
         self.compact_direct_route = bool(compact_direct_route)
@@ -913,6 +923,7 @@ class PreparedLandmarkTreeV2Permutation:
             max_children=self.max_children,
             fanout_mode=self.fanout_mode, final_fanout=self.final_fanout, root_fanout=self.root_fanout,
             landmark_mode=self.landmark_mode, landmark_count=self.landmark_count,
+            midpoint_direction_mode=self.midpoint_direction_mode,
             aggregation=self.aggregation,
             compute_inverse=self.return_inverse,
             compact_direct_route=self.compact_direct_route,

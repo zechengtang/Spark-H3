@@ -45,10 +45,12 @@ with install_h3_sol_attn(
 
 The context manager installs attention processors and a layout pre-hook,
 then restores them even if inference raises. Call `attention.reset()` before
-a second pipeline invocation inside the same context. H3 performs
-`num_inference_steps - 1` transformer evaluations; warmup rounds up from the
-nominal step count, matching MiniMax-H3-Sparse (10 dense evaluations for 50
-steps). The first transformer layer remains dense by default.
+a second pipeline invocation inside the same context. With the default
+[MiniMaxH3Scheduler sigma grid](https://huggingface.co/docs/diffusers/main/api/schedulers/minimax_h3),
+`num_inference_steps` includes the terminal `0`, so H3 performs
+`num_inference_steps - 1` transformer evaluations. Warmup rounds up from the
+nominal grid-point count, matching MiniMax-H3-Sparse (10 dense evaluations for
+50 grid points). The first transformer layer remains dense by default.
 
 Only the generated target-video grid is sparse. Conditioning video, text, and
 audio are packed after the target as exact K/V sinks; their query rows are
@@ -65,7 +67,7 @@ during sparse execution, preserving the block routing centroid. Real context Q
 rows are still evaluated once by dense attention, and the complete, unmodified
 K/V sequence remains visible to both paths. The
 packed context suffix must contain enough slots to complete the 64-row block.
-The ComfyUI Spark node exposes the same choice as `video_tail_mode`.
+The ComfyUI Spark node currently supports only the dense-tail choice.
 
 ## Spark inference integration
 
@@ -88,15 +90,56 @@ cached reblocking plans and query topology.
 
 Default Spark settings match the source:
 
-- Native mean Top-K routing with ratio `0.1` and `gemm_radix` cutoffs.
+- Native mean Top-K routing with ratio `0.1`, `gemm_radix` cutoffs, and
+  `threshold` execution, matching the historical compiled Table 4 run.
 - Landmark-v2 Q/K reblocking using opposite second moments, cosine distance,
   fanout 16 with `power_of_two_fanout` scheduling, 32 midpoint landmarks, and no temporal grouping.
+- The midpoint direction builder defaults to the historical two-stage
+  calculation for bitwise compatibility with the Table 4 Spark run. Set
+  `landmark_tree_v2_midpoint_direction_mode="fused"` to opt into the newer,
+  faster direction kernel; it can change near-tie reblock routes and outputs.
+  The ComfyUI Spark node exposes the same choice as its optional
+  `midpoint_direction_mode` input, also defaulting to `legacy`.
 - One global representative per head, formed by averaging all target-video
-  queries after reblocking.
+  queries after reblocking; the default stored anchor dtype is BF16.
 - Global-anchor K/V and log-mass summaries merged with exact attention. The
   former target-189 representatives remain available only as an explicit
   ablation and are not the default Spark-H3 configuration.
 - The positional local band is disabled after reblocking.
+
+The approximate branch defaults to per-query processing. Set
+`sol_tail_granularity="block"` in `install_h3_spark_attn(...)` to share one
+approximate softmax/output across each 64-row query block, as in ComfyUI's
+block-granularity mode. Exact attention still uses the real query rows, and
+Top-K/reblock/global-reweight settings do not change. This opt-in mode uses
+the existing exact route/export plus a separate Triton block-tail merge;
+it is a functional compatibility path, not the fused query-mode fast path.
+For Top-K it supports `threshold` (the Spark default) and `packed_external`
+routing, but not `fused` routing. The default `"query"` mode is unchanged.
+
+For reweight **numeric** ablations, the Diffusers installer also accepts
+`sol_global_anchor_dtype="bfloat16"`,
+`sol_reweight_summary_math="comfy_fp32"`, and
+`sol_reweight_logmass_key="pre_round"`. The defaults are BF16 global anchor,
+Tensor-Core summary, and log-mass subtraction using the stored BF16 summary
+key. `comfy_fp32` uses FP32 lane-wise FMA for anchor–key scores and FP32
+softmax/weighted K/V reduction before BF16 summary storage;
+`pre_round` subtracts the unrounded FP32 weighted key in log-mass. These two
+switches can be varied independently of anchor dtype and of query/block tail
+granularity. The CUDA and Triton reduction orders are not bitwise identical.
+ComfyUI Sol's downstream INT8 attention consumption is a separate backend
+choice, **not** part of reweight, and is not emulated by these switches.
+
+For a component ablation, `sol_reweight_components` accepts `"full"` (default),
+`"weights_only"`, `"bias_only"`, or `"none"`. The weight component replaces
+each physical key block's ordinary mean K/V with anchor-softmax-weighted K/V.
+The bias component replaces the ordinary `log(block_length)` mass with
+`logsumexp(anchor · K) - anchor · active_summary_K`, where `active_summary_K`
+is weighted or ordinary according to the first switch. Thus bias-only is
+recentered against its own mean K rather than incorrectly reusing the full
+path's weighted-K shift. These four arms retain the same Top-K route, reblock,
+query granularity and exact branch; `"none"` is a within-Spark summary
+baseline, **not** the original Sol-Attn kernel.
 
 Select `landmark_tree_v2_fanout_mode="arbitrary_fanout"` for balanced arbitrary child
 counts. `landmark_tree_v2_fanout` is an alias for `landmark_tree_v2_children`;

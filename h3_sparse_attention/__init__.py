@@ -6,9 +6,15 @@ from .processor import (
     install_h3_spark_attn,
     install_h3_sparse_attention,
 )
+from .acceleration import (
+    H3AccelerationConfig,
+    H3AccelerationPlugin,
+    install_h3_acceleration,
+)
 
 __all__ = [
     "H3SparseAttentionConfig", "H3SparseAttentionPlugin",
+    "H3AccelerationConfig", "H3AccelerationPlugin", "install_h3_acceleration",
     "install_h3_spark_attn", "install_h3_sol_attn", "install_h3_sparse_attention",
     "spark_reblock", "spark_reweight", "spark_block",
     "Fp8Linear", "convert_linear_to_fp8", "install_fp8", "install_fused_blocks",

@@ -8,6 +8,7 @@ rows to the front, runs Spark, and restores the original order afterwards.
 from __future__ import annotations
 
 import logging
+import json
 import math
 import os
 from dataclasses import dataclass, field
@@ -35,7 +36,9 @@ except ImportError:  # standalone source-tree tests
 
 log = logging.getLogger(__name__)
 _SM120 = (12, 0)
-_PRODUCER_CHUNK = 4096
+_PRODUCER_CHUNK = int(os.environ.get("H3_SPARK_PRODUCER_CHUNK", "16384"))
+if _PRODUCER_CHUNK <= 0:
+    raise ValueError("H3_SPARK_PRODUCER_CHUNK must be positive")
 
 
 class _Unsupported(RuntimeError):
@@ -86,6 +89,7 @@ def _make_spark_layout(layout, sequence_length: int, device: torch.device) -> Co
         video_tokens=stop - start,
         sequence_length=sequence_length,
         video_positions=video_positions,
+        video_start=start,
     )
 
 
@@ -94,6 +98,8 @@ class _RunState:
     steps: int
     warmup_percent: float
     controller: ComfySparkController
+    warmup_mode: str = "warmup_percent"
+    warmup_steps: int = 4
     previous_sigma: float | None = None
     layout_cache: dict[tuple[int, int, str], ComfyPackedLayout] = field(default_factory=dict)
 
@@ -106,13 +112,29 @@ class _RunState:
         ablation_mode: str = "full",
         video_tail_mode: str = "dense",
         global_anchor_dtype: str = "float32",
+        tail_granularity: str = "query",
+        midpoint_direction_mode: str = "fused",
+        topk_mode: str = "topk_ratio",
+        topk_blocks: int = 228,
+        warmup_mode: str = "warmup_percent",
+        warmup_steps: int = 4,
     ):
+        if warmup_mode not in ("warmup_percent", "warmup_steps"):
+            raise ValueError("warmup_mode must be 'warmup_percent' or 'warmup_steps'")
+        if not 0.0 <= warmup_percent <= 100.0:
+            raise ValueError("warmup_percent must lie in [0, 100]")
+        if type(warmup_steps) is not int or warmup_steps < 0:
+            raise ValueError("warmup_steps must be a nonnegative integer")
         # Spark's public factory models the Diffusers pipeline's N-1 evaluations.
         # ComfyUI executes one model evaluation per sampler step, hence steps + 1.
         common = dict(
             topk_ratio=topk_ratio,
+            topk_mode=topk_mode,
+            topk_blocks=topk_blocks,
             video_tail_mode=video_tail_mode,
             global_anchor_dtype=global_anchor_dtype,
+            tail_granularity=tail_granularity,
+            landmark_tree_v2_midpoint_direction_mode=midpoint_direction_mode,
         )
         if ablation_mode == "full":
             config = ComfySparkConfig(**common)
@@ -123,18 +145,29 @@ class _RunState:
                 landmark_tree_v2_group_size=(8, 4, 1),
                 **common,
             )
+        elif ablation_mode == "topk_only":
+            config = ComfySparkConfig(**common)
         else:
             raise ValueError(
                 f"unsupported ComfyUI Spark mode {ablation_mode!r}; only "
                 "comfy-kitchen global modes are available"
             )
-        state = cls(steps, warmup_percent, ComfySparkController(config))
+        state = cls(
+            steps, warmup_percent, ComfySparkController(config),
+            warmup_mode=warmup_mode, warmup_steps=warmup_steps,
+        )
+        state.controller.topk_only = ablation_mode == "topk_only"
+        # The exact kernel can scatter video-first rows directly into H3's
+        # natural layout. Keep an opt-out for regression A/B comparisons.
+        state.controller.direct_output = os.environ.get("H3_SPARK_DIRECT_OUTPUT", "1") == "1"
         state.controller.reblock_reuse_layers = 2 if ablation_mode == "full_reuse2" else 1
         state.controller.reblock_reuse_start_layer = 1
         return state
 
     @property
     def warmup_evaluations(self) -> int:
+        if self.warmup_mode == "warmup_steps":
+            return min(self.steps, self.warmup_steps)
         return min(self.steps, math.ceil(self.steps * self.warmup_percent / 100.0))
 
     def begin_evaluation(self, transformer_options) -> None:
@@ -229,11 +262,11 @@ def _native_spark_eligible(attn, x, rope_freqs, transformer_options, layer, poli
     return reason, True
 
 
-def _native_spark_qkv(attn, x, rope_freqs, permutation):
+def _native_spark_qkv(attn, x, rope_freqs, permutation, *, video_start=None, video_tokens=None):
     """ComfyUI-style chunked H3 producer yielding contiguous BTHD Q/K/V."""
     import comfy.model_management
     import comfy.model_prefetch
-    import comfy.quant_ops
+    from comfy_kitchen.backends import cuda as ck
 
     tokens = x.shape[0]
     heads, head_dim = int(attn.heads), int(attn.head_dim)
@@ -244,26 +277,155 @@ def _native_spark_qkv(attn, x, rope_freqs, permutation):
     qw = comfy.model_management.cast_to(attn.q_norm.weight, device=x.device)
     kw = comfy.model_management.cast_to(attn.k_norm.weight, device=x.device)
     rot_dim = rope_freqs.shape[-3] * 2
+    stream = torch.cuda.current_stream(x.device).cuda_stream
+    wrap = ck._wrap_for_dlpack
+    bsa_materializer = os.environ.get("H3_SPARK_BSA_MATERIALIZER", "0") == "1"
+    bsa_original = os.environ.get("H3_SPARK_BSA_ORIGINAL_PRODUCER", "0") == "1"
+    if bsa_materializer and bsa_original:
+        raise RuntimeError("select only one experimental BSA producer")
+    if bsa_materializer and not hasattr(ck._C, "bsa_materialize_qkv_chunk"):
+        raise RuntimeError("H3_SPARK_BSA_MATERIALIZER requires rebuilt comfy-kitchen CUDA extension")
+    if bsa_materializer and not getattr(_native_spark_qkv, "_bsa_logged", False):
+        print("H3_SPARK_BSA_MATERIALIZER active: BSA tile BF16 QKV materializer, Spark downstream", flush=True)
+        _native_spark_qkv._bsa_logged = True
+    if bsa_original:
+        if not hasattr(ck._C, "sol_producer_chunk_materialize"):
+            raise RuntimeError("H3_SPARK_BSA_ORIGINAL_PRODUCER requires rebuilt comfy-kitchen CUDA extension")
+        if not getattr(_native_spark_qkv, "_bsa_original_logged", False):
+            print("H3_SPARK_BSA_ORIGINAL_PRODUCER active: original sol_producer_kernel plus BF16 QKV, Spark downstream", flush=True)
+            _native_spark_qkv._bsa_original_logged = True
+        bsa_plan = ck._C.sol_attn_plan(1, tokens, heads)
+        bsa_workspace = torch.empty(bsa_plan["total"], dtype=torch.uint8, device=x.device)
+        stale_kmean = torch.zeros((heads, head_dim), dtype=torch.float32, device=x.device)
+        stale_vscale = torch.ones((heads, head_dim), dtype=torch.float32, device=x.device)
+        ck._C.sol_producer_begin(wrap(bsa_workspace), 1, tokens, heads, stream, 0)
 
     with comfy.model_prefetch.pause_malloc_graph():
         for start in range(0, tokens, _PRODUCER_CHUNK):
             stop = min(start + _PRODUCER_CHUNK, tokens)
-            indices = permutation[start:stop]
-            projected = attn.qkv_proj(x.index_select(0, indices))
+            offset = None
+            if video_start is not None and video_tokens is not None:
+                video_end = video_start + video_tokens
+                if stop <= video_tokens:
+                    offset = video_start
+                elif start >= video_tokens and stop <= video_end:
+                    offset = -video_tokens
+                elif start >= video_end:
+                    offset = 0
+            if offset is None:
+                indices = permutation[start:stop]
+                source = x.index_select(0, indices)
+                freqs = rope_freqs.index_select(1, indices)
+            else:
+                source = x[start + offset:stop + offset]
+                freqs = rope_freqs[:, start + offset:stop + offset]
+            projected = attn.qkv_proj(source)
+            if bsa_original:
+                fab = ck._packed_rope_fab(freqs, stop - start, rot_dim)
+                ck._C.sol_producer_chunk_materialize(
+                    *(wrap(t) for t in (
+                        bsa_workspace, projected.contiguous(), fab, qw, kw,
+                        stale_kmean, stale_vscale, q, k, v,
+                    )),
+                    attn.q_norm.eps, rot_dim, start, stop - start,
+                    tokens, heads, stream,
+                )
+                verify_path = os.environ.get("H3_SPARK_BSA_ORIGINAL_VERIFY_PATH")
+                if start == 0 and verify_path and not getattr(_native_spark_qkv, "_bsa_original_verified", False):
+                    qc, kc, vc = projected.split(inner, dim=-1)
+                    qc = qc.view(1, stop - start, heads, head_dim)
+                    kc = kc.view(1, stop - start, heads, head_dim)
+                    qref = torch.empty_like(q[:, start:stop])
+                    kref = torch.empty_like(k[:, start:stop])
+                    ck._C.rms_rope(
+                        *(wrap(t) for t in (qc, kc, freqs, qw, kw, qref, kref)),
+                        attn.q_norm.eps, stream, True, rot_dim,
+                    )
+                    vref = vc.view(1, stop - start, heads, head_dim)
+                    parity = {}
+                    for name, actual, reference in (
+                        ("q", q[:, start:stop], qref),
+                        ("k", k[:, start:stop], kref),
+                        ("v", v[:, start:stop], vref),
+                    ):
+                        delta = (actual.float() - reference.float()).abs()
+                        parity[name] = {
+                            "bitwise": bool(torch.equal(actual, reference)),
+                            "equal_fraction": float((actual == reference).float().mean()),
+                            "max_abs": float(delta.max()),
+                            "rmse": float(delta.square().mean().sqrt()),
+                        }
+                    Path(verify_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(verify_path).write_text(json.dumps({
+                        "tokens": stop - start, "heads": heads, "rot_dim": rot_dim,
+                        "producer_workspace_bytes": int(bsa_plan["total"]),
+                        "parity": parity,
+                    }, indent=2))
+                    _native_spark_qkv._bsa_original_verified = True
+                continue
+            if bsa_materializer:
+                # This experimental entry reuses the official BSA producer's
+                # 64-row tile RMSNorm/RoPE, but retains BF16 Q/K/V so Spark's
+                # reblock, reweight, route and exact kernels remain unchanged.
+                fab = ck._packed_rope_fab(freqs, stop - start, rot_dim)
+                verify_path = os.environ.get("H3_SPARK_BSA_VERIFY_PATH")
+                verify = start == 0 and verify_path and not getattr(_native_spark_qkv, "_bsa_verified", False)
+                if verify:
+                    candidate_start = torch.cuda.Event(enable_timing=True)
+                    candidate_end = torch.cuda.Event(enable_timing=True)
+                    candidate_start.record()
+                ck._C.bsa_materialize_qkv_chunk(
+                    *(wrap(t) for t in (projected.contiguous(), fab, qw, kw, q, k, v)),
+                    attn.q_norm.eps, rot_dim, start, stop - start,
+                    tokens, heads, stream,
+                )
+                if verify:
+                    candidate_end.record()
+                    qc, kc, vc = projected.split(inner, dim=-1)
+                    qc = qc.view(1, stop - start, heads, head_dim)
+                    kc = kc.view(1, stop - start, heads, head_dim)
+                    qref = torch.empty_like(q[:, start:stop])
+                    kref = torch.empty_like(k[:, start:stop])
+                    baseline_start = torch.cuda.Event(enable_timing=True)
+                    baseline_end = torch.cuda.Event(enable_timing=True)
+                    baseline_start.record()
+                    ck._C.rms_rope(
+                        *(wrap(t) for t in (qc, kc, freqs, qw, kw, qref, kref)),
+                        attn.q_norm.eps, stream, True, rot_dim,
+                    )
+                    vref = vc.view(1, stop - start, heads, head_dim).clone()
+                    baseline_end.record()
+                    baseline_end.synchronize()
+                    parity = {}
+                    for name, actual, reference in (
+                        ("q", q[:, start:stop], qref),
+                        ("k", k[:, start:stop], kref),
+                        ("v", v[:, start:stop], vref),
+                    ):
+                        delta = (actual.float() - reference.float()).abs()
+                        parity[name] = {
+                            "bitwise": bool(torch.equal(actual, reference)),
+                            "equal_fraction": float((actual == reference).float().mean()),
+                            "max_abs": float(delta.max()),
+                            "rmse": float(delta.square().mean().sqrt()),
+                        }
+                    Path(verify_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(verify_path).write_text(json.dumps({
+                        "tokens": stop - start, "heads": heads, "rot_dim": rot_dim,
+                        "candidate_kernel_ms": candidate_start.elapsed_time(candidate_end),
+                        "baseline_rope_copy_ms": baseline_start.elapsed_time(baseline_end),
+                        "parity": parity,
+                    }, indent=2))
+                    _native_spark_qkv._bsa_verified = True
+                continue
             qc, kc, vc = projected.split(inner, dim=-1)
             qc = qc.view(1, stop - start, heads, head_dim)
             kc = kc.view(1, stop - start, heads, head_dim)
-            comfy.quant_ops.ck.rms_rope_split_half_(
-                qc,
-                kc,
-                rope_freqs.index_select(1, indices),
-                qw,
-                kw,
-                epsilon=attn.q_norm.eps,
-                rot_dim=rot_dim,
+            ck._C.rms_rope(
+                *(wrap(t) for t in (qc, kc, freqs, qw, kw,
+                                      q[:, start:stop], k[:, start:stop])),
+                attn.q_norm.eps, stream, True, rot_dim,
             )
-            q[:, start:stop].copy_(qc)
-            k[:, start:stop].copy_(kc)
             v[:, start:stop].copy_(vc.view(1, stop - start, heads, head_dim))
     return q, k, v
 
@@ -278,7 +440,10 @@ def _native_spark_attention(attn, x, rope_freqs, transformer_options, layer, sta
         qkv_end = torch.cuda.Event(enable_timing=True)
         qkv_start.record()
         qkv_profile = ("qkv_materialize", qkv_start, qkv_end)
-    q, k, v = _native_spark_qkv(attn, x, rope_freqs, layout.permutation)
+    q, k, v = _native_spark_qkv(
+        attn, x, rope_freqs, layout.permutation,
+        video_start=layout.video_start, video_tokens=layout.video_tokens,
+    )
     if qkv_profile is not None:
         qkv_profile[2].record()
         state.controller.reblock_profile.append(qkv_profile)
@@ -289,7 +454,8 @@ def _native_spark_attention(attn, x, rope_freqs, transformer_options, layer, sta
         unpack_end = torch.cuda.Event(enable_timing=True)
         unpack_start.record()
         unpack_profile = ("output_unpack_and_projection", unpack_start, unpack_end)
-    output = output.index_select(1, layout.inverse_permutation)
+    if not state.controller.direct_output:
+        output = output.index_select(1, layout.inverse_permutation)
     state.controller.counts["sparse:spark_comfy_native"] += 1
     activation_log.hit(x.shape[0], layout.video_tokens)
     output = attn.out_proj(
@@ -344,41 +510,56 @@ class MiniMaxH3SparkAttentionSM120:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model": ("MODEL",),
-                "enabled": ("BOOLEAN", {"default": True}),
+                "model": ("MODEL", {"tooltip": "接入 MiniMax H3 模型：连接在模型加载节点之后、采样器之前。"}),
+                "enabled": ("BOOLEAN", {"default": True, "tooltip": "是否启用 Spark；关闭时原样输出输入模型。"}),
                 "steps": (
                     "INT",
-                    {"default": 20, "min": 1, "max": 200, "step": 1},
+                    {"default": 20, "min": 1, "max": 200, "step": 1,
+                     "tooltip": "本次采样的模型调用次数，通常与采样器 steps 相同；用于计算预热阶段。"},
                 ),
+                "warmup_mode": (["warmup_percent", "warmup_steps"],
+                                {"default": "warmup_percent",
+                                 "tooltip": "选择 dense 预热长度的表示法：百分比或固定模型调用次数；只会使用对应的 warmup 参数。"}),
                 "warmup_percent": (
                     "FLOAT",
-                    {"default": 20.0, "min": 0.0, "max": 100.0, "step": 1.0},
+                    {"default": 20.0, "min": 0.0, "max": 100.0, "step": 1.0,
+                     "tooltip": "前多少百分比的采样调用保持 dense。建议输入 20–25（代表 20%–25%，不是 0.2–0.25）；仅在 warmup_mode=warmup_percent 时生效。"},
                 ),
+                "warmup_steps": (
+                    "INT",
+                    {"default": 4, "min": 0, "max": 200, "step": 1,
+                     "tooltip": "开始时保持 dense 的模型调用次数；仅在 warmup_mode=warmup_steps 时生效。20 步采样设 4 相当于 20%。"},
+                ),
+                "topk_mode": (["topk_ratio", "topk_blocks"],
+                              {"default": "topk_ratio",
+                               "tooltip": "选择 Top-K 预算表示法：默认 topk_ratio 使用随视频长度变化的比例；topk_blocks 使用固定块数。"}),
                 "topk_ratio": (
                     "FLOAT",
-                    {"default": 0.1, "min": 0.01, "max": 1.0, "step": 0.01},
+                    {"default": 0.2, "min": 0.01, "max": 1.0, "step": 0.01,
+                     "tooltip": "精确计算的候选视频块比例：0.1≈10%（速度最快），0.3≈30%（保真度最好），建议 0.15 或 0.2 取得均衡；仅在 topk_mode=topk_ratio 时生效。"},
+                ),
+                "topk_blocks": (
+                    "INT",
+                    {"default": 228, "min": 1, "max": 262144, "step": 1,
+                     "tooltip": "每个 query 块精确计算的候选视频块数。10 秒 768p 样本中 114≈10%、228≈20%、342≈30%；10% 通常最快，30% 保真度较高，建议先用 228。仅在 topk_mode=topk_blocks 时生效。"},
                 ),
                 "dense_layers": (
                     "INT",
-                    {"default": 1, "min": 0, "max": 50, "step": 1},
+                    {"default": 1, "min": 0, "max": 50, "step": 1,
+                     "tooltip": "始终使用 dense attention 的前 N 个 Transformer 层；1 表示第 0 层保持 dense，0 表示不固定任何层。"},
                 ),
                 "min_tokens": (
                     "INT",
-                    {"default": 4096, "min": 256, "max": 262144, "step": 256},
+                    {"default": 12288, "min": 256, "max": 262144, "step": 256,
+                     "tooltip": "序列 token 数低于该值时保持 dense；用于避免短序列上稀疏计算反而增加开销。"},
                 ),
-                "strict": ("BOOLEAN", {"default": True}),
+                "strict": ("BOOLEAN", {"default": True,
+                                       "tooltip": "启用时，Spark 不兼容的输入会报错；关闭时对不兼容输入回退原始 attention，并在日志记录原因。"}),
             },
             "optional": {
-                "video_tail_mode": (["dense", "pad"], {"default": "dense"}),
-                "global_anchor_dtype": (
-                    ["float32", "bfloat16"],
-                    {"default": "float32"},
-                ),
-                "ablation_mode": ([
-                    "full",
-                    "full_reuse2",
-                    "full_group841",
-                ], {"default": "full"}),
+                "tail_granularity": (["query", "block"],
+                                     {"default": "query",
+                                      "tooltip": "近似分支的 Q 粒度：query（默认）对应 sol-engine Sol，只下采样 K/V、保留逐条真实 Q；block 对应 ComfyUI Sol，Q 和 K/V 都按块下采样，同一 Q 块共享近似结果。精确分支仍使用真实 Q。"}),
             },
         }
 
@@ -405,7 +586,13 @@ class MiniMaxH3SparkAttentionSM120:
         strict,
         ablation_mode="full",
         video_tail_mode="dense",
+        tail_granularity="query",
+        topk_mode="topk_ratio",
+        topk_blocks=228,
+        warmup_mode="warmup_percent",
+        warmup_steps=4,
         global_anchor_dtype="float32",
+        midpoint_direction_mode="fused",
     ):
         if not enabled:
             return (model,)
@@ -420,7 +607,15 @@ class MiniMaxH3SparkAttentionSM120:
         patched = model.clone()
         state = _RunState.create(
             int(steps), float(warmup_percent), float(topk_ratio),
-            str(ablation_mode), str(video_tail_mode), str(global_anchor_dtype)
+            ablation_mode=str(ablation_mode),
+            video_tail_mode=str(video_tail_mode),
+            global_anchor_dtype=str(global_anchor_dtype),
+            tail_granularity=str(tail_granularity),
+            midpoint_direction_mode=str(midpoint_direction_mode),
+            topk_mode=str(topk_mode),
+            topk_blocks=int(topk_blocks),
+            warmup_mode=str(warmup_mode),
+            warmup_steps=int(warmup_steps),
         )
         model_sampling = model.get_model_object("model_sampling")
         policy = SparseAttnPatch(
@@ -466,13 +661,17 @@ class MiniMaxH3SparkAttentionSM120:
         )
         log.info(
             "[Spark-H3] installed ComfyUI-native producer on %d H3 blocks "
-            "(mode %s, tail %s, anchor %s, Top-K %.0f%%, warmup %.0f%%, dense blocks %s)",
+            "(mode %s, tail %s, anchor %s, approximation %s, midpoint %s, Top-K %s, warmup %s, dense blocks %s)",
             len(blocks),
             str(ablation_mode),
             str(video_tail_mode),
-            str(global_anchor_dtype),
-            100.0 * float(topk_ratio),
-            float(warmup_percent),
+            state.controller.config.global_anchor_dtype,
+            str(tail_granularity),
+            state.controller.config.landmark_tree_v2_midpoint_direction_mode,
+            (f"{int(topk_blocks)} blocks" if topk_mode == "topk_blocks"
+             else f"{100.0 * float(topk_ratio):.0f}%"),
+            (f"{state.warmup_evaluations} steps" if warmup_mode == "warmup_steps"
+             else f"{float(warmup_percent):.0f}%"),
             "none" if int(dense_layers) == 0 else f"0..{int(dense_layers) - 1}",
         )
         return (patched,)
@@ -485,10 +684,12 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
     def INPUT_TYPES(cls):
         inputs = super().INPUT_TYPES()
         required = inputs["required"]
+        required.pop("topk_mode")
         required.pop("topk_ratio")
-        inputs["optional"].pop("video_tail_mode")
-        inputs["optional"].pop("global_anchor_dtype")
-        inputs["optional"].pop("ablation_mode")
+        required.pop("topk_blocks")
+        required.pop("warmup_mode")
+        required.pop("warmup_steps")
+        inputs["optional"].pop("tail_granularity")
         required["tau"] = (
             "FLOAT",
             {"default": 1.0, "min": 0.0, "max": 4.0, "step": 0.05},
@@ -545,6 +746,99 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
             float(warmup_percent),
             int(dense_layers),
         )
+        return (patched,)
+
+
+class MiniMaxH3BSAAllExactScheduled:
+    """Dense reference with Spark's warmup/layer gates and BSA exact active calls."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "model": ("MODEL",),
+            "steps": ("INT", {"default": 20, "min": 1, "max": 200}),
+            "warmup_percent": ("FLOAT", {"default": 20.0, "min": 0.0, "max": 100.0}),
+            "dense_layers": ("INT", {"default": 1, "min": 0, "max": 50}),
+            "min_tokens": ("INT", {"default": 12288, "min": 0, "max": 262144}),
+        }}
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "patch"
+    CATEGORY = "model_patches/attention"
+    DESCRIPTION = "Experiment control: SDPA for warmup and dense layers; full-sink BSA for active H3 attention."
+
+    def patch(self, model, steps, warmup_percent, dense_layers, min_tokens):
+        diffusion_model = model.get_model_object("diffusion_model")
+        blocks = getattr(diffusion_model, "blocks", None)
+        if diffusion_model.__class__.__name__ != "MiniMaxH3Model" or blocks is None:
+            raise TypeError("BSA all-exact scheduled control requires MiniMaxH3Model")
+        if dense_layers > len(blocks):
+            raise ValueError("dense_layers exceeds H3 block count")
+
+        import comfy.patcher_extension
+        from comfy_extras.nodes_sparse_attention import SparseAttnPatch, h3_eligible, h3_sparse_attention
+
+        steps = int(steps)
+        warmup_count = min(steps, math.ceil(steps * float(warmup_percent) / 100.0))
+        policy = SparseAttnPatch(
+            tau=1.0, topk_ratio=0.0, vsa=False,
+            sigma_start=float("inf"), sigma_end=-float("inf"),
+            min_tokens=0, dense_blocks=set(), sink_conditioning="off",
+            extra_tokens=0, verbose=True, all_exact=True,
+        )
+        state = {"evaluation_index": -1, "previous_sigma": None}
+        patched = model.clone()
+
+        def advance(transformer_options):
+            sigmas = (transformer_options or {}).get("sigmas")
+            sigma = float(sigmas.flatten()[0]) if torch.is_tensor(sigmas) and sigmas.numel() else None
+            next_index = state["evaluation_index"] + 1
+            new_run = next_index >= steps
+            if sigma is not None and state["previous_sigma"] is not None:
+                new_run = new_run or sigma > state["previous_sigma"] + 1e-7
+            if new_run:
+                next_index = 0
+                policy.reset()
+            state["evaluation_index"] = next_index
+            state["previous_sigma"] = sigma
+            log.info("[BSA-all-exact] evaluation %d/%d: %s; first %d layers SDPA",
+                     next_index + 1, steps,
+                     "SDPA warmup" if next_index < warmup_count else "BSA active",
+                     dense_layers)
+
+        for layer, block in enumerate(blocks):
+            def make_block_patch(layer=layer, block=block):
+                def attention(h, rope_freqs=None, transformer_options={}):
+                    return h3_sparse_attention(
+                        block.attn, h, rope_freqs, transformer_options, policy, layer)
+
+                def block_patch(args, extra):
+                    if layer == 0:
+                        advance(args["transformer_options"])
+                    if (state["evaluation_index"] < warmup_count
+                            or layer < dense_layers
+                            or args["img"].shape[0] < min_tokens):
+                        return extra["original_block"](args)
+                    if not h3_eligible(block.attn, args["img"], args["rope_freqs"],
+                                       args["transformer_options"], policy, layer):
+                        raise RuntimeError(f"BSA all-exact expected active H3 layer {layer}, but it was ineligible")
+                    return extra["original_block"]({**args, "attention": attention})
+
+                return block_patch
+
+            patched.set_model_patch_replace(make_block_patch(), "dit", "double_block", layer)
+
+        def cleanup(_model_patcher):
+            policy.reset()
+            state["evaluation_index"] = -1
+            state["previous_sigma"] = None
+
+        patched.add_callback_with_key(
+            comfy.patcher_extension.CallbacksMP.ON_CLEANUP,
+            "bsa_all_exact_scheduled_attention", cleanup,
+        )
+        log.info("[BSA-all-exact] installed on %d H3 layers (warmup %d/%d, dense layers %d, min_tokens %d)",
+                 len(blocks), warmup_count, steps, dense_layers, min_tokens)
         return (patched,)
 
 
@@ -659,6 +953,7 @@ class SaveVideoLosslessUltrafast:
 NODE_CLASS_MAPPINGS = {
     "MiniMaxH3SparkAttentionSM120": MiniMaxH3SparkAttentionSM120,
     "MiniMaxH3SolAttentionSM120": MiniMaxH3SolAttentionSM120,
+    "MiniMaxH3BSAAllExactScheduled": MiniMaxH3BSAAllExactScheduled,
     "SaveMiniMaxH3AVLatentCache": SaveMiniMaxH3AVLatentCache,
     "LoadMiniMaxH3AVLatentCache": LoadMiniMaxH3AVLatentCache,
     "SaveVideoLosslessUltrafast": SaveVideoLosslessUltrafast,
@@ -667,6 +962,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3SparkAttentionSM120": "MiniMax H3 Spark Attention (SM120)",
     "MiniMaxH3SolAttentionSM120": "MiniMax H3 Sol Attention (Official Compatibility)",
+    "MiniMaxH3BSAAllExactScheduled": "MiniMax H3 BSA All-Exact (Scheduled Dense Control)",
     "SaveMiniMaxH3AVLatentCache": "Save MiniMax H3 AV Latent Cache",
     "LoadMiniMaxH3AVLatentCache": "Load MiniMax H3 AV Latent Cache",
     "SaveVideoLosslessUltrafast": "Save Video Lossless (Ultrafast)",

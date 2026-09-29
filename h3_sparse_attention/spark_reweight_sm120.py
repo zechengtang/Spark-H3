@@ -52,6 +52,7 @@ class SparkReweightForwardSm120:
         prefetch_next_route_k: bool = True,
         external_route: bool = False,
         packed_external_route: bool = False,
+        skip_external_route_qk: bool = False,
         fused_topk_ratio: float = 0.0,
         hybrid_route: bool = False,
         exact_only: bool = False,
@@ -69,9 +70,12 @@ class SparkReweightForwardSm120:
         self.kv_stage = STAGES
         self.debug_route_trace = debug_route_trace
         self.prefetch_first_exact_k = prefetch_first_exact_k
-        self.prefetch_next_route_k = prefetch_next_route_k
         self.external_route = external_route
         self.packed_external_route = packed_external_route
+        if skip_external_route_qk and not packed_external_route:
+            raise ValueError("route-QK-free specialization requires packed external routing")
+        self.skip_external_route_qk = skip_external_route_qk
+        self.prefetch_next_route_k = prefetch_next_route_k and not skip_external_route_qk
         self.fused_topk_ratio = fused_topk_ratio
         self.fused_topk_route = fused_topk_ratio > 0.0
         self.fused_topk_numerator = round(fused_topk_ratio * 10000)
@@ -143,7 +147,8 @@ class SparkReweightForwardSm120:
             cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_Q)
             cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_K)
             cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_V)
-            cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_KC)
+            if cutlass.const_expr(not self.skip_external_route_qk):
+                cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_KC)
             cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_VC)
             cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_O)
 
@@ -514,7 +519,7 @@ class SparkReweightForwardSm120:
                             )
                             K_pipeline.producer_commit(K_producer)
                             K_producer.advance()
-                else:
+                elif cutlass.const_expr(not self.skip_external_route_qk):
                     K_pipeline.producer_acquire(K_producer)
                     cute.copy(
                         tma_atom_KC,
@@ -536,18 +541,19 @@ class SparkReweightForwardSm120:
                 V_pipeline.producer_commit(V_producer)
                 V_producer.advance()
 
-            k_wait = K_pipeline.consumer_try_wait(K_consumer)
-            K_pipeline.consumer_wait(K_consumer, k_wait)
-            gemm_smem_zero_acc(
-                tiled_mma_qk,
-                tSrS,
-                tSrQ,
-                tSrK,
-                tSsK_copy[None, None, None, K_consumer.index],
-                smem_copy_K,
-            )
-            K_pipeline.consumer_release(K_consumer)
-            K_consumer.advance()
+            if cutlass.const_expr(not self.skip_external_route_qk):
+                k_wait = K_pipeline.consumer_try_wait(K_consumer)
+                K_pipeline.consumer_wait(K_consumer, k_wait)
+                gemm_smem_zero_acc(
+                    tiled_mma_qk,
+                    tSrS,
+                    tSrQ,
+                    tSrK,
+                    tSsK_copy[None, None, None, K_consumer.index],
+                    smem_copy_K,
+                )
+                K_pipeline.consumer_release(K_consumer)
+                K_consumer.advance()
 
             # The route scores are now in registers. Fetch weighted keys into
             # the released K stage while the CTA reduces and compacts routes.
