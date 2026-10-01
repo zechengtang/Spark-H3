@@ -1,4 +1,4 @@
-"""SM90/SM100 route-mask backend tests.
+"""SM80/SM90/SM100 route backend tests.
 
 The wiring tests run everywhere (backend probing is signature-only and never
 constructs a kernel). The numerical tests are gated on SM90/SM100 hardware and
@@ -19,13 +19,19 @@ requires_cuda = pytest.mark.skipif(
 )
 requires_route_backend = pytest.mark.skipif(
     not torch.cuda.is_available()
-    or tuple(torch.cuda.get_device_capability(0)) not in ((9, 0), (10, 0)),
-    reason="route-mask CuTe backends require SM90/SM100 hardware",
+    or tuple(torch.cuda.get_device_capability(0)) not in ((8, 0), (9, 0), (10, 0)),
+    reason="route backends require SM80/SM90/SM100 hardware",
 )
+requires_hybrid_backend = pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or tuple(torch.cuda.get_device_capability(0)) not in ((9, 0), (10, 0)),
+    reason="hybrid route-mask CuTe backends require SM90/SM100 hardware",
+)
+requires_export_backend = requires_hybrid_backend
 requires_threshold_backend = pytest.mark.skipif(
     not torch.cuda.is_available()
-    or tuple(torch.cuda.get_device_capability(0)) not in ((9, 0), (10, 0), (12, 0)),
-    reason="threshold CuTe backend requires SM90/SM100/SM120 hardware",
+    or tuple(torch.cuda.get_device_capability(0)) not in ((8, 0), (9, 0), (10, 0), (12, 0)),
+    reason="threshold backend requires SM80/SM90/SM100/SM120 hardware",
 )
 
 
@@ -158,7 +164,7 @@ def test_threshold_backend_probe_sm90_sm100(monkeypatch):
         ((9, 0), "cute_sm90_topk_threshold"),
         ((10, 0), "cute_sm100_topk_threshold"),
         ((12, 0), "cute_sm120_topk_threshold"),
-        ((8, 0), None),
+        ((8, 0), "triton_sm80_topk_threshold"),
     ):
         monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, _c=cap, **k: _c)
         assert rope_sol_kernel.sol_topk_threshold_backend(0) == expected
@@ -227,7 +233,7 @@ def test_topk_threshold_query_prefix_keeps_full_kv():
     )
 
 
-@requires_route_backend
+@requires_hybrid_backend
 def test_topk_threshold_hybrid_nan_rows():
     from h3_sparse_attention.rope_sol_kernel import sol_topk_threshold_attn
 
@@ -275,7 +281,7 @@ def test_vaware_external_route_matches_torch_reference():
     assert torch.equal(actual, expected)
 
 
-@requires_route_backend
+@requires_export_backend
 @pytest.mark.parametrize("force_local_blocks", [True, False])
 def test_vaware_export_route_recovers_threshold_decision(force_local_blocks):
     from h3_sparse_attention.sol_vaware_compensation import exact_attention

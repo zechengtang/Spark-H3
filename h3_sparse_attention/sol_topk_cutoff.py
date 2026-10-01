@@ -353,18 +353,31 @@ def _gemm_score_map(
     """Build native-BF16 GEMM scores, then promote them for FP32 radix."""
 
     batch, tokens, heads, _ = q.shape
-    padding = blocks * BLOCK_SIZE - tokens
-    q_padded = torch.nn.functional.pad(q, (0, 0, 0, 0, 0, padding))
-    counts = torch.full(
-        (blocks,), float(BLOCK_SIZE), device=q.device, dtype=torch.float32
-    )
-    # Scalar assignment copies a host tensor and synchronizes the CUDA stream.
-    # Filling a device view keeps this entirely on the GPU.
-    counts[-1:].fill_(tokens - (blocks - 1) * BLOCK_SIZE)
-    query_centroids = q_padded.view(
-        batch, blocks, BLOCK_SIZE, heads, HEAD_DIM
-    ).sum(dim=2, dtype=torch.float32) / counts.view(1, blocks, 1, 1)
-    query_centroids = query_centroids.to(torch.bfloat16)
+    # Reduce complete blocks through a view and pad only the final short block.
+    # Padding the complete Q tensor costs 1.39 GiB at 345-frame/768p and exceeds
+    # A800 headroom.  Keeping PyTorch's original FP32 sum here (rather than a
+    # different Triton reduction tree) preserves bitwise route cutoffs.
+    complete = tokens // BLOCK_SIZE
+    parts = []
+    if complete:
+        parts.append(
+            q[:, : complete * BLOCK_SIZE]
+            .view(batch, complete, BLOCK_SIZE, heads, HEAD_DIM)
+            .sum(dim=2, dtype=torch.float32)
+            * (1.0 / BLOCK_SIZE)
+        )
+    if complete < blocks:
+        tail = torch.nn.functional.pad(
+            q[:, complete * BLOCK_SIZE :],
+            (0, 0, 0, 0, 0, BLOCK_SIZE - (tokens - complete * BLOCK_SIZE)),
+        )
+        parts.append(
+            tail.view(batch, 1, BLOCK_SIZE, heads, HEAD_DIM).sum(
+                dim=2, dtype=torch.float32
+            )
+            / (tokens - complete * BLOCK_SIZE)
+        )
+    query_centroids = torch.cat(parts, dim=1).to(torch.bfloat16)
 
     scores = torch.einsum(
         "bqhd,bkhd->bqhk",

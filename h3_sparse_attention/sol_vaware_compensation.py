@@ -74,17 +74,42 @@ def exact_attention(q,k,v,kc,vs,threshold=None,route=None,scale=None,sink_start=
             out[:,:query_tokens].copy_(out_kernel)
             lse[:,:query_tokens].copy_(lse_kernel)
         return out,lse,actual
-    if not force_local_blocks and not external:
-        raise NotImplementedError("No-local-band virtual summaries require an SM90/SM100/SM120 BF16 CuTe backend or an explicit route")
     # Existing selected-block Triton implementation, also supports fp16.
-    from .sol_logsumexp_correction_triton import _average_route_kernel,_exact_gap_kernel
-    out=torch.empty_like(q,dtype=torch.float32);scratch=torch.empty_like(out);al=torch.empty_like(lse);gap=torch.empty_like(lse)
-    grid=(4,query_blocks,b*h)
+    from .sol_logsumexp_correction_triton import (
+        _average_route_kernel,
+        _exact_gap_kernel,
+        _merge_exact_average_kernel,
+    )
+    # The exact-only path is immediately consumed by the virtual-query merge,
+    # whose Triton accumulators remain FP32. Store its sequence-sized state in
+    # the model dtype, matching the CuTe backends and cutting this workspace in
+    # half on SM80. Mixed exact/centroid output retains FP32 until its merge.
+    out=torch.empty_like(q) if exact_only else torch.empty_like(q,dtype=torch.float32)
+    if exact_only:
+        # Threshold routing still needs the route mask, but the virtual-query
+        # path never consumes the centroid approximation. Avoid two sequence-
+        # sized workspaces and all value-centroid accumulation in that case.
+        scratch=torch.empty((1,),device=q.device,dtype=torch.float32)
+        al=torch.empty((1,),device=q.device,dtype=torch.float32)
+    else:
+        scratch=torch.empty_like(out)
+        al=torch.empty_like(lse)
+    gap=torch.empty_like(lse)
+    # Ampere has enough register file capacity for two 64-column value tiles.
+    # This halves repeated Q/K score work versus the portable 32-column path.
+    value_tile=64 if capability==(8,0) else 32
+    grid=(d//value_tile,query_blocks,b*h)
     if not external:
         if hybrid:raise ValueError('hybrid threshold route requires an SM90/SM100/SM120 BF16 CuTe backend')
-        _average_route_kernel[grid](q,kc,vs,threshold,actual,scratch,al,scale*math.log2(math.e),t,sink_start//64,triton.cdiv(sink_start+sink_tokens,64),sink_tokens>0,h,n,32,64,32,d,num_warps=4,num_stages=1)
+        _average_route_kernel[grid](q,kc,vs,threshold,actual,scratch,al,scale*math.log2(math.e),t,sink_start//64,triton.cdiv(sink_start+sink_tokens,64),sink_tokens>0,force_local_blocks,not exact_only,h,n,value_tile,64,32,d,num_warps=4,num_stages=1)
     elif sink_tokens:
         actual[...,sink_start//64:triton.cdiv(sink_start+sink_tokens,64)]=1
-    _exact_gap_kernel[grid](q,k,v,kc,actual,out,lse,gap,scale*math.log2(math.e),t,h,n,32,64,32,d,num_warps=4,num_stages=1)
-    if not exact_only:raise ValueError('stock export is only available on SM90/SM100/SM120 BF16 CuTe backends')
+    _exact_gap_kernel[grid](q,k,v,kc,actual,out,lse,gap,scale*math.log2(math.e),t,h,n,value_tile,64,32,d,num_warps=4,num_stages=1)
+    if not exact_only:
+        if external:
+            raise ValueError('mixed exact/average output requires threshold routing')
+        merged=torch.empty_like(out)
+        _merge_exact_average_kernel[(query_tokens,b*h)](
+            out,lse,scratch,al,merged,t,h,d,128,num_warps=4)
+        out=merged
     return out,lse,actual

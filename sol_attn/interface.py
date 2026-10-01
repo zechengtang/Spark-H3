@@ -12,6 +12,9 @@ _CUTE_BACKENDS = {
     (10, 0): "cute_sm100",
     (12, 0): "cute_sm120",
 }
+_NATIVE_TRITON_BACKENDS = {
+    (8, 0): "triton_sm80",
+}
 _compiled = {}
 
 
@@ -74,6 +77,9 @@ def _backend_for_arch(
             "Sol-Attn requires an NVIDIA GPU with compute capability >= 8.0; "
             f"got SM{arch[0]}{arch[1]}"
         )
+    triton_backend = _NATIVE_TRITON_BACKENDS.get(arch)
+    if triton_backend is not None:
+        return triton_backend
     cute_backend = _CUTE_BACKENDS.get(arch)
     if cute_backend is not None:
         available = (
@@ -402,10 +408,13 @@ def sol_attn(
     scale = q.shape[-1] ** -0.5 if scale is None else float(scale)
     tau = float(tau)
 
-    if backend == "triton":
+    if backend in ("triton", "triton_sm80"):
         if kv_splits != 1:
             raise ValueError("kv_splits=2/4 is currently available on SM90 only")
-        from .triton_ref import sol_attn as triton_sol_attn
+        if backend == "triton_sm80":
+            from .sm80 import sol_attn as triton_sol_attn
+        else:
+            from .triton_ref import sol_attn as triton_sol_attn
 
         return triton_sol_attn(
             q,

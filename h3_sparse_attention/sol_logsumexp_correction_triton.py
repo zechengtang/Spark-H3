@@ -9,6 +9,45 @@ import triton.language as tl
 
 
 @triton.jit
+def _merge_exact_average_kernel(
+    exact_output,
+    exact_lse,
+    average_output,
+    average_lse,
+    output,
+    tokens,
+    heads: tl.constexpr,
+    elements: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    """Merge exact-token and centroid branches by their softmax masses."""
+    token = tl.program_id(0)
+    batch_head = tl.program_id(1)
+    batch, head = batch_head // heads, batch_head % heads
+    row = (batch * tokens + token) * heads + head
+    dims = tl.arange(0, BLOCK)
+    valid = dims < elements
+    exact_mass = tl.load(exact_lse + row)
+    average_mass = tl.load(average_lse + row)
+    maximum = tl.maximum(exact_mass, average_mass)
+    safe_maximum = tl.where(maximum == -float("inf"), 0.0, maximum)
+    exact_weight = tl.where(
+        exact_mass == -float("inf"), 0.0, tl.exp(exact_mass - safe_maximum)
+    )
+    average_weight = tl.where(
+        average_mass == -float("inf"), 0.0, tl.exp(average_mass - safe_maximum)
+    )
+    exact_value = tl.load(exact_output + row * elements + dims, mask=valid)
+    average_value = tl.load(average_output + row * elements + dims, mask=valid)
+    denominator = exact_weight + average_weight
+    merged = (
+        tl.where(exact_weight > 0, exact_weight * exact_value, 0.0)
+        + tl.where(average_weight > 0, average_weight * average_value, 0.0)
+    ) / tl.maximum(denominator, 1.0e-30)
+    tl.store(output + row * elements + dims, merged, mask=valid)
+
+
+@triton.jit
 def _average_route_kernel(
     q_ptr,
     kc_ptr,
@@ -22,6 +61,8 @@ def _average_route_kernel(
     sink_start_block,
     sink_end_block,
     has_sink: tl.constexpr,
+    force_local_blocks: tl.constexpr,
+    compute_average: tl.constexpr,
     heads: tl.constexpr,
     blocks: tl.constexpr,
     value_tile: tl.constexpr,
@@ -70,9 +111,9 @@ def _average_route_kernel(
         )
         scores = tl.dot(query, key_centroids.T).to(tl.float32) * scale_log2
         column_mean = tl.sum(scores, axis=0) / query_length.to(tl.float32)
-        exact = (column_mean > route_threshold) | (
-            tl.abs(query_block - block_indices) <= 1
-        )
+        exact = column_mean > route_threshold
+        if force_local_blocks:
+            exact = exact | (tl.abs(query_block - block_indices) <= 1)
         if has_sink:
             exact = exact | (
                 (block_indices >= sink_start_block)
@@ -91,65 +132,67 @@ def _average_route_kernel(
                 mask=valid_blocks,
             )
 
-        approximate = valid_blocks & ~exact
-        has_approximate = tl.sum(approximate.to(tl.int32), axis=0) > 0
-        approximate_scores = tl.where(
-            approximate[None, :], scores, -float("inf")
-        )
-        safe_scores = tl.where(has_approximate, approximate_scores, 0.0)
-        candidate_max = tl.maximum(row_max, tl.max(safe_scores, axis=1))
-        new_max = tl.where(has_approximate, candidate_max, row_max)
-        alpha = tl.math.exp2(
-            tl.where(has_approximate, row_max - new_max, 0.0)
-        )
-        probabilities = tl.math.exp2(
-            safe_scores - tl.where(has_approximate, new_max, 0.0)[:, None]
-        )
-        probabilities = tl.where(
-            has_approximate & approximate[None, :], probabilities, 0.0
-        )
-        value_offsets = (
-            ((batch * blocks + block_indices[:, None]).to(tl.int64) * heads + head)
+        if compute_average:
+            approximate = valid_blocks & ~exact
+            has_approximate = tl.sum(approximate.to(tl.int32), axis=0) > 0
+            approximate_scores = tl.where(
+                approximate[None, :], scores, -float("inf")
+            )
+            safe_scores = tl.where(has_approximate, approximate_scores, 0.0)
+            candidate_max = tl.maximum(row_max, tl.max(safe_scores, axis=1))
+            new_max = tl.where(has_approximate, candidate_max, row_max)
+            alpha = tl.math.exp2(
+                tl.where(has_approximate, row_max - new_max, 0.0)
+            )
+            probabilities = tl.math.exp2(
+                safe_scores - tl.where(has_approximate, new_max, 0.0)[:, None]
+            )
+            probabilities = tl.where(
+                has_approximate & approximate[None, :], probabilities, 0.0
+            )
+            value_offsets = (
+                ((batch * blocks + block_indices[:, None]).to(tl.int64) * heads + head)
+                * head_dim
+                + value_dims[None, :]
+            )
+            value_sums = tl.load(
+                vc_ptr + value_offsets,
+                mask=valid_blocks[:, None] & (value_dims[None, :] < head_dim),
+                other=0.0,
+            )
+            output = output * alpha[:, None] + tl.dot(
+                probabilities.to(value_sums.dtype), value_sums
+            )
+            block_lengths = tl.minimum(
+                block_size, tl.maximum(0, tokens - block_indices * block_size)
+            ).to(tl.float32)
+            row_sum = row_sum * alpha + tl.sum(
+                probabilities * block_lengths[None, :], axis=1
+            )
+            row_max = new_max
+
+    if compute_average:
+        valid_sum = row_sum > 0.0
+        normalized = tl.where(valid_sum[:, None], output / row_sum[:, None], 0.0)
+        output_offsets = (
+            ((batch * tokens + query_tokens[:, None]).to(tl.int64) * heads + head)
             * head_dim
             + value_dims[None, :]
         )
-        value_sums = tl.load(
-            vc_ptr + value_offsets,
-            mask=valid_blocks[:, None] & (value_dims[None, :] < head_dim),
-            other=0.0,
+        tl.store(
+            average_output_ptr + output_offsets,
+            normalized,
+            mask=query_valid[:, None] & (value_dims[None, :] < head_dim),
         )
-        output = output * alpha[:, None] + tl.dot(
-            probabilities.to(value_sums.dtype), value_sums
-        )
-        block_lengths = tl.minimum(
-            block_size, tl.maximum(0, tokens - block_indices * block_size)
-        ).to(tl.float32)
-        row_sum = row_sum * alpha + tl.sum(
-            probabilities * block_lengths[None, :], axis=1
-        )
-        row_max = new_max
-
-    valid_sum = row_sum > 0.0
-    normalized = tl.where(valid_sum[:, None], output / row_sum[:, None], 0.0)
-    output_offsets = (
-        ((batch * tokens + query_tokens[:, None]).to(tl.int64) * heads + head)
-        * head_dim
-        + value_dims[None, :]
-    )
-    tl.store(
-        average_output_ptr + output_offsets,
-        normalized,
-        mask=query_valid[:, None] & (value_dims[None, :] < head_dim),
-    )
-    if value_tile_id == 0:
-        lse = tl.where(
-            valid_sum,
-            (row_max + tl.math.log2(tl.where(valid_sum, row_sum, 1.0)))
-            * 0.6931471805599453,
-            -float("inf"),
-        )
-        stats_offsets = (batch * tokens + query_tokens) * heads + head
-        tl.store(average_lse_ptr + stats_offsets, lse, mask=query_valid)
+        if value_tile_id == 0:
+            lse = tl.where(
+                valid_sum,
+                (row_max + tl.math.log2(tl.where(valid_sum, row_sum, 1.0)))
+                * 0.6931471805599453,
+                -float("inf"),
+            )
+            stats_offsets = (batch * tokens + query_tokens) * heads + head
+            tl.store(average_lse_ptr + stats_offsets, lse, mask=query_valid)
 
 
 @triton.jit
@@ -285,4 +328,3 @@ def _exact_gap_kernel(
         stats_offsets = (batch * tokens + query_tokens) * heads + head
         tl.store(exact_lse_ptr + stats_offsets, lse, mask=query_valid)
         tl.store(mean_gap_ptr + stats_offsets, mean_gap, mask=query_valid)
-

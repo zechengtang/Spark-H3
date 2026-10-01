@@ -23,14 +23,15 @@ def sol_topk_threshold_backend(
 ) -> str | None:
     """Return the stock-threshold backend used by fixed-ratio SOL.
 
-    The cutoff path targets the CuTe mainloops with hybrid-route support
-    (SM90/SM100/SM120). Other architectures return None and the caller falls
-    back to explicit-route attention via sol_vaware_compensation.exact_attention.
+    The cutoff path targets the native SM80 Triton selector or the CuTe
+    mainloops with hybrid-route support on SM90/SM100/SM120.
     """
 
     if device is None:
         device = torch.cuda.current_device()
     capability = tuple(torch.cuda.get_device_capability(device))
+    if capability == (8, 0):
+        return "triton_sm80_topk_threshold"
     if capability == (12, 0):
         try:
             from sol_attn.sm120 import make_kernel
@@ -231,10 +232,34 @@ def sol_topk_threshold_attn(
         sink_start = tokens - sink_tokens
     if not 0 <= sink_start <= tokens or not 0 <= sink_tokens <= tokens - sink_start:
         raise ValueError("invalid sink range")
-    if sol_topk_threshold_backend(q.device) is None:
+    backend = sol_topk_threshold_backend(q.device)
+    if backend is None:
         raise RuntimeError(
-            "stock CuTe Top-K threshold routing requires an SM90/SM100/SM120 backend"
+            "Top-K threshold routing requires an SM80/SM90/SM100/SM120 backend"
         )
+
+    if backend == "triton_sm80_topk_threshold":
+        if route_mask is not None:
+            raise NotImplementedError(
+                "SM80 hybrid threshold/route-mask execution is not implemented"
+            )
+        from .sol_vaware_compensation import exact_attention
+
+        output, _, _ = exact_attention(
+            q,
+            k,
+            v,
+            key_centroids,
+            value_sums,
+            threshold=threshold,
+            scale=head_dim**-0.5 if scale is None else float(scale),
+            sink_start=sink_start,
+            sink_tokens=sink_tokens,
+            force_local_blocks=force_local_blocks,
+            _query_tokens=query_tokens,
+            exact_only=False,
+        )
+        return output.to(q.dtype)
 
     sink_start_block = sink_start // BLOCK_SIZE
     sink_end_block = math.ceil((sink_start + sink_tokens) / BLOCK_SIZE)

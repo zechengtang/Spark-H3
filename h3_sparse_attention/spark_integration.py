@@ -17,7 +17,7 @@ import torch.nn.functional as F
 
 _LOG2_E = math.log2(math.e)
 _SPARK_BLOCK_SIZE = 64
-_SUPPORTED_SPARK_CAPABILITIES = frozenset({(9, 0), (10, 0), (12, 0)})
+_SUPPORTED_SPARK_CAPABILITIES = frozenset({(8, 0), (9, 0), (10, 0), (12, 0)})
 _PROFILE_REBLOCK = os.environ.get("SPARK_PROFILE_REBLOCK") == "1"
 
 
@@ -277,6 +277,7 @@ def _headwise_permute_video_tokens(
     permutation: torch.Tensor,
     *,
     video_tokens: int,
+    out: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Apply the fused CUDA permutation, retaining PyTorch as the oracle."""
 
@@ -284,11 +285,15 @@ def _headwise_permute_video_tokens(
         from .landmark_tree_v2_triton import headwise_permute_bthd
 
         return headwise_permute_bthd(
-            values, permutation, video_tokens=video_tokens
+            values, permutation, video_tokens=video_tokens, out=out
         )
-    return _torch_headwise_permute_video_tokens(
+    result = _torch_headwise_permute_video_tokens(
         values, permutation, video_tokens=video_tokens
     )
+    if out is not None:
+        out.copy_(result)
+        return out
+    return result
 
 
 @torch.no_grad()
@@ -709,9 +714,21 @@ def spark_attention_bthd(
             and v_bthd.is_contiguous()
             and key_permutation.is_contiguous()
         ):
-            from .landmark_tree_v2_triton import headwise_permute_pair_bthd
+            from .landmark_tree_v2_triton import (
+                headwise_permute_pair_bthd,
+                headwise_permute_pair_bthd_low_memory,
+            )
 
-            k_bthd, v_bthd = headwise_permute_pair_bthd(
+            # The 345-frame/768p case is within ~100 MiB of an A800's limit.
+            # Reuse the dead K input as its permuted destination there, avoiding
+            # one simultaneous full-size BTHD output.  Shorter production
+            # shapes retain the faster paired gather.
+            permute_pair = (
+                headwise_permute_pair_bthd_low_memory
+                if q_bthd.shape[1] > 90_000
+                else headwise_permute_pair_bthd
+            )
+            k_bthd, v_bthd = permute_pair(
                 k_bthd,
                 v_bthd,
                 key_permutation,
@@ -869,10 +886,24 @@ def spark_attention_bthd(
         controller.counts["sol_dense_context_queries"] += 1
     if query_inverse_permutation is not None:
         profile = _profile_begin(controller, "reblock_output_inverse")
+        # The permuted queries are dead after the dense suffix. Drop the final
+        # local reference before allocating the equally sized inverse output so
+        # the CUDA allocator can reuse that storage on memory-bound SM80 runs.
+        inverse_out = None
+        if (
+            tuple(torch.cuda.get_device_capability(output.device)) == (8, 0)
+            and output.shape[1] > 90_000
+        ):
+            # At the 345-frame boundary another 1.39 GiB BTHD allocation does
+            # not fit. K is dead after the sparse mainloop and dense suffix, so
+            # reuse it as the non-aliasing destination of the inverse gather.
+            inverse_out = k_bthd
+        del q_bthd
         output = _headwise_permute_video_tokens(
             output,
             query_inverse_permutation,
             video_tokens=layout.video_tokens,
+            out=inverse_out,
         )
         _profile_end(controller, profile)
     return output if return_bthd else output.permute(0, 2, 1, 3).contiguous()
@@ -894,13 +925,23 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     )
 
     cfg = controller.config
+    capability = tuple(torch.cuda.get_device_capability(q.device))
+    if capability == (8, 0) and cfg.sol_route_topk_execution not in (
+        "threshold", "fused"
+    ):
+        raise RuntimeError(
+            f"SM80 does not implement sol_route_topk_execution="
+            f"{cfg.sol_route_topk_execution!r}; use 'threshold' or 'fused'"
+        )
     from .sol_numerator_virtual_q import virtual_q_backend, reduce_virtual_key_centroids
+    profile = _profile_begin(controller, "topk_reduce_kv")
     if (virtual_query_data is not None
             and cfg.sol_tail_granularity == "query"
             and virtual_q_backend(q).endswith("fused_virtual_query")):
         kc, vs = reduce_virtual_key_centroids(k), None
     else:
         kc, vs = _reduce_kv(k, v)
+    _profile_end(controller, profile)
     sink_tokens = layout.sequence_length - layout.video_tokens
     backend = sol_topk_threshold_backend(q.device)
     partial_video = sink_tokens == 0 and layout.video_tokens // 64 < math.ceil(q.shape[1] / 64)
@@ -939,7 +980,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         and not partial_video
         and cfg.sol_route_topk_execution == "fused"
         and virtual_query_data is not None
-        and tuple(torch.cuda.get_device_capability(q.device)) == (12, 0)
+        and tuple(torch.cuda.get_device_capability(q.device)) in ((8, 0), (12, 0))
         and _query_tokens is not None
     ):
         candidate_blocks = layout.video_tokens // 64
@@ -953,7 +994,11 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
                 1, round(cfg.sol_route_topk_ratio * candidate_blocks)
             ),
             route_topk_ratio=cfg.sol_route_topk_ratio,
-            route_threshold_mode="sm120_cta_local_exact_topk",
+            route_threshold_mode=(
+                "sm80_cta_local_exact_topk"
+                if capability == (8, 0)
+                else "sm120_cta_local_exact_topk"
+            ),
         )
         controller.counts["sol_topk_fused_route_calls"] += 1
     elif (
@@ -975,10 +1020,20 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         )
         controller.counts["sol_topk_packed_route_calls"] += 1
     elif backend is not None and not partial_video:
+        profile = _profile_begin(controller, "topk_cutoff")
         cutoff = {"gemm_radix": gemm_radix_topk_cutoff,
                   "gaussian_moments": triton_gaussian_moment_cutoff}[cfg.sol_route_topk_cutoff_mode]
-        threshold, stats = cutoff(q, kc, video_tokens=layout.video_tokens,
-                                   sink_tokens=sink_tokens, topk_ratio=cfg.sol_route_topk_ratio)
+        cutoff_kwargs = dict(
+            video_tokens=layout.video_tokens,
+            sink_tokens=sink_tokens,
+            topk_ratio=cfg.sol_route_topk_ratio,
+        )
+        if cfg.sol_route_topk_cutoff_mode == "gemm_radix":
+            # Tie counts are diagnostics only.  Avoid two GPU-to-CPU .item()
+            # synchronizations per layer in the production no-logging path.
+            cutoff_kwargs["collect_tie_stats"] = cfg.sol_log_density
+        threshold, stats = cutoff(q, kc, **cutoff_kwargs)
+        _profile_end(controller, profile)
     else:
         route, stats = _sol_topk_route(q, kc, video_tokens=layout.video_tokens,
                                       sink_tokens=sink_tokens, topk_ratio=cfg.sol_route_topk_ratio)
@@ -999,6 +1054,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     if virtual_query_data is not None:
         from .sol_numerator_virtual_q import virtual_q_attention, virtual_q_backend
         ranges, mapping, anchors = virtual_query_data
+        profile = _profile_begin(controller, "topk_fused_virtual")
         output = virtual_q_attention(q, k, v, virtual_ranges=ranges, leaf_to_virtual=mapping,
             virtual_anchors=anchors, precomputed_summaries=summaries, key_centroids=kc,
             value_sums=vs, threshold=threshold, route=route, sink_start=layout.video_tokens,
@@ -1017,6 +1073,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
             skip_external_route_qk=(
                 cfg.sol_route_topk_execution == "packed_external_no_route_qk"
             ))
+        _profile_end(controller, profile)
         controller.sol_backend = virtual_q_backend(q)
         controller.counts["sol_virtual_query_calls"] += 1
     elif route is None:

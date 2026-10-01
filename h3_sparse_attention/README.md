@@ -15,11 +15,12 @@ python -m pip install -e '.[cuda]'
 
 The pipeline still needs the H3-capable diffusers build and model dependencies
 listed in the repository's main README and `requirements.txt`. CUDA execution
-requires a matching PyTorch/CUDA installation. Plain Sol-Attn selects CuTe
-kernels when available and retains a Triton backend for other NVIDIA GPUs with
-compute capability at least 8.0. Spark-H3 is stricter: its Diffusers integration
-supports only SM90, SM100, and SM120 and raises before reblocking on every other
-architecture. Spark requires CUDA and Triton for its supported execution paths.
+requires a matching PyTorch/CUDA installation. Plain Sol-Attn selects the
+native SM80 Triton backend or the SM90/SM100/SM120 CuTe backend before launch;
+other NVIDIA GPUs with compute capability at least 8.0 use the portable Triton
+backend. Spark-H3's Diffusers integration supports SM80, SM90, SM100, and SM120
+and raises before reblocking on every other architecture. Spark requires CUDA
+and Triton for its supported execution paths.
 Sol-Attn requires contiguous BF16 `[batch, tokens, heads, 128]`
 tensors. These are forward/inference kernels.
 
@@ -177,10 +178,26 @@ Configuration overrides are passed as keyword arguments, for example
 automatically clears the default target-block setting; specifying both is an error.
 
 
-SM120 BF16 uses fused reweighting automatically above 8192 packed tokens;
-smaller inputs use the streamed exact/skipped implementation.
+Plain Sol on SM80 retains its pointer-based Triton kernels. Spark BF16 on SM80
+and SM120 uses a CuTe fused virtual-query mainloop automatically above 8192
+packed tokens; smaller inputs use the streamed exact/skipped implementation.
+The SM80 mainloop follows the SM120 structure: CTA-local native-threshold or
+fixed-budget fused Top-K routing, warp exact-index compaction, two-stage
+`cp.async` K/V streaming, and a single FP32 online-softmax/output accumulator
+for exact and approximate tiles. Set `sol_route_topk_execution="fused"` to
+select Top-K inside each CTA and remove the external cutoff tensor/pass. The
+SM80 implementation reuses the Q shared-memory tile for route scores after Q
+is register resident, so fused Top-K does not increase shared-memory usage. Its
+exact FP32 radix boundary selection distributes score scans over all four CTA
+warps, and the summary producer writes AK/AV directly in the N-major layout
+consumed by `cp.async`, avoiding per-layer transpose copies.
+Kernel failures propagate to the caller; there is no error-triggered backend
+fallback.
 `H3_SPARK_REWEIGHT_FUSED=0` or `1` selects the source's fallback/fused path on
-SM120 for testing. This code does not change environment variables.
+SM80/SM90/SM100/SM120 for testing. On SM80, fused mode supports native-threshold
+and CTA-local fused Top-K routes; unsupported external/hybrid route modes raise
+directly.
+This code does not change environment variables.
 
 Plain `install_h3_sol_attn` retains its base Sol defaults. The standalone Spark
 primitives below remain available. Unrelated attention methods and the source's

@@ -33,6 +33,7 @@ def test_paired_headwise_permutation_matches_two_independent_launches():
     from h3_sparse_attention.landmark_tree_v2_triton import (
         headwise_permute_bthd,
         headwise_permute_pair_bthd,
+        headwise_permute_pair_bthd_low_memory,
     )
 
     torch.manual_seed(91)
@@ -54,6 +55,17 @@ def test_paired_headwise_permutation_matches_two_independent_launches():
     )
     torch.testing.assert_close(actual_first, expected_first, rtol=0, atol=0)
     torch.testing.assert_close(actual_second, expected_second, rtol=0, atol=0)
+    destination = torch.empty_like(first)
+    returned = headwise_permute_bthd(
+        first, permutation, video_tokens=video_tokens, out=destination
+    )
+    assert returned.data_ptr() == destination.data_ptr()
+    torch.testing.assert_close(returned, expected_first, rtol=0, atol=0)
+    low_first, low_second = headwise_permute_pair_bthd_low_memory(
+        first.clone(), second.clone(), permutation, video_tokens=video_tokens
+    )
+    torch.testing.assert_close(low_first, expected_first, rtol=0, atol=0)
+    torch.testing.assert_close(low_second, expected_second, rtol=0, atol=0)
 
 
 def test_overrides_and_plain_sol_opt_in():
@@ -93,11 +105,11 @@ def test_overrides_and_plain_sol_opt_in():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
-def test_diffusers_spark_rejects_unsupported_sm(monkeypatch):
+def test_diffusers_spark_runs_on_sm80(monkeypatch):
     from h3_sparse_attention.processor import PackedLayout, _Controller
     from h3_sparse_attention.spark_integration import spark_attention_bthd
 
-    q = torch.empty((1, 64, 1, 128), device='cuda', dtype=torch.bfloat16)
+    q = torch.zeros((1, 64, 1, 128), device='cuda', dtype=torch.bfloat16)
     layout = PackedLayout(
         permutation=torch.arange(64, device='cuda'),
         inverse_permutation=torch.arange(64, device='cuda'),
@@ -108,16 +120,31 @@ def test_diffusers_spark_rejects_unsupported_sm(monkeypatch):
     )
     controller = _Controller(H3SparseAttentionConfig.spark(3))
     monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device=None: (8, 0))
-    with pytest.raises(RuntimeError, match='no supported kernel for SM80'):
-        spark_attention_bthd(controller, q, q, q, layout, 0)
+    monkeypatch.setenv('H3_SPARK_REWEIGHT_FUSED', '1')
+    actual = spark_attention_bthd(controller, q, q, q, layout, 0)
+    assert actual.shape == q.shape
+    assert torch.isfinite(actual).all()
+    assert controller.sol_backend == 'sm80_fused_virtual_query'
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.cuda.get_device_capability() != (8, 0),
+    reason='SM80 CUDA device required',
+)
+def test_sm80_forced_fused_virtual_query_is_selected(monkeypatch):
+    from h3_sparse_attention.sol_numerator_virtual_q import virtual_q_backend
+
+    monkeypatch.setenv('H3_SPARK_REWEIGHT_FUSED', '1')
+    q = torch.empty((1, 64, 1, 128), device='cuda', dtype=torch.bfloat16)
+    assert virtual_q_backend(q) == 'sm80_fused_virtual_query'
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
 @pytest.mark.parametrize('fused', ['0', '1'])
 @pytest.mark.parametrize('tail_mode', ['dense', 'pad'])
 def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused, tail_mode):
     from test_sol_spark import TinyTransformer
     monkeypatch.setenv('H3_SPARK_REWEIGHT_FUSED', fused)
-    if fused == '1' and torch.cuda.get_device_capability() not in ((9, 0), (10, 0), (12, 0)):
-        pytest.skip('fused kernel requires SM90/SM100/SM120')
+    if fused == '1' and torch.cuda.get_device_capability() not in ((8, 0), (9, 0), (10, 0), (12, 0)):
+        pytest.skip('fused kernel requires SM80/SM90/SM100/SM120')
     torch.manual_seed(27)
     model = TinyTransformer().to(device='cuda', dtype=torch.bfloat16).eval()
     attn = model.transformer_blocks[0].attn

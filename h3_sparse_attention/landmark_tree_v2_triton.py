@@ -233,6 +233,7 @@ def headwise_permute_bthd(
     permutation: torch.Tensor,
     *,
     video_tokens: int,
+    out: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Gather per-head video rows directly into one contiguous BTHD output."""
 
@@ -245,7 +246,13 @@ def headwise_permute_bthd(
         raise ValueError("permutation shape does not match BTHD values")
     if not values.is_contiguous() or not permutation.is_contiguous():
         raise ValueError("fused headwise permutation requires contiguous inputs")
-    output = torch.empty_like(values)
+    output = torch.empty_like(values) if out is None else out
+    if output.shape != values.shape or output.dtype != values.dtype:
+        raise ValueError("output must match input shape and dtype")
+    if not output.is_cuda or output.device != values.device or not output.is_contiguous():
+        raise ValueError("output must be a contiguous CUDA tensor on the input device")
+    if output.data_ptr() == values.data_ptr():
+        raise ValueError("headwise permutation output may not alias its input")
     elements = values.numel()
     block = 1024
     _headwise_permute_bthd_kernel[(triton.cdiv(elements, block),)](
@@ -302,6 +309,34 @@ def headwise_permute_pair_bthd(
         num_warps=8,
     )
     return first_output, second_output
+
+
+def headwise_permute_pair_bthd_low_memory(
+    first: torch.Tensor,
+    second: torch.Tensor,
+    permutation: torch.Tensor,
+    *,
+    video_tokens: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Permute a pair with one temporary, reusing ``first`` as its output.
+
+    The ordinary paired kernel is faster and leaves both inputs untouched, but
+    needs two full-size destinations at once.  At the 345-frame/768p boundary
+    an A800 has room for only one.  These Q/K/V projection tensors are private
+    to the current attention call, so copying the first permutation back into
+    its dead input storage is safe and removes one full BTHD allocation from
+    the peak.
+    """
+
+    first_output = headwise_permute_bthd(
+        first, permutation, video_tokens=video_tokens
+    )
+    first.copy_(first_output)
+    del first_output
+    second_output = headwise_permute_bthd(
+        second, permutation, video_tokens=video_tokens
+    )
+    return first, second_output
 
 
 def indexed_group_mean(

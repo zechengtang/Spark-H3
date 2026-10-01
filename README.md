@@ -103,7 +103,7 @@ requirements, defaults, and options. -->
 - [ ] Release Ref2VA inference examples.
 - [ ] Release the technical report.
 - [ ] Optimize the ComfyUI implementation for better end-to-end efficiency.
-- [ ] Implement SM80, SM90 support.
+- [x] Implement SM80, SM90 support.
 
 ## 🤝 Acknowledgments
  

@@ -169,9 +169,10 @@ def test_prepared_cuda_graph_replays_deterministically():
 
 
 @cuda
-def test_sol_triton_fallback(monkeypatch):
+def test_sol_sm80_native_backend(monkeypatch):
     import sol_attn.interface as interface
     monkeypatch.setattr(interface, "_cute_runtime_available", lambda: False)
+    assert interface.get_sol_attn_backend("cuda") == "triton_sm80"
     q, k, v = [torch.randn(1, 137, 1, 128, device="cuda", dtype=torch.bfloat16)
                for _ in range(3)]
     output = interface.sol_attn(q, k, v, sink_start=0, sink_tokens=137,

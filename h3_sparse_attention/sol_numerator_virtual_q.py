@@ -6,6 +6,7 @@ Tilted K/V use BF16 probabilities/storage as in frozen iter02; the tangent
 lower-bound statement therefore applies to exact arithmetic, not rounded output.
 """
 import operator
+import os
 import weakref
 import torch
 import triton
@@ -92,7 +93,8 @@ def _summaries(A,K,V,AK,AV,LM,T:tl.constexpr,H:tl.constexpr,N:tl.constexpr,P:tl.
                A_BATCH:tl.constexpr,A_PARENT:tl.constexpr,P_START,P_VALID,
                BLOCK_P:tl.constexpr,H_SOURCE:tl.constexpr,HEAD_START,
                FP32_ANCHOR:tl.constexpr,PRE_ROUND_LOGMASS:tl.constexpr,
-               WEIGHTED_KV:tl.constexpr,MASS_BIAS:tl.constexpr):
+               WEIGHTED_KV:tl.constexpr,MASS_BIAS:tl.constexpr,
+               OUTPUT_NH:tl.constexpr):
     qa,kb,bh=tl.program_id(0),tl.program_id(1),tl.program_id(2)
     b,h=(bh//H).to(tl.int64),bh%H
     rr=qa*BLOCK_P+tl.arange(0,BLOCK_P);ss=kb*64+tl.arange(0,64);d=tl.arange(0,128)
@@ -115,7 +117,11 @@ def _summaries(A,K,V,AK,AV,LM,T:tl.constexpr,H:tl.constexpr,N:tl.constexpr,P:tl.
         tk_float=tl.sum(k.to(tl.float32),0)[None,:]/block_len+tl.zeros((BLOCK_P,1),tl.float32)
         tv=(tl.sum(v.to(tl.float32),0)[None,:]/block_len+tl.zeros((BLOCK_P,1),tl.float32)).to(v.dtype)
     tk=tk_float.to(k.dtype)
-    base=abase.to(tl.int64)*N+kb
+    mass_base=abase.to(tl.int64)*N+kb
+    if OUTPUT_NH:
+        base=((b*P+rr).to(tl.int64)*N+kb)*H+h
+    else:
+        base=mass_base
     tl.store(AK+base[:,None]*128+d[None,:],tk,(rr<P)[:,None])
     tl.store(AV+base[:,None]*128+d[None,:],tv,(rr<P)[:,None])
     if MASS_BIAS:
@@ -124,7 +130,7 @@ def _summaries(A,K,V,AK,AV,LM,T:tl.constexpr,H:tl.constexpr,N:tl.constexpr,P:tl.
         logmass=(maximum+tl.log2(den))*.6931471805599453-shift
     else:
         logmass=tl.log(block_len)+tl.zeros((BLOCK_P,),tl.float32)
-    tl.store(LM+base,logmass,rr<P)
+    tl.store(LM+mass_base,logmass,rr<P)
 
 
 @triton.jit(do_not_specialize=["P_START", "P_VALID", "HEAD_START"])
@@ -132,7 +138,8 @@ def _summaries_comfy_fp32(A,K,V,AK,AV,LM,T:tl.constexpr,H:tl.constexpr,N:tl.cons
                           A_BATCH:tl.constexpr,A_PARENT:tl.constexpr,P_START,P_VALID,
                           H_SOURCE:tl.constexpr,HEAD_START,
                           PRE_ROUND_LOGMASS:tl.constexpr,
-                          WEIGHTED_KV:tl.constexpr,MASS_BIAS:tl.constexpr):
+                          WEIGHTED_KV:tl.constexpr,MASS_BIAS:tl.constexpr,
+                          OUTPUT_NH:tl.constexpr):
     """Comfy-style FP32 scalar products/weighted reductions, BF16 summaries.
 
     This reproduces the precision stages, not the exact CUDA reduction order.
@@ -175,7 +182,11 @@ def _summaries_comfy_fp32(A,K,V,AK,AV,LM,T:tl.constexpr,H:tl.constexpr,N:tl.cons
         value_float=tl.sum(v,0)/block_len
     key_stored=key_float.to(AK.dtype.element_ty)
     value_stored=value_float.to(AV.dtype.element_ty)
-    offset=((b*P+parent)*H+h).to(tl.int64)*N+kb
+    mass_offset=((b*P+parent)*H+h).to(tl.int64)*N+kb
+    if OUTPUT_NH:
+        offset=((b*P+parent).to(tl.int64)*N+kb)*H+h
+    else:
+        offset=mass_offset
     tl.store(AK+offset*128+d,key_stored,valid_parent)
     tl.store(AV+offset*128+d,value_stored,valid_parent)
     if MASS_BIAS:
@@ -184,7 +195,7 @@ def _summaries_comfy_fp32(A,K,V,AK,AV,LM,T:tl.constexpr,H:tl.constexpr,N:tl.cons
         logmass=(safe_max+tl.log2(safe_den))*.6931471805599453-shift
     else:
         logmass=tl.log(block_len)
-    tl.store(LM+offset,logmass,valid_parent)
+    tl.store(LM+mass_offset,logmass,valid_parent)
 
 
 @triton.jit(do_not_specialize=["P_START", "P_VALID", "HEAD_START"])
@@ -292,7 +303,7 @@ def build_virtual_anchors(q, virtual_ranges, *, dtype=None):
 def _launch_summaries(a,k,v,ak,av,lm,*,parent_start,parent_count,
                       parent_stride,head_stride,head_start,summary_math,logmass_key,
                       reweight_components='full',
-                      tensorcore_block_p=None):
+                      tensorcore_block_p=None,output_nh=False):
     if summary_math not in ('tensorcore','comfy_fp32'):
         raise ValueError('summary_math must be tensorcore or comfy_fp32')
     if logmass_key not in ('stored','pre_round'):
@@ -309,12 +320,13 @@ def _launch_summaries(a,k,v,ak,av,lm,*,parent_start,parent_count,
             raise ValueError('comfy_fp32 summaries require BF16 K/V')
         _summaries_comfy_fp32[(parent_count,n,b*head_stride)](
             *common,h,head_start,logmass_key=='pre_round',
-            weighted_kv,mass_bias,num_warps=4)
+            weighted_kv,mass_bias,output_nh,num_warps=4)
     else:
         block_p=tensorcore_block_p or (16 if parent_count<=16 else 32)
         _summaries[(triton.cdiv(parent_count,block_p),n,b*head_stride)](
             *common,block_p,h,head_start,a.dtype==torch.float32,
-            logmass_key=='pre_round',weighted_kv,mass_bias,num_warps=4)
+            logmass_key=='pre_round',weighted_kv,mass_bias,output_nh,
+            num_warps=4)
 
 
 def virtual_summaries(a,k,v,*,summary_math='tensorcore',logmass_key='stored',
@@ -523,7 +535,14 @@ def _streamed_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,route,exact_output,
     p=next(i+1 for i,(_,end) in enumerate(ranges) if end>=query_tokens)
     micro8=tail_granularity=='block8x8'
     summary_n=triton.cdiv(t,8) if micro8 else n
-    parent_chunk=_summary_parent_chunk(b,p,h,summary_n,d,q.dtype)
+    # H3 at 10s/768p leaves little headroom on an 80-GiB SM80 once model
+    # weights, Q/K/V and the exact output coexist. Bound only this backend's
+    # streamed summary workspace; newer fused backends keep the 1-GiB default.
+    capability=tuple(torch.cuda.get_device_capability(q.device))
+    workspace_bytes=(3 << 27) if capability == (8, 0) else None
+    parent_chunk=_summary_parent_chunk(
+        b,p,h,summary_n,d,q.dtype,workspace_bytes=workspace_bytes
+    )
     if micro8 and precomputed_summaries is not None:
         raise ValueError('block8x8 requires its own eight-token K/V summaries')
     if precomputed_summaries is None:
@@ -625,7 +644,7 @@ def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=N
                              precomputed_summaries,_query_tokens=_query_tokens,
                              tail_granularity=tail_granularity,
                              summary_math=summary_math,logmass_key=logmass_key,
-                             reweight_components=reweight_components)
+                             reweight_components=reweight_components).to(q.dtype)
 
 
 _FUSED_COMPILED = {}
@@ -641,7 +660,7 @@ def virtual_q_backend(q):
     selection=os.environ.get('H3_SPARK_REWEIGHT_FUSED', 'auto')
     capability=tuple(torch.cuda.get_device_capability(q.device)) if q.is_cuda else None
     if (q.is_cuda and q.dtype == torch.bfloat16
-            and capability in ((9, 0), (10, 0), (12, 0))
+            and capability in ((8, 0), (9, 0), (10, 0), (12, 0))
             and selection != '0'
             and (selection == '1' or q.shape[1] > 8192)):
         return f'sm{capability[0]}{capability[1]}_fused_virtual_query'
@@ -663,7 +682,9 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     import cutlass.cute as cute
     from sol_attn.common import to_cute_tensor
     capability=tuple(torch.cuda.get_device_capability(q.device))
-    if capability==(9,0):
+    if capability==(8,0):
+        from .spark_reweight_sm80 import SparkReweightForwardSm80 as FusedKernel
+    elif capability==(9,0):
         from .spark_reweight_sm90 import SparkReweightForwardSm90 as FusedKernel
     elif capability==(10,0):
         from .spark_reweight_sm100 import SparkReweightForwardSm100 as FusedKernel
@@ -676,6 +697,9 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         raise ValueError('_query_tokens must end at a physical query-block boundary')
     active_parents=next(i+1 for i,(_,end) in enumerate(ranges) if end>=query_tokens)
     if precomputed_summaries is None:
+        # Only active parents need streamed summaries.  Production uses the
+        # global video root (one parent); sizing from the complete 17-node tree
+        # would waste more than 500 MiB at the 10s/768p shape.
         p=active_parents
     if kc is None:
         from sol_attn.preprocess import _reduce_kv
@@ -683,6 +707,8 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     packed_external=(
         route is not None and route.dtype == torch.int32 and route.ndim == 4
     )
+    if capability == (8,0) and fused_topk_ratio and n > 2048:
+        raise ValueError("SM80 fused Top-K supports at most 2048 key blocks")
     if skip_external_route_qk and not packed_external:
         raise ValueError('route-QK-free path requires a packed external route')
     external=threshold is None and route is not None
@@ -702,28 +728,103 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
             route=route.clone()
     else:
         route=route.contiguous()
-    out=torch.empty_like(q)
+    # Every CTA consumes and then overwrites one disjoint Q tile.  Reuse the
+    # private permuted-Q storage at the 345-frame SM80 boundary, where another
+    # full BTHD destination would exceed 80 GiB.  The unlaunched dense suffix
+    # remains untouched and is still available to its SDPA call.
+    reuse_q=(capability == (8,0) and t > 90_000 and not export_route
+             and os.environ.get('H3_SPARK_REWEIGHT_INPLACE_Q','1') != '0')
+    out=(q if reuse_q
+         else torch.empty_like(q))
     lse=torch.empty((b,t,h),device=q.device,dtype=torch.float32)
     # Keep all query tiles for a head together. Parent-major streaming reloads
     # that head's exact K/V working set for every parent chunk, defeating L2
     # reuse in the production mainloop. Head-major streaming retains locality.
+    direct_sm80_summaries = (
+        capability == (8,0)
+        and precomputed_summaries is None
+        and os.environ.get('H3_SM80_DIRECT_SUMMARIES','1') != '0'
+    )
+    sm80_prefetch_summary = (
+        capability != (8,0)
+        or os.environ.get('H3_SM80_PREFETCH_SUMMARY','1') != '0'
+    )
+    sm80_skip_final_tile_barrier = (
+        capability != (8,0)
+        or os.environ.get('H3_SM80_SKIP_FINAL_TILE_BARRIER','1') != '0'
+    )
     if precomputed_summaries is None:
         bytes_per_head=b*p*n*(2*d*q.element_size()+4)
         head_chunk=max(1,min(h,_SUMMARY_WORKSPACE_BYTES//bytes_per_head))
         chunk=_summary_parent_chunk(b,p,head_chunk,n,d,q.dtype)
-        ak=torch.empty((b,chunk,head_chunk,n,d),device=q.device,dtype=q.dtype)
-        av=torch.empty_like(ak)
+        if direct_sm80_summaries:
+            # Write summaries directly in the N-major layout consumed by the
+            # Ampere cp.async mainloop. The H/N-permuted views are passed only
+            # as raw output pointers to the stride-explicit Triton producer.
+            akt=torch.empty(
+                (b*chunk,n,head_chunk,d),device=q.device,dtype=q.dtype
+            )
+            avt=torch.empty_like(akt)
+            ak=akt.view(b,chunk,n,head_chunk,d).permute(0,1,3,2,4)
+            av=avt.view(b,chunk,n,head_chunk,d).permute(0,1,3,2,4)
+        else:
+            ak=torch.empty((b,chunk,head_chunk,n,d),device=q.device,dtype=q.dtype)
+            av=torch.empty_like(ak)
         lm=torch.empty((b,chunk,head_chunk,n),device=q.device,dtype=torch.float32)
     else:
         chunk=p
         head_chunk=h
         ak,av,lm=precomputed_summaries
-    akt=ak.view(b*chunk,head_chunk,n,d).permute(0,2,1,3)
-    avt=av.view(b*chunk,head_chunk,n,d).permute(0,2,1,3)
+    if not direct_sm80_summaries:
+        akt=ak.view(b*chunk,head_chunk,n,d).permute(0,2,1,3)
+        avt=av.view(b*chunk,head_chunk,n,d).permute(0,2,1,3)
+    if capability == (8,0) and not direct_sm80_summaries:
+        # Ampere cp.async requires a statically provable 16-byte-aligned row.
+        # The parent/head transpose is small (P=1 for the production global
+        # policy) and making it compact avoids carrying an unprovable dynamic
+        # stride into the CuTe kernel.
+        akt_view, avt_view = akt, avt
+        compact_akt=torch.empty(akt.shape,device=akt.device,dtype=akt.dtype)
+        compact_avt=torch.empty(avt.shape,device=avt.device,dtype=avt.dtype)
+        compact_akt.copy_(akt_view)
+        compact_avt.copy_(avt_view)
+        akt, avt = compact_akt, compact_avt
+        # _reduce_kv may preserve an arbitrary stride for size-one head modes;
+        # cp.async needs the canonical row stride even though PyTorch considers
+        # either representation contiguous.
+        expected_kc_stride=torch.empty(kc.shape,device='meta',dtype=kc.dtype).stride()
+        if kc.stride()!=expected_kc_stride:
+            compact_kc=torch.empty(kc.shape,device=kc.device,dtype=kc.dtype)
+            compact_kc.copy_(kc)
+            kc=compact_kc
     tensors=(q,k,v,out,kc,avt,threshold,route,lse,akt,lm,leaf_to_virtual)
-    args=[to_cute_tensor(x) for x in tensors]
+    if capability == (8,0):
+        from cutlass.cute.runtime import from_dlpack
+        def sm80_tensor(x):
+            value=from_dlpack(x,assumed_align=16,enable_tvm_ffi=True)
+            if x.ndim==4 and x.is_contiguous() and x.shape[-1]==128:
+                value=value.mark_layout_dynamic(leading_dim=3)
+                # Explicit order also handles size-one batch/head modes whose
+                # equal strides make automatic compact-order deduction
+                # ambiguous.
+                value=value.mark_compact_shape_dynamic(
+                    mode=3,stride_order=x.dim_order(),divisibility=8)
+            else:
+                value=value.mark_layout_dynamic(leading_dim=x.ndim-1)
+            return value
+        args=[]
+        for x in tensors:
+            try:
+                args.append(sm80_tensor(x))
+            except RuntimeError as error:
+                raise RuntimeError(
+                    f"failed to describe SM80 tensor shape={tuple(x.shape)} "
+                    f"stride={tuple(x.stride())} order={x.dim_order()}"
+                ) from error
+    else:
+        args=[to_cute_tensor(x) for x in tensors]
     stream=cuda.CUstream(torch.cuda.current_stream(q.device).cuda_stream)
-    key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,force_local_blocks,fused_topk_ratio,
+    key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,force_local_blocks,fused_topk_ratio,sm80_prefetch_summary,sm80_skip_final_tile_barrier,
          tuple((tuple(x.shape),tuple(x.stride()),x.dtype) for x in tensors))
     compiled=_FUSED_COMPILED.get(key)
     sink_start=t-sink_tokens if sink_start is None else sink_start
@@ -738,13 +839,24 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
                                   parent_count=p_end-p_start,parent_stride=chunk,
                                   head_stride=head_chunk,head_start=head_start,
                                   summary_math=summary_math,logmass_key=logmass_key,
-                                  reweight_components=reweight_components)
+                                  reweight_components=reweight_components,
+                                  output_nh=direct_sm80_summaries)
+                if capability == (8,0) and not direct_sm80_summaries:
+                    compact_akt.copy_(akt_view)
+                    compact_avt.copy_(avt_view)
             qb_start=ranges[p_start][0]//64
             qb_end=triton.cdiv(min(ranges[p_end-1][1],query_tokens),64)
             scalars=(qb_start,qb_end-qb_start,p_start,head_start,head_count,
                      d**-.5,sink_first,sink_last)
             if compiled is None:
-                kernel=(FusedKernel(t,external_route=external,hybrid_route=hybrid,export_route=export_route,force_local_blocks=force_local_blocks)
+                kernel=(FusedKernel(external_route=external,hybrid_route=hybrid,
+                                    export_route=export_route,
+                                    force_local_blocks=force_local_blocks,
+                                    fused_topk_ratio=fused_topk_ratio,
+                                    prefetch_summary=sm80_prefetch_summary,
+                                    skip_final_tile_barrier=sm80_skip_final_tile_barrier)
+                        if capability==(8,0) else
+                        FusedKernel(t,external_route=external,hybrid_route=hybrid,export_route=export_route,force_local_blocks=force_local_blocks)
                         if capability==(9,0) else
                         FusedKernel(external_route=external,packed_external_route=packed_external,
                                     skip_external_route_qk=skip_external_route_qk,
