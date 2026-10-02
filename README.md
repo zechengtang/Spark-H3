@@ -17,7 +17,7 @@
   <a href="#demo">🎬 Demo</a> &nbsp;·&nbsp;
   <a href="#quick-start">🚀 Quick Start</a> &nbsp;·&nbsp;
   <a href="https://zechengtang.github.io/Spark-H3/">📖 Technical Blog</a> &nbsp;·&nbsp;
-  <a href="#todo">🗓️ TODO</a>
+  <a href="#project-status">🧭 Project Status</a>
 </p>
 
 </div>
@@ -96,14 +96,18 @@ restores the original attention processors on exit.
 requirements, defaults, and options. -->
 
 <a id="todo"></a>
+<a id="project-status"></a>
 
-## 🗓️ TODO
+## 🧭 Project Status & Roadmap
 
-- [x] Release the ComfyUI implementation.
-- [ ] Release Ref2VA inference examples.
-- [ ] Release the technical report.
-- [ ] Optimize the ComfyUI implementation for better end-to-end efficiency.
-- [x] Implement SM80, SM90 support.
+| Status | Item | Resources |
+|---|---|---|
+| ✅ Available | Fused Spark kernels for SM80 and SM120 | [Kernel documentation](h3_sparse_attention/README.md) · [Performance matrix](docs/kernel_performance_matrix.md) |
+| ✅ Available | ComfyUI preview implementation based on `comfy-kitchen` | [ComfyUI guide](comfyui/README.md) |
+| 🚧 In progress | Release Ref2VA inference examples | — |
+| 🗓️ Planned | Standalone stable ComfyUI implementation without a `comfy-kitchen` dependency | — |
+| 🗓️ Planned | Fused Spark kernels for SM90 and SM100 | Pending resources |
+| 🗓️ Planned | Release the technical report | — |
 
 ## 🤝 Acknowledgments
  

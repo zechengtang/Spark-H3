@@ -18,9 +18,12 @@ listed in the repository's main README and `requirements.txt`. CUDA execution
 requires a matching PyTorch/CUDA installation. Plain Sol-Attn selects the
 native SM80 Triton backend or the SM90/SM100/SM120 CuTe backend before launch;
 other NVIDIA GPUs with compute capability at least 8.0 use the portable Triton
-backend. Spark-H3's Diffusers integration supports SM80, SM90, SM100, and SM120
-and raises before reblocking on every other architecture. Spark requires CUDA
-and Triton for its supported execution paths.
+backend. Spark-H3's Diffusers integration contains architecture dispatch for
+SM80, SM90, SM100, and SM120 and raises before reblocking on every other
+architecture. Production kernel support is complete for SM80 and SM120. SM90
+and SM100 remain development targets until compatible GPU resources become
+available for implementation and validation. Spark requires CUDA and Triton
+for its supported execution paths.
 Sol-Attn requires contiguous BF16 `[batch, tokens, heads, 128]`
 tensors. These are forward/inference kernels.
 
@@ -193,6 +196,8 @@ warps, and the summary producer writes AK/AV directly in the N-major layout
 consumed by `cp.async`, avoiding per-layer transpose copies.
 Kernel failures propagate to the caller; there is no error-triggered backend
 fallback.
+See the [kernel performance matrix](../docs/kernel_performance_matrix.md) for
+the current cross-architecture benchmark format and locally measured results.
 `H3_SPARK_REWEIGHT_FUSED=0` or `1` selects the source's fallback/fused path on
 SM80/SM90/SM100/SM120 for testing. On SM80, fused mode supports native-threshold
 and CTA-local fused Top-K routes; unsupported external/hybrid route modes raise
