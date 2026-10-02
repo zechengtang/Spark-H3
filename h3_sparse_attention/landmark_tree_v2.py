@@ -308,6 +308,7 @@ def _recursive_landmark_tree_v2(
     aggregation: str = "linear",
     compute_inverse: bool = True,
     compact_direct_route: bool = False,
+    compact_indices: bool = False,
     initial_order_is_flat: bool = False,
     precomputed_root_scores: torch.Tensor | None = None,
 ) -> LandmarkTreeV2Result:
@@ -344,7 +345,10 @@ def _recursive_landmark_tree_v2(
     # per-head index space is far below 2^31.  Keeping the tree frontier in
     # int32 halves index traffic through the repeated routing/partition
     # levels; the reference/Diffusers path retains its historical int64 ABI.
-    index_dtype = torch.int32 if compact_direct_route else torch.long
+    # Index traffic is safe to compact independently of the direct route.  The
+    # score/token ordering key is still promoted to int64 in the Triton kernel,
+    # so this changes storage width without changing the exact ordering.
+    index_dtype = torch.int32 if (compact_direct_route or compact_indices) else torch.long
     if index_dtype == torch.int32:
         if batch * tokens >= 2**31:
             raise ValueError("compact direct reblock exceeds int32 index space")
@@ -705,10 +709,12 @@ def _recursive_landmark_tree_v2(
         inverse.scatter_(
             1,
             permutation,
-            torch.arange(tokens, device=samples.device).expand(batch, -1),
+            torch.arange(tokens, device=samples.device, dtype=permutation.dtype).expand(batch, -1),
         )
     if validate:
-        expected = torch.arange(tokens, device=samples.device).expand(batch, -1)
+        expected = torch.arange(
+            tokens, device=samples.device, dtype=permutation.dtype
+        ).expand(batch, -1)
         if not torch.equal(permutation.sort(1).values, expected):
             raise RuntimeError("landmark-tree-v2 result is not a permutation")
     token_shape = (*leading, tokens)
@@ -854,6 +860,7 @@ class PreparedLandmarkTreeV2Permutation:
         aggregation: str = "linear",
         return_inverse: bool = True,
         compact_direct_route: bool = False,
+        compact_indices: bool = False,
     ) -> None:
         if input_unit_means and metric_unit_means:
             raise ValueError("select only one unit-mean space")
@@ -872,6 +879,7 @@ class PreparedLandmarkTreeV2Permutation:
         self.aggregation = aggregation
         self.return_inverse = bool(return_inverse)
         self.compact_direct_route = bool(compact_direct_route)
+        self.compact_indices = bool(compact_indices)
         self.metric_unit_means = metric_unit_means
         self.input_unit_means = input_unit_means
         self._static_inverse_norms: torch.Tensor | None = None
@@ -927,6 +935,7 @@ class PreparedLandmarkTreeV2Permutation:
             aggregation=self.aggregation,
             compute_inverse=self.return_inverse,
             compact_direct_route=self.compact_direct_route,
+            compact_indices=self.compact_indices,
             initial_order_is_flat=self.initial_order == "flat",
             precomputed_root_scores=root_scores,
         )

@@ -400,6 +400,7 @@ def _landmark_tree_v2_combined_permutations(
             grid_shape=layout.grid,
             initial_order=controller.config.landmark_tree_v2_initial_order,
             device=query.device,
+            compact_indices=tuple(torch.cuda.get_device_capability(query.device)) == (8, 0),
         )
         controller.rope_sol_key_clustering_static[plan_key] = plan
     transformed = plan.graph_input

@@ -68,9 +68,13 @@ def permute_with_virtual_anchors(q, permutation, virtual_ranges, *, video_tokens
         raise ValueError('invalid video token count or permutation shape')
     if virtual_ranges.ndim != 2 or virtual_ranges.shape[1] != 2 or not virtual_ranges.shape[0]:
         raise ValueError('requires nonempty validated ranges[P,2]')
-    for value in (permutation, virtual_ranges):
-        if value.device != q.device or value.dtype != torch.int64 or not value.is_contiguous():
-            raise ValueError('permutation and ranges require contiguous CUDA int64')
+    if (permutation.device != q.device or
+            permutation.dtype not in (torch.int32, torch.int64) or
+            not permutation.is_contiguous()):
+        raise ValueError('permutation requires contiguous CUDA int32/int64')
+    if (virtual_ranges.device != q.device or virtual_ranges.dtype != torch.int64 or
+            not virtual_ranges.is_contiguous()):
+        raise ValueError('ranges require contiguous CUDA int64')
     p, n = virtual_ranges.shape[0], triton.cdiv(t, 64)
     out = torch.empty_like(q)
     anchors = torch.empty((b, p, h, d), device=q.device, dtype=anchor_dtype)

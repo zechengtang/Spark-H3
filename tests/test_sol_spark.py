@@ -46,6 +46,26 @@ def test_cuda_reblock(distance, group_size, aggregation):
 
 
 @cuda
+def test_virtual_anchor_permute_accepts_exact_int32_indices():
+    from h3_sparse_attention.virtual_q_permute import permute_with_virtual_anchors
+
+    torch.manual_seed(121)
+    q = torch.randn(1, 192, 2, 128, device="cuda", dtype=torch.bfloat16)
+    permutation64 = torch.stack(
+        [torch.randperm(128, device="cuda") for _ in range(2)]
+    ).unsqueeze(0)
+    ranges = torch.tensor([[0, 64], [64, 128], [128, 192]], device="cuda")
+    expected_q, expected_anchors = permute_with_virtual_anchors(
+        q, permutation64, ranges, video_tokens=128
+    )
+    actual_q, actual_anchors = permute_with_virtual_anchors(
+        q, permutation64.to(torch.int32), ranges, video_tokens=128
+    )
+    assert torch.equal(actual_q, expected_q)
+    assert torch.equal(actual_anchors, expected_anchors)
+
+
+@cuda
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize("parents", [3, 19])
 def test_reweight_against_softmax(dtype, parents):
@@ -166,6 +186,29 @@ def test_prepared_cuda_graph_replays_deterministically():
     assert plan.graph_active
     assert torch.equal(first[0], second[0])
     assert torch.equal(first[1], second[1])
+
+
+@cuda
+def test_prepared_compact_indices_preserve_exact_permutation():
+    torch.manual_seed(122)
+    tokens = 2048
+    samples = torch.randn(2, tokens, 128, device="cuda", dtype=torch.bfloat16)
+    common = dict(
+        batch=2,
+        tokens=tokens,
+        dim=128,
+        grid_shape=(1, 1, tokens),
+        initial_order="flat",
+        device=torch.device("cuda"),
+    )
+    permutation64, inverse64 = PreparedLandmarkTreeV2Permutation(**common).run(samples)
+    permutation32, inverse32 = PreparedLandmarkTreeV2Permutation(
+        **common, compact_indices=True
+    ).run(samples)
+    assert permutation32.dtype == torch.int32
+    assert inverse32.dtype == torch.int32
+    assert torch.equal(permutation32.to(torch.int64), permutation64)
+    assert torch.equal(inverse32.to(torch.int64), inverse64)
 
 
 @cuda

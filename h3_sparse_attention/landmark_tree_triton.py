@@ -1168,11 +1168,11 @@ def active_score_index_keys(
     expected = (batch, tokens)
     if (
         original_indices.shape != expected
-        or original_indices.dtype != torch.long
+        or original_indices.dtype not in (torch.int32, torch.int64)
         or active_node.shape != expected
         or active_node.dtype not in (torch.int32, torch.int64)
     ):
-        raise ValueError("indices must be int64 and active_node integer [batch, tokens]")
+        raise ValueError("indices and active_node must be integer [batch, tokens]")
     keys = torch.empty(expected, device=scores.device, dtype=torch.long)
     block_m = 256
     _active_score_index_key_kernel[(triton.cdiv(tokens, block_m), batch)](
