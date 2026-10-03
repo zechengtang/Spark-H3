@@ -7,6 +7,7 @@ lower-bound statement therefore applies to exact arithmetic, not rounded output.
 """
 import operator
 import os
+import time
 import weakref
 import torch
 import triton
@@ -648,6 +649,48 @@ def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=N
 
 
 _FUSED_COMPILED = {}
+_FUSED_COMPILE_CALLS = 0
+_FUSED_COMPILE_SECONDS = 0.0
+
+
+def _dynamic_tensor_cache_signature(tensor):
+    """Describe the static CuTe ABI while excluding dynamic tensor extents.
+
+    ``sol_attn.common.to_cute_tensor`` marks every tensor layout dynamic with
+    the final dimension as the unit-stride dimension.  Exact extents and
+    extent-derived strides must therefore not split the host callable cache.
+    Rank, dtype, stride order, broadcast strides, and singleton structure still
+    affect the traced ABI/layout and remain part of the signature.
+    """
+
+    dim_order = (
+        tuple(tensor.dim_order())
+        if hasattr(tensor, "dim_order")
+        else tuple(
+            sorted(
+                range(tensor.ndim),
+                key=lambda axis: (abs(tensor.stride()[axis]), axis),
+                reverse=True,
+            )
+        )
+    )
+    return (
+        tensor.ndim,
+        tensor.dtype,
+        dim_order,
+        tuple(stride == 0 for stride in tensor.stride()),
+        tuple(size == 1 for size in tensor.shape),
+    )
+
+
+def fused_compile_cache_stats():
+    """Return process-local fused-kernel compilation diagnostics."""
+
+    return {
+        "entries": len(_FUSED_COMPILED),
+        "compile_calls": _FUSED_COMPILE_CALLS,
+        "compile_seconds": _FUSED_COMPILE_SECONDS,
+    }
 
 
 def virtual_q_backend(q):
@@ -824,8 +867,10 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     else:
         args=[to_cute_tensor(x) for x in tensors]
     stream=cuda.CUstream(torch.cuda.current_stream(q.device).cuda_stream)
+    static_video_tokens = t - sink_tokens if sink_start is None else operator.index(sink_start)
     key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,force_local_blocks,fused_topk_ratio,sm80_prefetch_summary,sm80_skip_final_tile_barrier,
-         tuple((tuple(x.shape),tuple(x.stride()),x.dtype) for x in tensors))
+         static_video_tokens,query_tokens,active_parents,chunk,head_chunk,
+         tuple(_dynamic_tensor_cache_signature(x) for x in tensors))
     compiled=_FUSED_COMPILED.get(key)
     sink_start=t-sink_tokens if sink_start is None else sink_start
     sink_first=sink_start//64
@@ -866,7 +911,11 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
                         if capability==(12,0) else
                         FusedKernel(external_route=external,hybrid_route=hybrid,
                                     export_route=export_route,force_local_blocks=force_local_blocks))
+                global _FUSED_COMPILE_CALLS, _FUSED_COMPILE_SECONDS
+                compile_started = time.perf_counter()
                 compiled=cute.compile(kernel,*args,*scalars,stream=stream,options='--enable-tvm-ffi')
+                _FUSED_COMPILE_CALLS += 1
+                _FUSED_COMPILE_SECONDS += time.perf_counter() - compile_started
                 _FUSED_COMPILED[key]=compiled
             compiled(*args,*scalars,stream=stream)
     return (out,route,lse) if export_route else out
