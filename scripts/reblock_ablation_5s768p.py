@@ -76,6 +76,7 @@ F = {
     "update_rounds": "landmark_tree_v2_proxy_iterations",
     "moment_estimator": "landmark_tree_v2_m2_estimator",
     "layout_reuse": "landmark_tree_v2_layout_reuse",
+    "exact_block_radius": "sol_exact_block_radius",
 }
 
 
@@ -170,6 +171,21 @@ def _arms() -> dict[str, ArmSpec]:
         "k_reuses_q_layout": ArmSpec(
             "layout_reuse", "Build only Q layout and reuse its permutation for K/V",
             {F["layout_reuse"]: "k_from_q"},
+        ),
+        "q_reuses_k_exact_radius0": ArmSpec(
+            "exact_block_radius",
+            "Reuse K layout for Q and force only the self block exact",
+            {F["layout_reuse"]: "q_from_k", F["exact_block_radius"]: 0},
+        ),
+        "q_reuses_k_exact_radius1": ArmSpec(
+            "exact_block_radius",
+            "Reuse K layout for Q and force the symmetric radius-1 blocks exact",
+            {F["layout_reuse"]: "q_from_k", F["exact_block_radius"]: 1},
+        ),
+        "k_reuses_q_exact_radius0": ArmSpec(
+            "exact_block_radius",
+            "Reuse Q layout for K/V and force only the self block exact",
+            {F["layout_reuse"]: "k_from_q", F["exact_block_radius"]: 0},
         ),
         "initial_hilbert_thw": ArmSpec(
             "initial_order", "Root initial order hilbert_thw",

@@ -76,6 +76,8 @@ def _sol_topk_threshold_attn_cute(
 
     from sol_attn.common import to_cute_tensor
 
+    from .local_blocks import normalize_local_block_radius
+    force_local_blocks = normalize_local_block_radius(force_local_blocks)
     capability = tuple(torch.cuda.get_device_capability(q.device))
     batch, query_tokens, heads, _ = q.shape
     tokens = k.shape[1]
@@ -185,6 +187,8 @@ def sol_topk_threshold_attn(
 ) -> torch.Tensor:
     """Run fixed-ratio SOL through the stock CuTe threshold selector."""
 
+    from .local_blocks import normalize_local_block_radius
+    force_local_blocks = normalize_local_block_radius(force_local_blocks)
     if q.shape != k.shape or q.shape != v.shape or q.ndim != 4:
         raise ValueError("q, k, and v must share shape [B, T, H, D]")
     if q.dtype != torch.bfloat16 or q.shape[-1] != 128:

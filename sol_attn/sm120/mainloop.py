@@ -64,7 +64,15 @@ class SolAttnForwardSm120:
         self.hybrid_route = hybrid_route
         self.exact_only = exact_only
         self.export_route = export_route
-        self.force_local_blocks = force_local_blocks
+        explicit_local_radius = type(force_local_blocks) is int
+        if type(force_local_blocks) is bool:
+            force_local_blocks = 1 if force_local_blocks else -1
+        if type(force_local_blocks) is not int or force_local_blocks < -1:
+            raise ValueError("force_local_blocks must be bool or an integer >= -1")
+        self.local_block_radius = (
+            -1 if external_route and not explicit_local_radius
+            else force_local_blocks
+        )
 
     @cute.kernel
     def kernel(
@@ -465,7 +473,7 @@ class SolAttnForwardSm120:
                                 * scale_softmax_log2e
                                 / cutlass.Float32(q_len)
                             )
-                            if cutlass.const_expr(self.force_local_blocks):
+                            if cutlass.const_expr(self.local_block_radius == 1):
                                 exact = sol_attn_route_is_exact(
                                     q_tile_idx, kv_block, col_mean, threshold, valid,
                                 )
@@ -490,9 +498,14 @@ class SolAttnForwardSm120:
                                     ) and valid
                         # Local retention is an attention-kernel policy, including
                         # hybrid rows whose selection came from an explicit mask.
-                        if cutlass.const_expr(self.force_local_blocks and not self.external_route):
+                        if cutlass.const_expr(self.local_block_radius == 0):
+                            exact = exact or (q_tile_idx == kv_block)
+                        elif cutlass.const_expr(self.local_block_radius > 0):
                             distance = q_tile_idx - kv_block
-                            exact = exact or ((distance >= -1) and (distance <= 1))
+                            exact = exact or (
+                                (distance >= -self.local_block_radius)
+                                and (distance <= self.local_block_radius)
+                            )
                         exact = exact or (
                             kv_block >= sink_start_block
                             and kv_block < sink_end_block

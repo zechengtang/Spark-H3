@@ -104,6 +104,48 @@ def test_overrides_and_plain_sol_opt_in():
         H3SparseAttentionConfig.spark(sol_virtual_query_levels_up=2,sol_virtual_query_target_blocks=189)
 
 
+def test_exact_block_radius_configuration_and_reblock_guard():
+    no_reblock = H3SparseAttentionConfig.sol(
+        20, sol_route_topk_ratio=0.1, sol_exact_block_radius=0
+    )
+    assert no_reblock.sol_local_blocks_enabled
+    assert no_reblock.sol_local_block_radius == 0
+
+    for reuse in ("q_from_k", "k_from_q"):
+        cfg = H3SparseAttentionConfig.spark(
+            20,
+            sol_exact_block_radius=2,
+            landmark_tree_v2_layout_reuse=reuse,
+        )
+        assert cfg.sol_local_block_radius == 2
+
+    with pytest.raises(ValueError, match="requires Top-K routing"):
+        H3SparseAttentionConfig.sol(20, sol_exact_block_radius=0)
+    with pytest.raises(ValueError, match="requires landmark_tree_v2_layout_reuse"):
+        H3SparseAttentionConfig.spark(20, sol_exact_block_radius=0)
+    with pytest.raises(ValueError, match="not both"):
+        H3SparseAttentionConfig.sol(
+            20,
+            sol_route_topk_ratio=0.1,
+            sol_exact_block_radius=0,
+            sol_force_local_blocks=False,
+        )
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        H3SparseAttentionConfig.sol(
+            20, sol_route_topk_ratio=0.1, sol_exact_block_radius=True
+        )
+
+
+def test_legacy_local_block_flags_map_to_existing_radius():
+    assert H3SparseAttentionConfig.sol(
+        20, sol_route_topk_ratio=0.1
+    ).sol_local_block_radius == 1
+    assert H3SparseAttentionConfig.spark(20).sol_local_block_radius == -1
+    assert H3SparseAttentionConfig.spark(
+        20, sol_force_local_blocks=True
+    ).sol_local_block_radius == 1
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
 def test_diffusers_spark_runs_on_sm80(monkeypatch):
     from h3_sparse_attention.processor import PackedLayout, _Controller

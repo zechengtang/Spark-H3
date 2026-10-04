@@ -239,6 +239,69 @@ def _sol_topk_analytic_density(route_stats: dict[str, Any]) -> dict[str, float]:
     }
 
 
+@torch.no_grad()
+def _record_exact_block_verbose(
+    controller,
+    q: torch.Tensor,
+    key_centroids: torch.Tensor,
+    threshold: torch.Tensor | None,
+    *,
+    video_tokens: int,
+    query_tokens: int,
+    radius: int | None,
+) -> None:
+    """Accumulate local/Top-K overlap without materializing the full route."""
+
+    if (
+        os.environ.get("H3_VERBOSE_EXACT_BLOCKS") != "1"
+        or radius is None
+        or threshold is None
+    ):
+        return
+    from .sol_topk_cutoff import BLOCK_SIZE, HEAD_DIM
+
+    query_blocks = query_tokens // BLOCK_SIZE
+    candidate_blocks = video_tokens // BLOCK_SIZE
+    batch, _, heads, _ = q.shape
+    query_centroids = (
+        q[:, :query_tokens]
+        .view(batch, query_blocks, BLOCK_SIZE, heads, HEAD_DIM)
+        .sum(dim=2, dtype=torch.float32)
+        .mul_(1.0 / BLOCK_SIZE)
+        .to(torch.bfloat16)
+    )
+    qids = torch.arange(query_blocks, device=q.device)
+    finite_rows = torch.isfinite(threshold[:, :query_blocks])
+    local_candidates = torch.zeros((), device=q.device, dtype=torch.int64)
+    already_selected = torch.zeros_like(local_candidates)
+    for offset in range(-radius, radius + 1):
+        kids = qids + offset
+        valid = (kids >= 0) & (kids < candidate_blocks)
+        gathered = key_centroids[:, kids.clamp(0, candidate_blocks - 1)]
+        scores = torch.einsum("bqhd,bqhd->bqh", query_centroids, gathered).float()
+        scores.mul_(HEAD_DIM**-0.5 * _LOG2_E)
+        valid_rows = valid[None, :, None] & finite_rows
+        local_candidates += valid_rows.sum()
+        already_selected += (valid_rows & (scores > threshold[:, :query_blocks])).sum()
+    added = local_candidates - already_selected
+    accumulator = controller.exact_block_verbose_accumulator
+    if accumulator is None:
+        accumulator = {
+            "radius": radius,
+            "route_rows": torch.zeros_like(local_candidates),
+            "local_candidates": torch.zeros_like(local_candidates),
+            "already_selected": torch.zeros_like(local_candidates),
+            "added_exact_blocks": torch.zeros_like(local_candidates),
+        }
+        controller.exact_block_verbose_accumulator = accumulator
+    elif accumulator["radius"] != radius:
+        raise RuntimeError("exact-block verbose radius changed within one run")
+    accumulator["route_rows"].add_(finite_rows.sum())
+    accumulator["local_candidates"].add_(local_candidates)
+    accumulator["already_selected"].add_(already_selected)
+    accumulator["added_exact_blocks"].add_(added)
+
+
 def _torch_headwise_permute_video_tokens(
     values: torch.Tensor,
     permutation: torch.Tensor,
@@ -1141,6 +1204,20 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         stats["route_threshold_mode"] = (
             "topk_explicit_partial_video_fallback" if partial_video else "topk_explicit_no_threshold_backend")
 
+    _record_exact_block_verbose(
+        controller,
+        q,
+        kc,
+        threshold,
+        video_tokens=layout.video_tokens,
+        query_tokens=(
+            _query_tokens
+            if _query_tokens is not None
+            else (layout.video_tokens // _SPARK_BLOCK_SIZE) * _SPARK_BLOCK_SIZE
+        ),
+        radius=cfg.sol_exact_block_radius,
+    )
+
     if cfg.sol_log_density and controller.sol_route_density is None:
         if route is None or route.dtype == torch.int32:
             stats.update(_sol_topk_analytic_density(stats))
@@ -1159,7 +1236,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         output = virtual_q_attention(q, k, v, virtual_ranges=ranges, leaf_to_virtual=mapping,
             virtual_anchors=anchors, precomputed_summaries=summaries, key_centroids=kc,
             value_sums=vs, threshold=threshold, route=route, sink_start=layout.video_tokens,
-            sink_tokens=sink_tokens, force_local_blocks=cfg.sol_local_blocks_enabled,
+            sink_tokens=sink_tokens, force_local_blocks=cfg.sol_local_block_policy,
             tail_granularity=cfg.sol_tail_granularity,
             anchor_dtype=(torch.float32 if cfg.sol_global_anchor_dtype == "float32" else q.dtype),
             summary_math=cfg.sol_reweight_summary_math,
@@ -1180,7 +1257,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     elif route is None:
         output = sol_topk_threshold_attn(q, k, v, kc, vs, threshold,
             sink_start=layout.video_tokens, sink_tokens=sink_tokens,
-            force_local_blocks=cfg.sol_local_blocks_enabled,
+            force_local_blocks=cfg.sol_local_block_policy,
             _query_tokens=_query_tokens)
         controller.sol_backend = f"{backend}:{cfg.sol_route_topk_cutoff_mode}"
         controller.counts["sol_topk_threshold_calls"] += 1
@@ -1188,7 +1265,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         output, _, _ = exact_attention(
             q, k, v, kc, vs, route=route,
             sink_start=layout.video_tokens, sink_tokens=sink_tokens,
-            force_local_blocks=cfg.sol_local_blocks_enabled,
+            force_local_blocks=cfg.sol_local_block_policy,
             _query_tokens=_query_tokens)
         output = output.to(v.dtype)
         controller.sol_backend = "vaware_exact_explicit_route"

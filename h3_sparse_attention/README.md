@@ -56,6 +56,12 @@ a second pipeline invocation inside the same context. With the default
 nominal grid-point count, matching MiniMax-H3-Sparse (10 dense evaluations for
 50 grid points). The first transformer layer remains dense by default.
 
+For fixed Top-K routing, `sol_exact_block_radius=0` forces only the self block
+exact, while `1` forces the self block and its two immediate neighbors. These
+blocks are added outside the Top-K budget, matching `sol_force_local_blocks`.
+With reblocking this option requires `landmark_tree_v2_layout_reuse="q_from_k"`
+or `"k_from_q"`; independently reordered Q/K blocks have no shared locality.
+
 Only the generated target-video grid is sparse. Conditioning video, text, and
 audio are packed after the target as exact K/V sinks; their query rows are
 computed with dense attention. If the video boundary splits a 64-token block,

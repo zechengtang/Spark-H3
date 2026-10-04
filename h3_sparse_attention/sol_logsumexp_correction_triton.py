@@ -61,7 +61,7 @@ def _average_route_kernel(
     sink_start_block,
     sink_end_block,
     has_sink: tl.constexpr,
-    force_local_blocks: tl.constexpr,
+    local_block_radius: tl.constexpr,
     compute_average: tl.constexpr,
     heads: tl.constexpr,
     blocks: tl.constexpr,
@@ -112,8 +112,12 @@ def _average_route_kernel(
         scores = tl.dot(query, key_centroids.T).to(tl.float32) * scale_log2
         column_mean = tl.sum(scores, axis=0) / query_length.to(tl.float32)
         exact = column_mean > route_threshold
-        if force_local_blocks:
-            exact = exact | (tl.abs(query_block - block_indices) <= 1)
+        if local_block_radius == 0:
+            exact = exact | (query_block == block_indices)
+        elif local_block_radius > 0:
+            exact = exact | (
+                tl.abs(query_block - block_indices) <= local_block_radius
+            )
         if has_sink:
             exact = exact | (
                 (block_indices >= sink_start_block)

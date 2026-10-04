@@ -1178,7 +1178,11 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
         self.fused_topk_route = fused_topk_ratio > 0.0
         self.fused_topk_numerator = round(fused_topk_ratio * 10000)
         self.runtime_fused_topk_ratio = runtime_fused_topk_ratio
-        self.force_local_blocks = force_local_blocks
+        from .local_blocks import normalize_local_block_radius
+        explicit_local_radius = type(force_local_blocks) is int
+        self.local_block_radius = normalize_local_block_radius(force_local_blocks)
+        if external_route and not explicit_local_radius:
+            self.local_block_radius = -1
         self.prefetch_summary = prefetch_summary
         self.skip_final_tile_barrier = skip_final_tile_barrier
 
@@ -1687,8 +1691,12 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
                             exact = route_score * scale_log2 > threshold
                         if block >= sink_start_block and block < sink_end_block:
                             exact = True
-                        if cutlass.const_expr(self.force_local_blocks):
-                            if block >= q_block - 1 and block <= q_block + 1:
+                        if cutlass.const_expr(self.local_block_radius == 0):
+                            if block == q_block:
+                                exact = True
+                        elif cutlass.const_expr(self.local_block_radius > 0):
+                            if (block >= q_block - self.local_block_radius
+                                    and block <= q_block + self.local_block_radius):
                                 exact = True
                     route_bias = -cutlass.Float32.inf
                     if block < blocks and not exact:

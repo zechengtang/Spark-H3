@@ -84,7 +84,11 @@ class SparkReweightForwardSm120:
         self.hybrid_route = hybrid_route
         self.exact_only = exact_only
         self.export_route = export_route
-        self.force_local_blocks = force_local_blocks
+        from .local_blocks import normalize_local_block_radius
+        explicit_local_radius = type(force_local_blocks) is int
+        self.local_block_radius = normalize_local_block_radius(force_local_blocks)
+        if external_route and not explicit_local_radius:
+            self.local_block_radius = -1
         self.prefetch_approx_k = prefetch_approx_k and not exact_only
         self.shared_log_mass = shared_log_mass
 
@@ -662,9 +666,14 @@ class SparkReweightForwardSm120:
                                         )
                                         != cutlass.Int32(0)
                                     ) and valid
-                        if cutlass.const_expr(self.force_local_blocks and not self.external_route):
+                        if cutlass.const_expr(self.local_block_radius == 0):
+                            exact = exact or (q_tile_idx == kv_block)
+                        elif cutlass.const_expr(self.local_block_radius > 0):
                             distance = q_tile_idx - kv_block
-                            exact = exact or ((distance >= -1) and (distance <= 1))
+                            exact = exact or (
+                                (distance >= -self.local_block_radius)
+                                and (distance <= self.local_block_radius)
+                            )
                         exact = exact or (
                             kv_block >= sink_start_block
                             and kv_block < sink_end_block

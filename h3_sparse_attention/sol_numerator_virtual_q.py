@@ -885,7 +885,12 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         if runtime_sm80_topk_ratio or runtime_sm120_topk_ratio
         else fused_topk_ratio
     )
-    key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,force_local_blocks,runtime_sm80_topk_ratio,runtime_sm120_topk_ratio,cache_topk_ratio,sm80_prefetch_summary,sm80_skip_final_tile_barrier,
+    local_policy_key = (
+        ("radius", force_local_blocks)
+        if type(force_local_blocks) is int
+        else ("legacy", force_local_blocks)
+    )
+    key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,local_policy_key,runtime_sm80_topk_ratio,runtime_sm120_topk_ratio,cache_topk_ratio,sm80_prefetch_summary,sm80_skip_final_tile_barrier,
          static_video_tokens,query_tokens,active_parents,chunk,head_chunk,
          tuple(_dynamic_tensor_cache_signature(x) for x in tensors))
     compiled=_FUSED_COMPILED.get(key)

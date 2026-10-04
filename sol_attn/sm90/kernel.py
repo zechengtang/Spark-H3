@@ -16,6 +16,11 @@ def make_kernel(
     export_route: bool = False,
     force_local_blocks: bool = True,
 ):
+    local_block_policy = force_local_blocks
+    if type(force_local_blocks) is bool:
+        force_local_blocks = 1 if force_local_blocks else -1
+    if type(force_local_blocks) is not int or force_local_blocks < -1:
+        raise ValueError("force_local_blocks must be bool or an integer >= -1")
     blocks = (tokens + 63) // 64
     full_groups, tail = divmod(blocks, 64)
     has_full_groups = tail == 0
@@ -25,7 +30,7 @@ def make_kernel(
         or hybrid_route
         or exact_only
         or export_route
-        or not force_local_blocks
+        or force_local_blocks < 0
     )
     if kv_splits != 1 and route_mask_mode:
         raise ValueError("route-mask modes are unsupported for the SM90 split-KV variant")
@@ -63,7 +68,7 @@ def make_kernel(
         hybrid_route=hybrid_route,
         exact_only=exact_only,
         export_route=export_route,
-        force_local_blocks=force_local_blocks,
+        force_local_blocks=local_block_policy,
     )
 
 
