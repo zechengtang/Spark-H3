@@ -54,6 +54,7 @@ class SparkReweightForwardSm120:
         packed_external_route: bool = False,
         skip_external_route_qk: bool = False,
         fused_topk_ratio: float = 0.0,
+        runtime_fused_topk_ratio: bool = True,
         hybrid_route: bool = False,
         exact_only: bool = False,
         export_route: bool = False,
@@ -79,6 +80,7 @@ class SparkReweightForwardSm120:
         self.fused_topk_ratio = fused_topk_ratio
         self.fused_topk_route = fused_topk_ratio > 0.0
         self.fused_topk_numerator = round(fused_topk_ratio * 10000)
+        self.runtime_fused_topk_ratio = runtime_fused_topk_ratio
         self.hybrid_route = hybrid_route
         self.exact_only = exact_only
         self.export_route = export_route
@@ -120,6 +122,7 @@ class SparkReweightForwardSm120:
         scale_softmax_log2e: cutlass.Float32,
         sink_start_block: cutlass.Int32,
         sink_end_block: cutlass.Int32,
+        fused_topk_numerator: cutlass.Int32,
     ):
         tidx, _, _ = cute.arch.thread_idx()
         lane = cute.arch.lane_idx()
@@ -401,8 +404,8 @@ class SparkReweightForwardSm120:
                     )
                     K_pipeline.producer_commit(K_producer)
                     K_producer.advance()
-                k_wait = K_pipeline.consumer_try_wait(K_consumer)
-                K_pipeline.consumer_wait(K_consumer, k_wait)
+                exact_k_wait = K_pipeline.consumer_try_wait(K_consumer)
+                K_pipeline.consumer_wait(K_consumer, exact_k_wait)
                 gemm_smem_zero_acc(
                     tiled_mma_qk, tSrS, tSrQ, tSrK,
                     tSsK_copy[None, None, None, K_consumer.index], smem_copy_K,
@@ -430,8 +433,13 @@ class SparkReweightForwardSm120:
                 cute.arch.sync_threads()
 
             candidate_blocks = sink_start_block
+            topk_numerator = (
+                fused_topk_numerator
+                if cutlass.const_expr(self.runtime_fused_topk_ratio)
+                else cutlass.Int32(self.fused_topk_numerator)
+            )
             target_topk = (
-                candidate_blocks * cutlass.Int32(self.fused_topk_numerator)
+                candidate_blocks * topk_numerator
                 + cutlass.Int32(5000)
             ) // cutlass.Int32(10000)
             if target_topk < cutlass.Int32(1):
@@ -542,8 +550,8 @@ class SparkReweightForwardSm120:
                 V_producer.advance()
 
             if cutlass.const_expr(not self.skip_external_route_qk):
-                k_wait = K_pipeline.consumer_try_wait(K_consumer)
-                K_pipeline.consumer_wait(K_consumer, k_wait)
+                selected_k_wait = K_pipeline.consumer_try_wait(K_consumer)
+                K_pipeline.consumer_wait(K_consumer, selected_k_wait)
                 gemm_smem_zero_acc(
                     tiled_mma_qk,
                     tSrS,
@@ -959,6 +967,7 @@ class SparkReweightForwardSm120:
         softmax_scale: cutlass.Float32,
         sink_start_block: cutlass.Int32,
         sink_end_block: cutlass.Int32,
+        fused_topk_numerator: cutlass.Int32,
         stream: cuda.CUstream,
     ):
         q_mkl, k_nkl, kc_nkl = [
@@ -1152,6 +1161,7 @@ class SparkReweightForwardSm120:
             softmax_scale * 1.4426950408889634,
             sink_start_block,
             sink_end_block,
+            fused_topk_numerator,
         ).launch(
             grid=(q_block_count, head_count, q_mkl.shape[3]),
             block=(self.num_threads, 1, 1),

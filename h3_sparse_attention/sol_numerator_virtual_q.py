@@ -868,7 +868,14 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         args=[to_cute_tensor(x) for x in tensors]
     stream=cuda.CUstream(torch.cuda.current_stream(q.device).cuda_stream)
     static_video_tokens = t - sink_tokens if sink_start is None else operator.index(sink_start)
-    key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,force_local_blocks,fused_topk_ratio,sm80_prefetch_summary,sm80_skip_final_tile_barrier,
+    runtime_sm120_topk_ratio = (
+        capability == (12,0)
+        and os.environ.get("H3_SM120_RUNTIME_TOPK_RATIO", "1") != "0"
+    )
+    cache_topk_ratio = (
+        bool(fused_topk_ratio) if runtime_sm120_topk_ratio else fused_topk_ratio
+    )
+    key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,force_local_blocks,runtime_sm120_topk_ratio,cache_topk_ratio,sm80_prefetch_summary,sm80_skip_final_tile_barrier,
          static_video_tokens,query_tokens,active_parents,chunk,head_chunk,
          tuple(_dynamic_tensor_cache_signature(x) for x in tensors))
     compiled=_FUSED_COMPILED.get(key)
@@ -893,6 +900,8 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
             qb_end=triton.cdiv(min(ranges[p_end-1][1],query_tokens),64)
             scalars=(qb_start,qb_end-qb_start,p_start,head_start,head_count,
                      d**-.5,sink_first,sink_last)
+            if capability == (12,0):
+                scalars += (round(fused_topk_ratio * 10000),)
             if compiled is None:
                 kernel=(FusedKernel(external_route=external,hybrid_route=hybrid,
                                     export_route=export_route,
@@ -906,6 +915,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
                         FusedKernel(external_route=external,packed_external_route=packed_external,
                                     skip_external_route_qk=skip_external_route_qk,
                                     fused_topk_ratio=fused_topk_ratio,
+                                    runtime_fused_topk_ratio=runtime_sm120_topk_ratio,
                                     hybrid_route=hybrid,export_route=export_route,
                                     force_local_blocks=force_local_blocks)
                         if capability==(12,0) else
