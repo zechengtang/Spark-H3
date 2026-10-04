@@ -76,26 +76,12 @@ configuration and `torch_compile=true` provenance. Raw results are under
 
 ## Twenty-five-prompt compile-on validation
 
-The expansion completed on the first 25 cases of the same 20% subset, reusing
-the ten verified compile-on artifacts and generating 15 more. All 25 records
-have `torch_compile=true`, `comfy_fp32` summary arithmetic, and the same
-`packed_external` route setting. Each of the 25 historical Spark, current
-eager `full`, and current compiled `full` scores uses the same dense-reference
-video hash for its case.
-
-| Variant | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ |
-| --- | ---: | ---: | ---: |
-| Historical compiled Spark TopK10 | 23.224918 | 0.777540 | 0.145403 |
-| Current `full`, compile off | 20.041955 | 0.687634 | 0.224181 |
-| Current `full`, compile on | 23.192948 | 0.779732 | 0.141953 |
-
-The compiled current `full` recovers 3.150993 dB of the 3.182964 dB
-historical-versus-eager PSNR gap. Its mean difference against historical Spark
-is −0.031970 dB; it wins 10 cases and loses 15, with per-case differences
-from −1.522502 to +1.872816 dB. SSIM improves by 0.002192 and LPIPS falls
-by 0.003449 relative to historical Spark. These results establish the compile
-protocol mismatch as the dominant explanation for the apparent 3 dB loss,
-not numerical equivalence between the two Spark configurations. They do not
-identify the exact transformer operation causing the compile/eager divergence.
-
-Raw results: `/autodl-fs/data/h3_experiments/diagnose_spark_full_compile_25prompt_20260927/quality/spark_full_compile_quality_results.json`.
+> **Removed on 2026-10-04.** This run used cases 1--25 of the `20pct`
+> manifest rather than the canonical `10pct` subset and had no full-50
+> successor. Its aggregate table and standalone experiment/output directories
+> were removed from the active result namespace. The payload is recoverable
+> under `/autodl-fs/data/.trash_h3_noncanonical_25prompt_20261004/`.
+>
+> The compile/eager diagnosis above remains supported by the independent
+> Dense, four-prompt, and ten-prompt controls. No 25-prompt mean or ranking is
+> retained as benchmark evidence.

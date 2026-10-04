@@ -1,0 +1,22 @@
+diff --git a/h3_sparse_attention/landmark_tree_v2.py b/h3_sparse_attention/landmark_tree_v2.py
+--- a/h3_sparse_attention/landmark_tree_v2.py
++++ b/h3_sparse_attention/landmark_tree_v2.py
+@@ -843,7 +843,17 @@ class PreparedLandmarkTreeV2Permutation:
+                 landmark_mode=self.landmark_mode, landmark_count=self.landmark_count,
+                 aggregation=self.aggregation, minimum_frames=0)
+             self.split_count = len(stats)
+-            self.hierarchy = None
++            # The Table 3/4 reweight configuration uses levels_up=99, hence
++            # consumes only the global video root.  That root is invariant to
++            # the fixed-chunk permutation.  Publish the ordinary hierarchy so
++            # the global representative can be constructed; lower frontiers
++            # are deliberately not consumed by this compatibility path.
++            self.hierarchy = build_reblock_hierarchy(
++                self.tokens, self.max_children, grid_shape=self.grid_shape,
++                minimum_frames=0, final_fanout=self.final_fanout,
++                root_fanout=self.root_fanout, fanout_mode=self.fanout_mode)
++            metadata['reweight_hierarchy_scope'] = 'global_root_only'
++            metadata['reweight_required_levels_up'] = 99
+             self.chunk_metadata = metadata
+             return permutation, inverse
+         result = _recursive_landmark_tree_v2(

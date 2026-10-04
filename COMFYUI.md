@@ -39,17 +39,57 @@ uses the complete three-shot VDN prompt 8, 345 frames at 1344×768, and a
 LoRA or a second sparse-attention patch.
 
 Three matching 14.4-second, 8-step LoRA examples use the same full prompt,
-seed, resolution, Spark 20% Top-K ratio, and two dense warmup evaluations:
+seed, resolution, Spark 20% Top-K ratio, and two dense warmup evaluations. The
+DMAD and Alibaba-PAI examples retain the sampling protocol required by their
+respective students:
 
 | Workflow | LoRA loader | Sampler |
 | --- | --- | --- |
 | [MiniMax-H3 / ComfyUI 8-step LoRA](workflows/spark_h3_minimax_h3_comfyui_8step_lora_14p4s_t2va.json) | `LoraLoaderModelOnly` | `res_multistep` |
 | [LightX2V 768p 8-step LoRA](workflows/spark_h3_lightx2v_768p_8step_lora_14p4s_t2va.json) | `LoraLoaderModelOnly` | `res_multistep` |
 | [Larryvrh v4 8-step LoRA](workflows/spark_h3_larryvrh_8step_lora_14p4s_t2va.json) | `MiniMaxH3TurboLoRA` | `MiniMaxH3TurboSampler` |
+| [DMAD 4-step LoRA](workflows/spark_h3_dmad_4step_lora_5p2s_t2va.json) | `LoraLoaderModelOnly` | `MiniMaxH3DMADSampler` |
+| [Alibaba-PAI PDD Acc FL2VA 8-step LoRA](workflows/spark_h3_alibaba_pai_acc_fl2va_8step_lora_5p2s_t2va.json) | `MiniMaxH3PDDAccApply` | `euler` + node-provided sigmas |
 
 Larryvrh's LoRA requires its custom loader; the stock LoRA loader cannot
-apply that file to the local pruned base. The three examples use the filenames
-already present under the local ComfyUI LoRA model path.
+apply that file to the local pruned base. The workflows use filenames from the
+local ComfyUI LoRA model path.
+
+DMAD publishes a Diffusers-format rank-128 LoRA. Convert it before selecting it
+in `LoraLoaderModelOnly`:
+
+```bash
+python scripts/convert_dmad_lora_to_comfyui.py \
+  /path/to/dmad_minimax_h3_4step_lora_critic.safetensors \
+  /path/to/ComfyUI/models/loras/dmad_minimax_h3_4step_lora_critic_comfyui_bf16.safetensors
+```
+
+The converter fuses Q/K/V adapters without changing their represented update
+and swaps the Diffusers SwiGLU halves to ComfyUI order. The DMAD workflow then
+applies `MiniMaxH3SigmaShift` with video shift 12 and audio shift 2 before
+Spark. Use the bundled `MiniMaxH3DMADSampler`; a regular Euler or
+`res_multistep` sampler does not implement the re-noise rule used to train the
+released student.
+
+Alibaba-PAI's MiniMax-H3-Acc checkpoints are also Diffusers-side weights, but
+they are not ordinary PEFT LoRAs. Each file contains a rank-64 trunk LoRA and
+32 PDD video/audio output heads. Diffusers can use the official file directly
+with [`scripts/minimax_h3_pdd.py`](scripts/minimax_h3_pdd.py): call
+`apply_pdd_lora` on `pipeline.transformer` for FL2VA or
+`pipeline.transformer_ref` for Ref2VA, then pass
+`num_inference_steps=nfe + 1` to the modular pipeline.
+The pinned source revision, local file sizes, and SHA-256 checksums are recorded
+in the [MiniMax-H3-Acc integration note](docs/alibaba_pai_minimax_h3_acc.md).
+
+For ComfyUI, install the Apache-2.0
+`BSAI-ComfyUI-MiniMax-H3-PDD-Acc` node pack and place the original weights in
+`models/pdd_acc`. The node reads the official files directly, converts the
+trunk keys in memory, handles the pruned checkpoint's AdaLN curve basis, and
+installs the PDD head bank. Pair the FL2VA weight only with an FL2VA base and
+the Ref2VA weight only with a Ref2VA base. Use CFG 1.0, video/audio shifts
+12/3, the plain `euler` sampler, and wire the Apply node's `sigmas` output to
+`SamplerCustomAdvanced`; do not substitute `BasicScheduler`, `res_multistep`,
+or another distillation LoRA.
 
 The defaults select a 20% Top-K ratio, 20% dense warmup, and the first
 transformer block kept dense. Set `steps` to the

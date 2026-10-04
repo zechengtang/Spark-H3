@@ -1,0 +1,41 @@
+{
+  "note": "Read-only deletion preview; no artifacts have been removed.",
+  "candidate_roots": 25,
+  "protected_roots": [
+    "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913",
+    "/autodl-fs/data/h3_outputs/topk_reblock_reweight_50prompt_20260920",
+    "/autodl-fs/data/h3_experiments/topk_reblock_reweight_50prompt_20260920",
+    "/autodl-fs/data/h3_experiments/vbench20pct_768p10s_seed42_20260913",
+    "/autodl-fs/data/h3_repos/MiniMax-H3-Sparse/reports/vbench20pct_768p10s_seed42_20260913",
+    "/autodl-fs/data/h3_repos/MiniMax-H3-Sparse/reports/min10_topk10_reweight_l2_50prompt_20260915"
+  ],
+  "by_disposition": {
+    "delete_candidate": {
+      "files": 12619,
+      "bytes": 192450420036
+    },
+    "protect_shared_input": {
+      "files": 212,
+      "bytes": 379652737
+    }
+  },
+  "by_evidence": {
+    "protocol_false": {
+      "files": 8078,
+      "bytes": 64180331915
+    },
+    "runner_no_torch_compile": {
+      "files": 2269,
+      "bytes": 20489795346
+    },
+    "inherited_no_compile_route": {
+      "files": 1973,
+      "bytes": 62106645219
+    },
+    "nested_contract_false": {
+      "files": 511,
+      "bytes": 46053300293
+    }
+  },
+  "preview_tsv": "/autodl-fs/data/h3_repos/MiniMax-H3/docs/uncompiled_delete_preview_20260927.tsv"
+}

@@ -1,0 +1,10 @@
+{
+  "preview": "/autodl-fs/data/h3_repos/MiniMax-H3/docs/uncompiled_delete_preview_20260927.tsv",
+  "deleted_count": 12619,
+  "deleted_bytes": 192450420036,
+  "error_count": 0,
+  "errors": [],
+  "retained_blog_ablation": "/autodl-fs/data/h3_experiments/blog_ablation_4prompts_rerun_20260922",
+  "retained_main_bundle": "/autodl-fs/data/h3_experiments/blog50_four_main_selfcontained_20260927",
+  "note": "Only exact regular-file rows were unlinked; no symlink or directory was removed."
+}

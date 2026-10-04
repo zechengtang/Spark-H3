@@ -967,3 +967,19 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "LoadMiniMaxH3AVLatentCache": "Load MiniMax H3 AV Latent Cache",
     "SaveVideoLosslessUltrafast": "Save Video Lossless (Ultrafast)",
 }
+
+# Keep the DMAD sampler isolated from the Spark implementation while exposing it
+# through this custom node's single ComfyUI entry point.
+try:
+    from .comfyui_dmad import (
+        NODE_CLASS_MAPPINGS as DMAD_NODE_CLASS_MAPPINGS,
+        NODE_DISPLAY_NAME_MAPPINGS as DMAD_NODE_DISPLAY_NAME_MAPPINGS,
+    )
+except ImportError:  # Direct module import in tests / development checkouts.
+    from comfyui_dmad import (
+        NODE_CLASS_MAPPINGS as DMAD_NODE_CLASS_MAPPINGS,
+        NODE_DISPLAY_NAME_MAPPINGS as DMAD_NODE_DISPLAY_NAME_MAPPINGS,
+    )
+
+NODE_CLASS_MAPPINGS.update(DMAD_NODE_CLASS_MAPPINGS)
+NODE_DISPLAY_NAME_MAPPINGS.update(DMAD_NODE_DISPLAY_NAME_MAPPINGS)

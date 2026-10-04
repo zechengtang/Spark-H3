@@ -171,11 +171,11 @@ Because there is no corresponding dense checkpoint for the Video DeltaNet weight
 | Method | Dtype | Per-step DiT<br>latency (s) ↓ | Per-step ATTN<br>latency (s) ↓ | DiT<br>speedup ↑ | ATTN<br>speedup ↑ |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Dense | BF16 | 56.36 | 49.45 | 1.00× | 1.00× |
-| Spark-H3-10pct (w/ warmup) | BF16 | 33.01 | 26.19 | 1.71× | 1.89× |
+| Spark-H3-10pct (w/ warmup) | BF16 | 31.24 | 24.47 | 1.78× | 2.00× |
 | Spark-H3-10pct (w/o warmup) | BF16 | 22.97 | 16.15 | **2.45×** | **3.06×** |
 | VDN (8 steps) | BF16 | 24.54 | 17.90 | 2.30× | 2.76× |
 | Dense | FP8 | 51.67 | 47.45 | 1.00× | 1.00× |
-| Spark-H3-10pct (w/ warmup) | FP8 | 28.63 | 24.50 | 1.80× | 1.94× |
+| Spark-H3-10pct (w/ warmup) | FP8 | 27.18 | 22.90 | 1.91× | 2.09× |
 | Spark-H3-10pct (w/o warmup) | FP8 | 18.71 | 14.53 | **2.76×** | **3.27×** |
 | VDN (8 steps) | FP8 | 19.76 | 15.77 | 2.62× | 3.01× |
 

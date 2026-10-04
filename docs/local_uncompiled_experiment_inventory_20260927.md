@@ -122,8 +122,10 @@ passed `--no-torch-compile` before its 2026-09-27 correction:
 
 The 50-prompt component `full` result of 20.225 dB is **not** a controlled
 comparison against the historical compiled Spark TopK10 result of 23.301 dB.
-The separate compiled 25-prompt attribution run recovered the difference in
-aggregate (23.193 vs historical 23.225 dB on the same first 25 prompts).
+The former compiled 25-prompt attribution run used cases 1--25 of the
+`20pct` manifest rather than the canonical `10pct` subset. Its active result
+directories and aggregate values were removed on 2026-10-04; the independent
+Dense and smaller compile controls remain the supported attribution evidence.
 
 ## Intentional diagnostic / not a deletion recommendation
 
@@ -134,10 +136,9 @@ BF16 threshold control noted above. Keep both if the compile-mismatch
 attribution needs to remain reproducible.
 
 The historical 2026-09-20 50-prompt Spark TopK10/TopK20 benchmark and its
-dense/Sol references used real per-block compilation. The completed
-`diagnose_spark_full_compile_25prompt_20260927` has 25 records with
-`torch_compile=true` and a completed quality result. These are **not** in the
-uncompiled inventory.
+dense/Sol references used real per-block compilation. The noncanonical
+`diagnose_spark_full_compile_25prompt_20260927` result was removed from the
+active namespace on 2026-10-04 and is no longer benchmark evidence.
 
 The 176 protocols without a top-level compile flag and other experiment
 directories lacking a protocol remain **unclassified**, not approved for

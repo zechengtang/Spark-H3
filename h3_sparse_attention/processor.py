@@ -1,7 +1,8 @@
 """Reversible Sol-Attn integration for packed MiniMax-H3 inference.
 
-Adapted from MiniMax-H3-Sparse. Target video uses Sol-Attn; conditioning
-video, text, and audio keys remain exact, and context queries run densely.
+Adapted from MiniMax-H3-Sparse. Target video uses Sol-Attn by default; Ref2VA
+may explicitly opt conditioning-video rows into the same sparse video domain.
+Text and audio keys remain exact, and their context queries run densely.
 """
 from __future__ import annotations
 
@@ -44,6 +45,7 @@ class H3SparseAttentionConfig:
     sol_route_topk_execution: Literal[
         "threshold", "packed_external", "packed_external_no_route_qk", "fused"
     ] = "threshold"
+    sol_sparse_video_scope: Literal["target", "target_and_condition"] = "target"
     sol_video_tail_mode: Literal["dense", "pad"] = "dense"
     # Benchmark-only compatibility switch for the pre-tail-fix behavior.  It
     # intentionally evaluates the packed context query rows sparsely whenever
@@ -73,8 +75,11 @@ class H3SparseAttentionConfig:
     landmark_tree_v2_root_fanout: int | None = None
     landmark_tree_v2_landmark_mode: Literal["mean", "midpoint"] = "midpoint"
     landmark_tree_v2_landmark_count: int = 32
-    # Preserve the frozen Spark routing arithmetic by default. The fused
-    # direction builder is faster locally but can change near-tie partitions.
+    # Preserve the frozen Spark routing arithmetic by default. In the paired
+    # 25-prompt 768p study, fused directions lowered mean PSNR by 0.114 dB at
+    # 5s and 0.191 dB at 10s versus legacy (not statistically significant:
+    # p=0.61 and p=0.26). Keep this choice independent of packed/external
+    # execution so kernel optimizations can be evaluated without that confound.
     landmark_tree_v2_midpoint_direction_mode: Literal["legacy", "fused"] = "legacy"
     landmark_tree_v2_aggregation: Literal["linear", "max"] = "linear"
     rope_sol_key_ridge_epsilon: float = 1e-3
@@ -133,6 +138,8 @@ class H3SparseAttentionConfig:
             "threshold", "packed_external", "packed_external_no_route_qk", "fused"
         ):
             raise ValueError("invalid sol_route_topk_execution")
+        if self.sol_sparse_video_scope not in ("target", "target_and_condition"):
+            raise ValueError("sol_sparse_video_scope must be 'target' or 'target_and_condition'")
         if self.sol_video_tail_mode not in ("dense", "pad"):
             raise ValueError("sol_video_tail_mode must be 'dense' or 'pad'")
         if type(self.sol_legacy_full_query) is not bool:
@@ -309,6 +316,9 @@ class PackedLayout:
     video_tokens: int
     sequence_length: int
     video_positions: torch.Tensor
+    target_video_tokens: int | None = None
+    condition_video_tokens: int = 0
+    sparse_video_scope: str = "target"
 
 
 def _packed_layout(
@@ -318,6 +328,7 @@ def _packed_layout(
     video_indices: torch.Tensor | None = None,
     timestep_indices: torch.Tensor | None = None,
     text_indices: torch.Tensor | None = None,
+    sparse_video_scope: str = "target",
 ) -> PackedLayout:
     if token_tags.ndim != 1 or position_ids.shape != (token_tags.numel(), 3):
         raise ValueError("H3 token_tags/position_ids have unexpected shapes")
@@ -336,38 +347,84 @@ def _packed_layout(
             video_indices[1:] != video_indices[:-1] + 1, as_tuple=False
         ).flatten()
         target_start = int(discontinuities[-1].item() + 1) if discontinuities.numel() else 0
-        video = video_indices[target_start:]
-        if video[-1] != token_tags.numel() - 1:
+        target_video = video_indices[target_start:]
+        condition_video = video_indices[:target_start]
+        if target_video[-1] != token_tags.numel() - 1:
             raise ValueError("H3 target video rows must be the final packed-sequence suffix")
         target_timestep = timestep_indices[text_indices[0]]
-        if not bool((timestep_indices.index_select(0, video) == target_timestep).all()):
+        if not bool((timestep_indices.index_select(0, target_video) == target_timestep).all()):
             raise ValueError("H3 target video timestep does not match the text timestep")
-        if video.numel() and not bool((token_tags.index_select(0, video) == 0).all()):
+        if video_indices.numel() and not bool((token_tags.index_select(0, video_indices) == 0).all()):
             raise ValueError("H3 video_indices selected rows whose modality tag is not video")
+        if sparse_video_scope == "target":
+            video = target_video
+        elif sparse_video_scope == "target_and_condition":
+            video = video_indices
+        else:
+            raise ValueError(
+                "sparse_video_scope must be 'target' or 'target_and_condition'"
+            )
     else:
         # Minimal/test transformers may expose only tags and positions. The real
         # H3 pipeline always takes the indexed path above.
         video = torch.nonzero(token_tags == 0, as_tuple=False).flatten()
+        target_video = video
+        condition_video = video[:0]
+        if sparse_video_scope != "target":
+            raise ValueError(
+                "target_and_condition scope requires H3 video/timestep/text indices"
+            )
     selected = torch.zeros(token_tags.numel(), device=token_tags.device, dtype=torch.bool)
     selected[video] = True
     nonvideo = torch.nonzero(~selected, as_tuple=False).flatten()
     if video.numel() == 0:
         raise ValueError("packed H3 sequence contains no video tokens")
-    pos = position_ids.index_select(0, video)
-    unique_t, unique_h, unique_w = (pos[:, axis].unique(sorted=True) for axis in range(3))
-    grid = (unique_t.numel(), unique_h.numel(), unique_w.numel())
-    key = (
-        torch.searchsorted(unique_t, pos[:, 0].contiguous()) * grid[1] * grid[2]
-        + torch.searchsorted(unique_h, pos[:, 1].contiguous()) * grid[2]
-        + torch.searchsorted(unique_w, pos[:, 2].contiguous())
-    )
-    order = key.argsort()
-    sorted_key = key.index_select(0, order)
-    expected = torch.arange(math.prod(grid), device=key.device)
-    if sorted_key.numel() != expected.numel() or not torch.equal(sorted_key, expected):
+    def dense_grid_order(indices):
+        positions = position_ids.index_select(0, indices)
+        unique_t, unique_h, unique_w = (
+            positions[:, axis].unique(sorted=True) for axis in range(3)
+        )
+        shape = (unique_t.numel(), unique_h.numel(), unique_w.numel())
+        key = (
+            torch.searchsorted(unique_t, positions[:, 0].contiguous()) * shape[1] * shape[2]
+            + torch.searchsorted(unique_h, positions[:, 1].contiguous()) * shape[2]
+            + torch.searchsorted(unique_w, positions[:, 2].contiguous())
+        )
+        order = key.argsort()
+        expected = torch.arange(math.prod(shape), device=key.device)
+        is_dense = key.numel() == expected.numel() and torch.equal(
+            key.index_select(0, order), expected
+        )
+        return positions, shape, order, is_dense
+
+    pos, grid, order, is_dense = dense_grid_order(video)
+    if is_dense:
+        ordered_video = video.index_select(0, order)
+        ordered_positions = pos.index_select(0, order)
+    elif sparse_video_scope == "target_and_condition" and condition_video.numel():
+        # Ref2VA may combine a lower-resolution conditioning-video grid with a
+        # 768p target grid.  Their union is not a Cartesian grid, even though
+        # each structural segment is dense.  Keep both raster-ordered segments
+        # contiguous and expose a flat composite grid to Spark's token tree.
+        # This preserves all video rows without padding or inventing samples.
+        segment_indices = []
+        segment_positions = []
+        for name, segment in (("condition", condition_video), ("target", target_video)):
+            segment_pos, segment_grid, segment_order, segment_dense = dense_grid_order(segment)
+            if not segment_dense:
+                raise ValueError(
+                    f"{name} video tokens do not form a dense grid: "
+                    f"grid={segment_grid}, rows={segment.numel()}"
+                )
+            segment_indices.append(segment.index_select(0, segment_order))
+            segment_positions.append(segment_pos.index_select(0, segment_order))
+        ordered_video = torch.cat(segment_indices)
+        ordered_positions = torch.cat(segment_positions)
+        grid = (1, 1, video.numel())
+    else:
         raise ValueError(f"video tokens do not form a dense grid: grid={grid}, rows={video.numel()}")
 
-    permutation = torch.cat((video.index_select(0, order), nonvideo))
+    permutation = torch.cat((ordered_video, nonvideo))
     inverse = torch.empty_like(permutation)
     inverse[permutation] = torch.arange(permutation.numel(), device=permutation.device)
 
@@ -377,7 +434,10 @@ def _packed_layout(
         grid=grid,
         video_tokens=video.numel(),
         sequence_length=token_tags.numel(),
-        video_positions=pos.index_select(0, order),
+        video_positions=ordered_positions,
+        target_video_tokens=target_video.numel(),
+        condition_video_tokens=condition_video.numel(),
+        sparse_video_scope=sparse_video_scope,
     )
 
 
@@ -413,7 +473,8 @@ class _Controller:
         self.layout = _packed_layout(
             tags, positions, video_indices=argument("video_indices", 7),
             timestep_indices=argument("timestep_indices", 4),
-            text_indices=argument("text_indices", 9))
+            text_indices=argument("text_indices", 9),
+            sparse_video_scope=self.config.sol_sparse_video_scope)
 
     @property
     def is_warmup(self):
@@ -434,7 +495,11 @@ class _Controller:
                     sol_landmark_preprocess=self.config.sol_landmark_preprocess,
                     landmark_tree_v2_children=self.config.landmark_tree_v2_children,
                     landmark_tree_v2_fanout_mode=self.config.landmark_tree_v2_fanout_mode,
-                    landmark_tree_v2_midpoint_direction_mode=self.config.landmark_tree_v2_midpoint_direction_mode)
+                    landmark_tree_v2_midpoint_direction_mode=self.config.landmark_tree_v2_midpoint_direction_mode,
+                    sol_sparse_video_scope=self.config.sol_sparse_video_scope,
+                    sparse_video_tokens=(None if self.layout is None else self.layout.video_tokens),
+                    target_video_tokens=(None if self.layout is None else self.layout.target_video_tokens),
+                    condition_video_tokens=(None if self.layout is None else self.layout.condition_video_tokens))
 
 
 def _sol_attention(controller, q, k, v, layout, layer, *, return_bthd=False):

@@ -11,6 +11,7 @@ def test_installer_defaults_and_global_frontier():
     assert cfg.method=='sol' and cfg.total_evaluations==19
     assert cfg.sol_route_topk_ratio==.1 and cfg.sol_route_topk_cutoff_mode=='gemm_radix'
     assert cfg.sol_route_topk_execution=='threshold'
+    assert cfg.sol_sparse_video_scope=='target'
     assert cfg.sol_global_anchor_dtype=='bfloat16'
     assert cfg.sol_force_local_blocks is None and not cfg.sol_local_blocks_enabled
     assert cfg.sol_video_tail_mode=='dense'
@@ -102,6 +103,11 @@ def test_overrides_and_plain_sol_opt_in():
         H3SparseAttentionConfig.sol(20,sol_video_tail_mode='pad')
     with pytest.raises(ValueError,match='choose either'):
         H3SparseAttentionConfig.spark(sol_virtual_query_levels_up=2,sol_virtual_query_target_blocks=189)
+    assert H3SparseAttentionConfig.spark(
+        20, sol_sparse_video_scope='target_and_condition'
+    ).sol_sparse_video_scope == 'target_and_condition'
+    with pytest.raises(ValueError, match='sol_sparse_video_scope'):
+        H3SparseAttentionConfig.spark(20, sol_sparse_video_scope='all')
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')

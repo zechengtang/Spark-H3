@@ -1,5 +1,12 @@
 # Diffusers Spark-H3 TopK30, 50 prompts (2026-09-28)
 
+> **Sampling note (2026-10-04):** The reused first 25 records are cases 1--25
+> of the `20pct` manifest, not the canonical `10pct` subset. Their standalone
+> 25-prompt table is not valid benchmark evidence. This document reports the
+> completed 50-prompt result, so its full-50 aggregates are the required
+> confirmation and are not invalidated by the composition of the intermediate
+> first half.
+
 This extends the matched 25-prompt TopK30 run to the full 50-prompt
 Table-4 dataset at 10s/768p, seed 42, 20-step grid/19 transformer
 evaluations, torch.compile enabled, query-granularity approximate tail,

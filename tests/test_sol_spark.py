@@ -119,6 +119,50 @@ def test_target_suffix_selection():
     assert layout.permutation.tolist() == [4, 5, 0, 1, 2, 3]
 
 
+def test_target_and_condition_video_selection():
+    tags = torch.tensor([0, 0, 1, 2, 0, 0])
+    positions = torch.tensor([[0, 0, 0], [0, 0, 1], [0, 0, 0],
+                              [0, 0, 0], [1, 0, 0], [1, 0, 1]])
+    layout = _packed_layout(
+        tags,
+        positions,
+        video_indices=torch.tensor([0, 1, 4, 5]),
+        timestep_indices=torch.tensor([0, 0, 1, 0, 1, 1]),
+        text_indices=torch.tensor([2]),
+        sparse_video_scope="target_and_condition",
+    )
+    assert layout.grid == (2, 1, 2)
+    assert layout.video_tokens == 4
+    assert layout.target_video_tokens == 2
+    assert layout.condition_video_tokens == 2
+    assert layout.sparse_video_scope == "target_and_condition"
+    assert layout.permutation.tolist() == [0, 1, 4, 5, 2, 3]
+
+
+def test_target_and_condition_video_selection_with_heterogeneous_grids():
+    # A 1x1x2 condition grid followed by a 1x2x2 target grid cannot be
+    # represented as one Cartesian position grid.  Spark still packs every
+    # video row, without padding, in segment-raster order.
+    tags = torch.tensor([0, 0, 1, 0, 0, 0, 0])
+    positions = torch.tensor([
+        [0, 0, 0], [0, 0, 1], [0, 0, 0],
+        [1, 0, 0], [1, 0, 1], [1, 1, 0], [1, 1, 1],
+    ])
+    layout = _packed_layout(
+        tags,
+        positions,
+        video_indices=torch.tensor([0, 1, 3, 4, 5, 6]),
+        timestep_indices=torch.tensor([0, 0, 1, 1, 1, 1, 1]),
+        text_indices=torch.tensor([2]),
+        sparse_video_scope="target_and_condition",
+    )
+    assert layout.grid == (1, 1, 6)
+    assert layout.video_tokens == 6
+    assert layout.target_video_tokens == 4
+    assert layout.condition_video_tokens == 2
+    assert layout.permutation.tolist() == [0, 1, 3, 4, 5, 6, 2]
+
+
 class TinyTransformer(torch.nn.Module):
     def __init__(self):
         super().__init__()
