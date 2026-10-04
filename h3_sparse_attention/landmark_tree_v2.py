@@ -97,6 +97,15 @@ class LandmarkTreeV2SplitStats:
     representatives: int
     children: int
     landmarks: int
+    proxy_iterations: int
+    seed_rule: str
+    update_rule: str
+    landmark_mode: str
+    landmark_input_space: str
+    landmark_reduction_dtype: str
+    landmark_transform_order: str
+    landmark_min_weight: int
+    landmark_max_weight: int
 
 
 @dataclass(frozen=True)
@@ -311,6 +320,10 @@ def _recursive_landmark_tree_v2(
     compact_indices: bool = False,
     initial_order_is_flat: bool = False,
     precomputed_root_scores: torch.Tensor | None = None,
+    proxy_iterations: int = 2,
+    seed_rule: str = "farthest_pair",
+    update_rule: str = "mean",
+    excluded_indices: torch.Tensor | None = None,
 ) -> LandmarkTreeV2Result:
     max_children = _normalize_fanout(max_children, fanout)
     fanout_mode = normalize_fanout_mode(fanout_mode)
@@ -328,6 +341,13 @@ def _recursive_landmark_tree_v2(
     order_mode = _normalize_order_mode(order_mode)
     if distance not in ("euclidean", "cosine"):
         raise ValueError("v2 distance must be euclidean or cosine")
+    from .landmark_v2_terminal import _normalize_proxy_controls
+    proxy_iterations, seed_rule, update_rule = _normalize_proxy_controls(
+        proxy_iterations, seed_rule, update_rule
+    )
+    experimental_proxy = (
+        proxy_iterations != 2 or seed_rule != "farthest_pair" or update_rule != "mean"
+    )
     if samples.ndim < 2 or not samples.is_floating_point():
         raise ValueError("samples must be floating point with layout [...,N,D]")
     leading = samples.shape[:-2]
@@ -339,7 +359,8 @@ def _recursive_landmark_tree_v2(
     flat = samples.reshape(-1, tokens, dim).contiguous()
     batch = flat.shape[0]
     active_root, excluded = _initial_order_partition(
-        flat, grid_shape, initial_indices, validate_order=validate
+        flat, grid_shape, initial_indices, validate_order=validate,
+        excluded_indices=excluded_indices,
     )
     # The ComfyUI direct route accepts int32 permutations and H3's complete
     # per-head index space is far below 2^31.  Keeping the tree frontier in
@@ -449,7 +470,28 @@ def _recursive_landmark_tree_v2(
             fused_node = (node_landmarks <= 128 and (node_landmarks & (node_landmarks - 1)) == 0 and indexed_group1 and direct_partition and distance == "cosine"
                           and aggregation == "linear"
                           and _use_fused_node(node_tokens, children, dim))
-            if fused_node:
+            if experimental_proxy:
+                # Keep every non-baseline control on the single explicit oracle
+                # path.  This prevents a fused kernel with a baked-in two-pass
+                # mean update from silently changing the requested experiment.
+                from .landmark_v2_terminal import node_split_reference
+                representatives, centers, weights = _block_mean_landmarks(
+                    source, global_indices, group_size, optimized_means=optimized_means,
+                    landmark_mode=landmark_mode, landmark_count=landmark_count)
+                original_groups = group.indices.reshape(node_count, -1, group_size)[:, :, 0]
+                ordered_ids = node_split_reference(
+                    representatives, original_groups, centers, weights,
+                    child_group_capacities, distance=distance, aggregation=aggregation,
+                    order_mode=order_mode, proxy_iterations=proxy_iterations,
+                    seed_rule=seed_rule, update_rule=update_rule)
+                sorted_ids, positions = original_groups.sort(dim=1)
+                group_order = positions.gather(
+                    1, torch.searchsorted(sorted_ids.contiguous(), ordered_ids.contiguous()))
+                mapped = group.indices.reshape(node_count, -1, group_size).gather(
+                    1, group_order[:, :, None].expand(-1, -1, group_size)
+                ).reshape(node_count, node_tokens)
+                landmarks_used = centers.shape[1]
+            elif fused_node:
                 # One program per node: means, proxy tree, scores, exact route
                 # and stable partition, reading the node features twice.
                 from .landmark_v2_fused_node import fused_node_split
@@ -669,6 +711,18 @@ def _recursive_landmark_tree_v2(
                     representatives=node_tokens // group_size,
                     children=children,
                     landmarks=landmarks_used,
+                    proxy_iterations=proxy_iterations,
+                    seed_rule=seed_rule,
+                    update_rule=update_rule,
+                    landmark_mode=landmark_mode,
+                    landmark_input_space="m2_transformed",
+                    landmark_reduction_dtype=(
+                        "float32" if landmark_mode == "mean"
+                        else str(source.dtype).removeprefix("torch.")
+                    ),
+                    landmark_transform_order="before_compression",
+                    landmark_min_weight=node_tokens // node_landmarks,
+                    landmark_max_weight=(node_tokens + node_landmarks - 1) // node_landmarks,
                 )
             )
             token_offset = 0
@@ -748,6 +802,10 @@ def recursive_landmark_tree_v2_reference(
     landmark_mode: str = "midpoint",
     landmark_count: int = 32,
     aggregation: str = "linear",
+    proxy_iterations: int = 2,
+    seed_rule: str = "farthest_pair",
+    update_rule: str = "mean",
+    excluded_indices: torch.Tensor | None = None,
 ) -> LandmarkTreeV2Result:
     """Direct PyTorch mean implementation used as the v2 correctness oracle."""
 
@@ -766,6 +824,8 @@ def recursive_landmark_tree_v2_reference(
         aggregation=aggregation,
         distance=distance,
         order_mode=order_mode,
+        proxy_iterations=proxy_iterations, seed_rule=seed_rule, update_rule=update_rule,
+        excluded_indices=excluded_indices,
     )
 
 
@@ -788,6 +848,10 @@ def recursive_landmark_tree_v2_blocks(
     landmark_count: int = 32,
     midpoint_direction_mode: str = "legacy",
     aggregation: str = "linear",
+    proxy_iterations: int = 2,
+    seed_rule: str = "farthest_pair",
+    update_rule: str = "mean",
+    excluded_indices: torch.Tensor | None = None,
 ) -> LandmarkTreeV2Result:
     """Return strict 64-token leaves; defaults are single tokens, eight children and midpoint landmarks.
 
@@ -829,6 +893,8 @@ def recursive_landmark_tree_v2_blocks(
         aggregation=aggregation,
         distance=distance,
         order_mode=order_mode,
+        proxy_iterations=proxy_iterations, seed_rule=seed_rule, update_rule=update_rule,
+        excluded_indices=excluded_indices,
     )
 
 
@@ -861,6 +927,9 @@ class PreparedLandmarkTreeV2Permutation:
         return_inverse: bool = True,
         compact_direct_route: bool = False,
         compact_indices: bool = False,
+        proxy_iterations: int = 2,
+        seed_rule: str = "farthest_pair",
+        update_rule: str = "mean",
     ) -> None:
         if input_unit_means and metric_unit_means:
             raise ValueError("select only one unit-mean space")
@@ -880,6 +949,10 @@ class PreparedLandmarkTreeV2Permutation:
         self.return_inverse = bool(return_inverse)
         self.compact_direct_route = bool(compact_direct_route)
         self.compact_indices = bool(compact_indices)
+        from .landmark_v2_terminal import _normalize_proxy_controls
+        self.proxy_iterations, self.seed_rule, self.update_rule = _normalize_proxy_controls(
+            proxy_iterations, seed_rule, update_rule
+        )
         self.metric_unit_means = metric_unit_means
         self.input_unit_means = input_unit_means
         self._static_inverse_norms: torch.Tensor | None = None
@@ -908,7 +981,7 @@ class PreparedLandmarkTreeV2Permutation:
         self.hierarchy = None
 
     def _compute(self, samples: torch.Tensor, inverse_norms=None,
-                 root_scores=None) -> tuple[torch.Tensor, torch.Tensor]:
+                 root_scores=None, excluded_indices=None) -> tuple[torch.Tensor, torch.Tensor]:
         fitting = None
         if self.input_unit_means:
             if inverse_norms is None:
@@ -938,6 +1011,10 @@ class PreparedLandmarkTreeV2Permutation:
             compact_indices=self.compact_indices,
             initial_order_is_flat=self.initial_order == "flat",
             precomputed_root_scores=root_scores,
+            proxy_iterations=self.proxy_iterations,
+            seed_rule=self.seed_rule,
+            update_rule=self.update_rule,
+            excluded_indices=excluded_indices,
         )
         self.split_count = len(result.split_stats)
         self.hierarchy = result.hierarchy
@@ -970,7 +1047,7 @@ class PreparedLandmarkTreeV2Permutation:
 
     @torch.no_grad()
     def run(self, samples: torch.Tensor, inverse_norms=None,
-            root_scores=None) -> tuple[torch.Tensor, torch.Tensor]:
+            root_scores=None, excluded_indices=None) -> tuple[torch.Tensor, torch.Tensor]:
         expected = (self.batch, self.tokens, self.dim)
         if samples.shape != expected or samples.dtype != torch.bfloat16:
             raise ValueError(
@@ -982,11 +1059,22 @@ class PreparedLandmarkTreeV2Permutation:
                 raise ValueError("input-unit means require FP32 [batch,tokens,1] inverse norms")
         elif inverse_norms is not None:
             raise ValueError("raw means do not accept inverse norms")
+        if excluded_indices is not None:
+            remainder = self.tokens % 64
+            if excluded_indices.shape != (self.batch, remainder):
+                raise ValueError(
+                    f"excluded_indices must have shape {(self.batch, remainder)}"
+                )
         if root_scores is not None and (
             root_scores.ndim != 3 or root_scores.shape[:2] != (self.batch, self.tokens)
             or root_scores.dtype != torch.float32 or not root_scores.is_cuda
         ):
             raise ValueError("root_scores must be CUDA FP32 [batch,tokens,directions]")
+        if excluded_indices is not None:
+            # Frozen-tail ablations are intentionally eager.  Keeping the tail
+            # explicit avoids capturing one identity and silently replaying it
+            # for a later candidate.
+            return self._compute(samples, inverse_norms, root_scores, excluded_indices)
         if self._graph is not None:
             assert self._static_input is not None
             if (root_scores is None) != (self._static_root_scores is None):

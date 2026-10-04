@@ -305,9 +305,9 @@ def _landmark_tree_v2_combined_permutations(
 ):
     """Metric transform plus prepared-plan tree build on the current stream.
 
-    Returns ``(plan, metric_indices, combined_permutation, combined_inverse)``
-    where the combined tensors are the plan's ``[2*B*H, video_tokens]`` static
-    outputs: keys first, queries second.
+    Returns ``(plan, metric_indices, combined_permutation, combined_inverse)``.
+    Independent layouts use ``[K; Q]`` batches.  A shared-layout ablation only
+    constructs the source-side layout and then returns it for both sides.
     """
 
     from .landmark_tree_v2 import PreparedLandmarkTreeV2Permutation
@@ -353,8 +353,12 @@ def _landmark_tree_v2_combined_permutations(
         metric_indices,
         ridge=controller.config.rope_sol_key_ridge_epsilon,
         moment=controller.config.landmark_tree_v2_moment_mode,
+        m2_estimator=controller.config.landmark_tree_v2_m2_estimator,
+        m2_side=controller.config.landmark_tree_v2_m2_side,
     )
     _profile_end(controller, profile)
+    layout_reuse = controller.config.landmark_tree_v2_layout_reuse
+    plan_batch = 2 * flat_batch if layout_reuse == "independent" else flat_batch
     plan_key = (
         "prepared_landmark_tree_v2_qk",
         controller.config.landmark_tree_v2_initial_order,
@@ -371,9 +375,15 @@ def _landmark_tree_v2_combined_permutations(
         controller.config.landmark_tree_v2_moment_mode,
         controller.config.landmark_tree_v2_order_mode,
         controller.config.landmark_tree_v2_group_size,
+        controller.config.landmark_tree_v2_m2_side,
+        controller.config.landmark_tree_v2_m2_estimator,
+        controller.config.landmark_tree_v2_proxy_iterations,
+        controller.config.landmark_tree_v2_proxy_seed_rule,
+        controller.config.landmark_tree_v2_proxy_update_rule,
+        layout_reuse,
         query.device.type,
         query.device.index,
-        2 * flat_batch,
+        plan_batch,
         video_tokens,
         dim,
         layout.grid,
@@ -394,7 +404,10 @@ def _landmark_tree_v2_combined_permutations(
             metric_unit_means=controller.config.landmark_tree_v2_mean_mode == "metric_unit",
             order_mode=controller.config.landmark_tree_v2_order_mode,
             group_size=controller.config.landmark_tree_v2_group_size,
-            batch=2 * flat_batch,
+            proxy_iterations=controller.config.landmark_tree_v2_proxy_iterations,
+            seed_rule=controller.config.landmark_tree_v2_proxy_seed_rule,
+            update_rule=controller.config.landmark_tree_v2_proxy_update_rule,
+            batch=plan_batch,
             tokens=video_tokens,
             dim=dim,
             grid_shape=layout.grid,
@@ -406,36 +419,107 @@ def _landmark_tree_v2_combined_permutations(
     transformed = plan.graph_input
     if transformed is None:
         transformed = torch.empty(
-            (2 * flat_batch, video_tokens, dim),
+            (plan_batch, video_tokens, dim),
             device=query.device,
             dtype=torch.bfloat16,
         )
     profile = _profile_begin(controller, "reblock_transform_bmm")
-    torch.bmm(
-        key.to(torch.bfloat16),
-        query_metric.to(torch.bfloat16),
-        out=transformed[:flat_batch],
-    )
-    torch.bmm(
-        query.to(torch.bfloat16),
-        key_metric.to(torch.bfloat16),
-        out=transformed[flat_batch:],
-    )
+    if layout_reuse in ("independent", "q_from_k"):
+        torch.bmm(
+            key.to(torch.bfloat16), query_metric.to(torch.bfloat16),
+            out=transformed[:flat_batch],
+        )
+    if layout_reuse == "independent":
+        torch.bmm(
+            query.to(torch.bfloat16), key_metric.to(torch.bfloat16),
+            out=transformed[flat_batch:],
+        )
+    elif layout_reuse == "k_from_q":
+        torch.bmm(
+            query.to(torch.bfloat16), key_metric.to(torch.bfloat16),
+            out=transformed[:flat_batch],
+        )
     _profile_end(controller, profile)
-    del query_metric, key_metric
+    # M2 ablations must not gain or lose quality merely because their feature
+    # norm chooses a different exact tail.  Reconstruct the production
+    # Hilbert-M2 feature norm and freeze that identity for both independent
+    # sides (or for the single source side of a shared layout).
+    excluded_indices = None
+    needs_baseline_metric_tail = (
+        controller.config.landmark_tree_v2_m2_side != "both"
+        or controller.config.landmark_tree_v2_m2_estimator != "hilbert_midpoint"
+    )
+    needs_flat_order_tail = controller.config.landmark_tree_v2_initial_order != "flat"
+    if needs_baseline_metric_tail or needs_flat_order_tail:
+        from .landmark_tree_clustering import _largest_norm_remainder
+
+        profile = _profile_begin(controller, "reblock_frozen_tail_reference")
+        if needs_baseline_metric_tail:
+            baseline_query_metric, baseline_key_metric = landmark_direction_factors(
+                query, key, metric_indices,
+                ridge=controller.config.rope_sol_key_ridge_epsilon,
+                moment=controller.config.landmark_tree_v2_moment_mode,
+                m2_estimator="hilbert_midpoint", m2_side="both",
+            )
+            reference = torch.empty_like(transformed)
+            if layout_reuse in ("independent", "q_from_k"):
+                torch.bmm(
+                    key.to(torch.bfloat16), baseline_query_metric.to(torch.bfloat16),
+                    out=reference[:flat_batch],
+                )
+            if layout_reuse == "independent":
+                torch.bmm(
+                    query.to(torch.bfloat16), baseline_key_metric.to(torch.bfloat16),
+                    out=reference[flat_batch:],
+                )
+            elif layout_reuse == "k_from_q":
+                torch.bmm(
+                    query.to(torch.bfloat16), baseline_key_metric.to(torch.bfloat16),
+                    out=reference[:flat_batch],
+                )
+        else:
+            # Changing only the root order must not change which original
+            # tokens occupy the protected exact remainder.  The current
+            # transformed features are already the baseline both-side
+            # Hilbert-M2 features, so select the tail before applying the
+            # alternative root permutation.
+            reference = transformed
+        remainder = video_tokens % BLOCK_SIZE
+        mask = _largest_norm_remainder(reference, remainder, validate=True)
+        original_ids = torch.arange(
+            video_tokens, device=query.device, dtype=torch.long
+        ).expand(plan_batch, -1)
+        excluded_indices = original_ids[mask].reshape(plan_batch, remainder)
+        controller.spark_reblock_frozen_tail_indices = excluded_indices.detach()
+        if needs_baseline_metric_tail:
+            del reference, baseline_query_metric, baseline_key_metric
+        _profile_end(controller, profile)
     inverse_norms = None
     if controller.config.landmark_tree_v2_mean_mode == "input_unit":
         inverse_norms = plan.graph_inverse_norms
         if inverse_norms is None:
-            inverse_norms = torch.empty((2 * flat_batch, video_tokens, 1), device=query.device, dtype=torch.float32)
-        inverse_norms[:flat_batch].copy_(key.float().norm(dim=-1, keepdim=True).clamp_min(1e-12).reciprocal())
-        inverse_norms[flat_batch:].copy_(query.float().norm(dim=-1, keepdim=True).clamp_min(1e-12).reciprocal())
+            inverse_norms = torch.empty((plan_batch, video_tokens, 1), device=query.device, dtype=torch.float32)
+        if layout_reuse in ("independent", "q_from_k"):
+            inverse_norms[:flat_batch].copy_(key.float().norm(dim=-1, keepdim=True).clamp_min(1e-12).reciprocal())
+        if layout_reuse == "independent":
+            inverse_norms[flat_batch:].copy_(query.float().norm(dim=-1, keepdim=True).clamp_min(1e-12).reciprocal())
+        elif layout_reuse == "k_from_q":
+            inverse_norms[:flat_batch].copy_(query.float().norm(dim=-1, keepdim=True).clamp_min(1e-12).reciprocal())
     profile = _profile_begin(controller, "reblock_tree")
-    if plan.graph_active:
+    if plan.graph_active and excluded_indices is None:
         combined_permutation, combined_inverse = plan.replay()
     else:
-        combined_permutation, combined_inverse = plan.run(transformed, inverse_norms=inverse_norms)
+        combined_permutation, combined_inverse = plan.run(
+            transformed, inverse_norms=inverse_norms,
+            excluded_indices=excluded_indices,
+        )
     _profile_end(controller, profile)
+    del query_metric, key_metric
+    if layout_reuse != "independent":
+        combined_permutation = torch.cat(
+            (combined_permutation, combined_permutation), dim=0
+        )
+        combined_inverse = torch.cat((combined_inverse, combined_inverse), dim=0)
     controller.landmark_reblock_hierarchy = plan.hierarchy
     return plan, metric_indices, combined_permutation, combined_inverse
 
@@ -482,11 +566,24 @@ def _landmark_tree_v2_qk_block_permutations(
         "mean_mode": controller.config.landmark_tree_v2_mean_mode,
         "mean_norm_space": ("transformed_token" if controller.config.landmark_tree_v2_mean_mode == "metric_unit" else "original_post_rope_token"),
         "moment_mode": controller.config.landmark_tree_v2_moment_mode,
+        "m2_side": controller.config.landmark_tree_v2_m2_side,
+        "m2_estimator": controller.config.landmark_tree_v2_m2_estimator,
         "metric_centered": False,
         "raw_remainder_features": True,
         "order_mode": controller.config.landmark_tree_v2_order_mode,
-        "landmark_initialization": ("contiguous_mean_token_interval_mean" if controller.config.landmark_tree_v2_landmark_mode == "mean" else "contiguous_interval_midpoint_token"),
+        "landmark_initialization": (
+            "contiguous_mean_token_interval_mean"
+            if controller.config.landmark_tree_v2_landmark_mode == "mean"
+            else "contiguous_interval_midpoint_token"
+        ),
         "landmark_mode": controller.config.landmark_tree_v2_landmark_mode,
+        "landmark_input_space": "m2_transformed",
+        "landmark_reduction_dtype": (
+            "float32" if plan.landmark_mode == "mean"
+            else "not_applicable_midpoint_selection"
+        ),
+        "landmark_metric_transform_dtype": "already_transformed_input",
+        "landmark_transform_order": "before_compression",
         "midpoint_direction_mode": controller.config.landmark_tree_v2_midpoint_direction_mode,
         "coarse_landmarks": controller.config.landmark_tree_v2_landmark_count,
         "coarse_assignment_passes": 0,
@@ -495,7 +592,10 @@ def _landmark_tree_v2_qk_block_permutations(
         "later_children": (plan.max_children if isinstance(plan.max_children, int) else plan.max_children[min(1, len(plan.max_children) - 1)]),
         "root_fanout": plan.root_fanout,
         "final_fanout": plan.final_fanout,
-        "proxy_iterations": 2,
+        "proxy_iterations": controller.config.landmark_tree_v2_proxy_iterations,
+        "proxy_seed_rule": controller.config.landmark_tree_v2_proxy_seed_rule,
+        "proxy_update_rule": controller.config.landmark_tree_v2_proxy_update_rule,
+        "layout_reuse": controller.config.landmark_tree_v2_layout_reuse,
         "remainder_policy": "largest_transformed_l2_norm_original_index_tie",
         "num_excluded": int(num_excluded),
         "strict_cluster_blocks": int(active_blocks),

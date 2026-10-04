@@ -40,9 +40,32 @@ def terminal_topology(leaves):
     return split_topology((64,)*leaves)
 
 
+def _normalize_proxy_controls(proxy_iterations, seed_rule, update_rule):
+    if type(proxy_iterations) is not int or proxy_iterations not in (0, 1, 2, 4):
+        raise ValueError("proxy_iterations must be 0, 1, 2, or 4")
+    if seed_rule not in ("farthest_pair", "endpoint_order"):
+        raise ValueError("seed_rule must be farthest_pair or endpoint_order")
+    if update_rule not in ("mean", "medoid"):
+        raise ValueError("update_rule must be mean or medoid")
+    return proxy_iterations, seed_rule, update_rule
+
+
+def _weighted_medoid(x, pair_distances, side_weight):
+    """Return a deterministic weighted medoid for each batched proxy node."""
+    objective = torch.einsum("bij,bj->bi", pair_distances, side_weight.float())
+    objective = objective.masked_fill(side_weight <= 0, float("inf"))
+    selected = objective.argmin(-1)
+    batch = torch.arange(x.shape[0], device=x.device)
+    return x[batch, selected]
+
+
 def node_split_reference(samples, original, centers, weights, capacities, *,
-                         distance="cosine", aggregation="linear", order_mode="parent_order"):
+                         distance="cosine", aggregation="linear", order_mode="parent_order",
+                         proxy_iterations=2, seed_rule="farthest_pair", update_rule="mean"):
     """Independent PyTorch oracle; stable (score, original-id) capacity routing."""
+    proxy_iterations, seed_rule, update_rule = _normalize_proxy_controls(
+        proxy_iterations, seed_rule, update_rule
+    )
     topology = split_topology(tuple(capacities))
     if sum(capacities) != samples.shape[1]:
         raise ValueError("child capacities must sum to node size")
@@ -61,15 +84,24 @@ def node_split_reference(samples, original, centers, weights, capacities, *,
     for node,(slot,lc,rc,lt,rt,_) in enumerate(topology):
         weight = active_weights[slot]
         valid = weight > 0
-        pairs = valid[:,:,None] & valid[:,None,:] & upper
-        pair = distances.masked_fill(~pairs,-float('inf')).flatten(1).argmax(1)
-        first,second = pair//x.shape[1],pair%x.shape[1]
+        if seed_rule == "farthest_pair":
+            pairs = valid[:,:,None] & valid[:,None,:] & upper
+            pair = distances.masked_fill(~pairs,-float('inf')).flatten(1).argmax(1)
+            first,second = pair//x.shape[1],pair%x.shape[1]
+        else:
+            slots = torch.arange(x.shape[1], device=x.device)
+            first = slots.masked_fill(~valid, x.shape[1]).amin(1)
+            second = slots.masked_fill(~valid, -1).amax(1)
         only = valid.int().argmax(1)
         first = torch.where(valid.sum(1)<2,only,first)
         second = torch.where(valid.sum(1)<2,only,second)
         batch = torch.arange(x.shape[0],device=x.device)
         left,right = x[batch,first],x[batch,second]
-        for _ in range(2):
+        # Even zero updates performs one assignment so descendants receive valid
+        # landmark weights.  Its token-scoring direction remains the seed pair.
+        score_left, score_right = left, right
+        assignment_rounds = max(1, proxy_iterations)
+        for iteration in range(assignment_rounds):
             direction = right/right.norm(dim=-1,keepdim=True).clamp_min(1e-12)-left/left.norm(dim=-1,keepdim=True).clamp_min(1e-12)
             delta = (torch.bmm(unit,direction[:,:,None]).squeeze(-1) if distance == "cosine" else
                      torch.bmm(x,(2*(right-left))[:,:,None]).squeeze(-1)
@@ -80,8 +112,15 @@ def node_split_reference(samples, original, centers, weights, capacities, *,
             take = torch.minimum((lc-before).clamp_min(0),ordered)
             lw = torch.zeros_like(weight).scatter(1,order,take)
             rw = weight-lw
-            left = torch.bmm(lw.float()[:,None],x).squeeze(1)/lc
-            right = torch.bmm(rw.float()[:,None],x).squeeze(1)/rc
+            if iteration < proxy_iterations:
+                if update_rule == "mean":
+                    left = torch.bmm(lw.float()[:,None],x).squeeze(1)/lc
+                    right = torch.bmm(rw.float()[:,None],x).squeeze(1)/rc
+                else:
+                    left = _weighted_medoid(x, distances, lw)
+                    right = _weighted_medoid(x, distances, rw)
+        if proxy_iterations == 0:
+            left, right = score_left, score_right
         active_weights.extend((lw,rw))
         direction = right/right.norm(dim=-1,keepdim=True).clamp_min(1e-12)-left/left.norm(dim=-1,keepdim=True).clamp_min(1e-12)
         if distance == "euclidean":

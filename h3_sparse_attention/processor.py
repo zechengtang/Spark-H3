@@ -79,6 +79,22 @@ class H3SparseAttentionConfig:
     landmark_tree_v2_aggregation: Literal["linear", "max"] = "linear"
     rope_sol_key_ridge_epsilon: float = 1e-3
 
+    # Reblock-only experiment controls.  Defaults preserve the production
+    # Spark-H3 path; consumers may opt into the alternatives explicitly.
+    landmark_tree_v2_m2_side: Literal["both", "query", "key", "none"] = "both"
+    landmark_tree_v2_m2_estimator: Literal[
+        "hilbert_midpoint", "flat64_block_mean", "flat64_midpoint_1",
+        "flat64_midpoint_2", "flat64_midpoint_4", "flat64_mean_diag", "full",
+    ] = "hilbert_midpoint"
+    landmark_tree_v2_proxy_iterations: Literal[0, 1, 2, 4] = 2
+    landmark_tree_v2_proxy_seed_rule: Literal[
+        "farthest_pair", "endpoint_order"
+    ] = "farthest_pair"
+    landmark_tree_v2_proxy_update_rule: Literal["mean", "medoid"] = "mean"
+    landmark_tree_v2_layout_reuse: Literal[
+        "independent", "q_from_k", "k_from_q"
+    ] = "independent"
+
     sol_route_global_weighted_mean: bool = False
     sol_route_global_weighted_side: Literal["both", "query", "key"] = "both"
     landmark_tree_v2_fanout_mode: Literal[
@@ -153,6 +169,21 @@ class H3SparseAttentionConfig:
             raise ValueError("global weighted routing requires Top-K routing")
         if not math.isfinite(self.rope_sol_key_ridge_epsilon) or self.rope_sol_key_ridge_epsilon < 0:
             raise ValueError("rope_sol_key_ridge_epsilon must be finite and nonnegative")
+        if self.landmark_tree_v2_m2_side not in ("both", "query", "key", "none"):
+            raise ValueError("landmark_tree_v2_m2_side must be both, query, key, or none")
+        if self.landmark_tree_v2_m2_estimator not in (
+            "hilbert_midpoint", "flat64_block_mean", "flat64_midpoint_1",
+            "flat64_midpoint_2", "flat64_midpoint_4", "flat64_mean_diag", "full",
+        ):
+            raise ValueError("invalid landmark_tree_v2_m2_estimator")
+        if self.landmark_tree_v2_proxy_iterations not in (0, 1, 2, 4):
+            raise ValueError("landmark_tree_v2_proxy_iterations must be 0, 1, 2, or 4")
+        if self.landmark_tree_v2_proxy_seed_rule not in ("farthest_pair", "endpoint_order"):
+            raise ValueError("invalid landmark_tree_v2_proxy_seed_rule")
+        if self.landmark_tree_v2_proxy_update_rule not in ("mean", "medoid"):
+            raise ValueError("invalid landmark_tree_v2_proxy_update_rule")
+        if self.landmark_tree_v2_layout_reuse not in ("independent", "q_from_k", "k_from_q"):
+            raise ValueError("invalid landmark_tree_v2_layout_reuse")
         if self.sol_virtual_query_route_score not in ("native_mean", "mean", "weighted_k", "weighted_mass"):
             raise ValueError("invalid sol_virtual_query_route_score")
         virtual_query_enabled = (
@@ -397,6 +428,7 @@ class _Controller:
         self.sol_virtual_query_layout = None
         self.sol_route_density = None
         self.head_topk_budget = None
+        self.spark_reblock_frozen_tail_indices = None
 
     def begin_forward(self, _module, args, kwargs):
         self.evaluation_index += 1
@@ -434,7 +466,13 @@ class _Controller:
                     sol_landmark_preprocess=self.config.sol_landmark_preprocess,
                     landmark_tree_v2_children=self.config.landmark_tree_v2_children,
                     landmark_tree_v2_fanout_mode=self.config.landmark_tree_v2_fanout_mode,
-                    landmark_tree_v2_midpoint_direction_mode=self.config.landmark_tree_v2_midpoint_direction_mode)
+                    landmark_tree_v2_midpoint_direction_mode=self.config.landmark_tree_v2_midpoint_direction_mode,
+                    landmark_tree_v2_m2_side=self.config.landmark_tree_v2_m2_side,
+                    landmark_tree_v2_m2_estimator=self.config.landmark_tree_v2_m2_estimator,
+                    landmark_tree_v2_proxy_iterations=self.config.landmark_tree_v2_proxy_iterations,
+                    landmark_tree_v2_proxy_seed_rule=self.config.landmark_tree_v2_proxy_seed_rule,
+                    landmark_tree_v2_proxy_update_rule=self.config.landmark_tree_v2_proxy_update_rule,
+                    landmark_tree_v2_layout_reuse=self.config.landmark_tree_v2_layout_reuse)
 
 
 def _sol_attention(controller, q, k, v, layout, layer, *, return_bthd=False):

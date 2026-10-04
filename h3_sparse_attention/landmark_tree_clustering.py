@@ -88,16 +88,34 @@ def _initial_hilbert_partition(
     hilbert_order: torch.Tensor | None = None,
     *,
     validate_order: bool = True,
+    excluded_indices: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return active and largest-norm remainder ids, both Hilbert-stable."""
+    """Return active and protected remainder ids, both root-order-stable."""
 
     batch, tokens, _ = samples.shape
     if math.prod(grid_shape) != tokens:
         raise ValueError("grid_shape product must equal the token count")
     remainder = tokens % 64
-    remainder_mask = _largest_norm_remainder(
-        samples, remainder, validate=validate_order
-    )
+    if excluded_indices is None:
+        remainder_mask = _largest_norm_remainder(
+            samples, remainder, validate=validate_order
+        )
+    else:
+        excluded_indices = excluded_indices.to(device=samples.device, dtype=torch.long)
+        if excluded_indices.shape != (batch, remainder):
+            raise ValueError(
+                f"excluded_indices must have shape {(batch, remainder)}"
+            )
+        if remainder:
+            if bool(((excluded_indices < 0) | (excluded_indices >= tokens)).any()):
+                raise ValueError("excluded_indices must lie in the original token range")
+            if bool((excluded_indices.sort(1).values[:, 1:] ==
+                     excluded_indices.sort(1).values[:, :-1]).any()):
+                raise ValueError("excluded_indices must be unique per batch row")
+        remainder_mask = torch.zeros(
+            (batch, tokens), device=samples.device, dtype=torch.bool
+        )
+        remainder_mask.scatter_(1, excluded_indices, True)
     hilbert = (
         hilbert_order_3d(grid_shape, device=samples.device)
         if hilbert_order is None
@@ -545,4 +563,3 @@ def _stable_counting_partition(
         return mapped
     gather_index = order.unsqueeze(-1).expand(-1, -1, samples.shape[2])
     return mapped, samples.gather(1, gather_index)
-

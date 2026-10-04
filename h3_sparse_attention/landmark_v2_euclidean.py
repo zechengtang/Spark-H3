@@ -62,9 +62,12 @@ def fused_euclidean_scores(samples, directions, bias, *, indices=None):
             raise ValueError("contiguous samples must have shape [B,N,D]")
         batch, tokens, dim = samples.shape
     else:
-        if (samples.ndim != 2 or indices.ndim != 2 or indices.dtype != torch.int64
+        if (samples.ndim != 2 or indices.ndim != 2
+                or indices.dtype not in (torch.int32, torch.int64)
                 or not indices.is_contiguous() or indices.device != samples.device):
-            raise ValueError("indexed samples require [T,D] and contiguous int64 [B,N] indices")
+            raise ValueError(
+                "indexed samples require [T,D] and contiguous int32/int64 [B,N] indices"
+            )
         batch, tokens = indices.shape
         dim = samples.shape[-1]
     if directions.ndim != 3:
@@ -99,4 +102,3 @@ def euclidean_proxy_scores(samples, centers, weights, capacities, *, indices=Non
         from .landmark_tree_triton import tile_tree_score_indexed
         return tile_tree_score_indexed(samples, indices, centers, alpha, bias)
     return _tree_score(samples, centers, alpha, bias)
-
