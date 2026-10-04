@@ -107,6 +107,205 @@ def metric_factor_method() -> str:
     return method
 
 
+M2_ESTIMATORS = (
+    "hilbert_midpoint",
+    "flat64_block_mean",
+    "flat64_midpoint_1",
+    "flat64_midpoint_2",
+    "flat64_midpoint_4",
+    "flat64_mean_diag",
+    "full",
+)
+
+
+def flat64_midpoint_sample_indices(tokens: int, samples_per_block: int, *, device):
+    """Return deterministic real-token midpoint samples for every flat64 block.
+
+    The returned weights make each block contribute ``n_b / N`` and each of
+    its samples contribute equally within the block, including the short tail.
+    """
+    if type(tokens) is not int or tokens < 1:
+        raise ValueError("tokens must be a positive integer")
+    if samples_per_block not in (1, 2, 4):
+        raise ValueError("samples_per_block must be 1, 2, or 4")
+    indices: list[int] = []
+    weights: list[float] = []
+    for start in range(0, tokens, 64):
+        length = min(64, tokens - start)
+        count = min(samples_per_block, length)
+        for j in range(count):
+            indices.append(start + ((2 * j + 1) * length) // (2 * count))
+            weights.append(length / (tokens * count))
+    return (
+        torch.tensor(indices, device=device, dtype=torch.long),
+        torch.tensor(weights, device=device, dtype=torch.float32),
+    )
+
+
+def _weighted_outer(samples: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    flat = samples.float().reshape(-1, samples.shape[-2], samples.shape[-1])
+    if weights.ndim == 1:
+        weights = weights.expand(flat.shape[0], -1)
+    else:
+        weights = weights.reshape(-1, weights.shape[-1])
+    if weights.shape != flat.shape[:2]:
+        raise ValueError("moment weights do not match the sampled tokens")
+    weighted = flat * weights.to(device=flat.device, dtype=torch.float32).unsqueeze(-1)
+    moment = torch.bmm(flat.transpose(1, 2), weighted)
+    return moment.reshape(*samples.shape[:-2], samples.shape[-1], samples.shape[-1])
+
+
+def estimate_noncentered_second_moment(
+    samples: torch.Tensor,
+    estimator: str,
+    *,
+    sample_indices: torch.Tensor | None = None,
+    full_chunk_size: int = 4096,
+) -> tuple[torch.Tensor, dict]:
+    """Estimate ``E[x x.T]`` over all input tokens without centering.
+
+    Inputs are ``[..., N, D]`` and all reductions are FP32.  Flat64 estimators
+    always use the original input order and include the final short block.
+    """
+    if estimator not in M2_ESTIMATORS:
+        raise ValueError(f"unknown M2 estimator: {estimator}")
+    if samples.ndim < 2 or not samples.is_floating_point():
+        raise ValueError("samples must be floating point [..., N, D]")
+    tokens, dim = samples.shape[-2:]
+    if tokens < 1 or dim < 1:
+        raise ValueError("samples must contain tokens and features")
+
+    if estimator == "hilbert_midpoint":
+        if sample_indices is None:
+            raise ValueError("hilbert_midpoint requires sample_indices")
+        indices = sample_indices.to(device=samples.device, dtype=torch.long)
+        if indices.ndim != 1 or indices.numel() == 0:
+            raise ValueError("sample_indices must be a nonempty in-range vector")
+        in_range = (indices >= 0).all() & (indices < tokens).all()
+        if indices.is_cuda:
+            torch._assert_async(in_range, "sample_indices must be in range")
+        elif not bool(in_range):
+            raise ValueError("sample_indices must be a nonempty in-range vector")
+        selected = samples.index_select(-2, indices).float()
+        moment = torch.matmul(selected.transpose(-1, -2), selected) / indices.numel()
+        return moment, {
+            "estimator": estimator,
+            "sample_count": int(indices.numel()),
+            "sample_indices": indices,
+            "input_cast_dtype": "float32",
+            "matmul_dtype": "float32",
+            "accumulation_dtype": "float32",
+        }
+
+    flat = samples.float().reshape(-1, tokens, dim)
+    batch = flat.shape[0]
+    if estimator.startswith("flat64_midpoint_"):
+        per_block = int(estimator.rsplit("_", 1)[1])
+        indices, weights = flat64_midpoint_sample_indices(
+            tokens, per_block, device=samples.device
+        )
+        selected = samples.index_select(-2, indices)
+        moment = _weighted_outer(selected, weights)
+        return moment, {
+            "estimator": estimator,
+            "sample_count": int(indices.numel()),
+            "sample_indices": indices,
+            "samples_per_block": per_block,
+            "input_cast_dtype": "float32",
+            "matmul_dtype": "float32",
+            "accumulation_dtype": "float32",
+        }
+
+    if estimator in ("flat64_block_mean", "flat64_mean_diag"):
+        moment = torch.zeros((batch, dim, dim), device=samples.device, dtype=torch.float32)
+        approximate_diag = torch.zeros((batch, dim), device=samples.device, dtype=torch.float32)
+        for start in range(0, tokens, 64):
+            block = flat[:, start : min(start + 64, tokens)]
+            block_length = block.shape[1]
+            mean = block.mean(dim=1)
+            weight = block_length / tokens
+            moment.add_(torch.bmm(mean.unsqueeze(2), mean.unsqueeze(1)), alpha=weight)
+            approximate_diag.add_(mean.square(), alpha=weight)
+        diagnostics = {
+            "estimator": estimator,
+            "input_token_count": tokens,
+            "representative_count": (tokens + 63) // 64,
+            "flat64_blocks": (tokens + 63) // 64,
+            "input_cast_dtype": "float32",
+            "reduction_dtype": "float32",
+            "matmul_dtype": "float32",
+            "accumulation_dtype": "float32",
+        }
+        if estimator == "flat64_mean_diag":
+            exact_diag = flat.square().mean(dim=1)
+            correction = exact_diag - approximate_diag
+            scale = exact_diag.abs().amax(dim=1, keepdim=True).clamp_min(1.0)
+            tolerance = 2e-6 * scale
+            valid = (correction >= -tolerance).all()
+            if correction.is_cuda:
+                torch._assert_async(
+                    valid, "flat64 diagonal variance is significantly negative"
+                )
+                clamped_count = None
+            elif not bool(valid):
+                worst = float((correction / scale).amin())
+                raise RuntimeError(
+                    f"flat64 diagonal variance is significantly negative: {worst:.3e}"
+                )
+            else:
+                clamped_count = int((correction < 0).sum())
+            correction = correction.clamp_min_(0.0)
+            moment.diagonal(dim1=-2, dim2=-1).add_(correction)
+            diagnostics["negative_diagonal_clamped"] = clamped_count
+            diagnostics["negative_diagonal_policy"] = (
+                "clamp rounding negatives within 2e-6 of per-batch exact-diagonal scale; "
+                "reject larger negatives"
+            )
+        return moment.reshape(*samples.shape[:-2], dim, dim), diagnostics
+
+    if type(full_chunk_size) is not int or full_chunk_size < 1:
+        raise ValueError("full_chunk_size must be a positive integer")
+    moment = torch.zeros((batch, dim, dim), device=samples.device, dtype=torch.float32)
+    for start in range(0, tokens, full_chunk_size):
+        chunk = flat[:, start : min(start + full_chunk_size, tokens)]
+        moment.add_(torch.bmm(chunk.transpose(1, 2), chunk))
+    moment.div_(tokens)
+    return moment.reshape(*samples.shape[:-2], dim, dim), {
+        "estimator": estimator,
+        "sample_count": tokens,
+        "full_chunk_size": full_chunk_size,
+        "input_cast_dtype": "float32",
+        "matmul_dtype": "float32",
+        "accumulation_dtype": "float32",
+    }
+
+
+def factor_noncentered_second_moment(
+    moment: torch.Tensor, *, ridge_epsilon: float
+) -> torch.Tensor:
+    """Factor a non-centered second moment after trace-scaled diagonal ridge."""
+    if moment.ndim < 2 or moment.shape[-1] != moment.shape[-2]:
+        raise ValueError("moment must be [..., D, D]")
+    if ridge_epsilon < 0:
+        raise ValueError("ridge_epsilon must be non-negative")
+    dim = moment.shape[-1]
+    flat = moment.float().reshape(-1, dim, dim)
+    symmetric = 0.5 * (flat + flat.transpose(1, 2))
+    trace_scale = symmetric.diagonal(dim1=-2, dim2=-1).sum(-1) / dim
+    symmetric.diagonal(dim1=-2, dim2=-1).add_(ridge_epsilon * trace_scale[:, None])
+    if metric_factor_method() == "cholesky":
+        factor, info = torch.linalg.cholesky_ex(symmetric, check_errors=False)
+        valid = (info == 0).all()
+        if info.is_cuda:
+            torch._assert_async(valid, "ridged M2 Cholesky factorization failed")
+        elif not bool(valid):
+            raise RuntimeError("ridged M2 Cholesky factorization failed")
+    else:
+        eigenvalues, eigenvectors = torch.linalg.eigh(symmetric)
+        factor = eigenvectors * eigenvalues.clamp_min(0.0).sqrt().unsqueeze(-2)
+    return factor.reshape(*moment.shape)
+
+
 def batched_cross_metric_factors(
     query_samples: torch.Tensor,
     key_samples: torch.Tensor,
@@ -187,4 +386,3 @@ def batched_cross_metric_factors(
     query_factor, key_factor = factors.split(batch, dim=0)
     shape = (*batch_shape, dim, dim)
     return query_factor.reshape(shape), key_factor.reshape(shape)
-

@@ -386,7 +386,7 @@ def _sol_attn_sm100_bf16_kernel(
     hybrid_route: cutlass.Constexpr[bool],
     exact_only: cutlass.Constexpr[bool],
     export_route: cutlass.Constexpr[bool],
-    force_local_blocks: cutlass.Constexpr[bool],
+    force_local_blocks: cutlass.Constexpr[int],
 ):
     tidx, _, _ = cute.arch.thread_idx()
     warp_idx = cute.arch.make_warp_uniform(cute.arch.warp_idx())
@@ -952,7 +952,7 @@ def _sol_attn_sm100_bf16_kernel(
                                     route_partial[1, off]
                                 ) + Float32(route_partial[3, off])
                                 col_mean = (pair_02 + pair_13) / Float32(q_len)
-                                if cutlass.const_expr(force_local_blocks):
+                                if cutlass.const_expr(force_local_blocks == 1):
                                     exact_pred = sol_attn_route_is_exact(
                                         q_block_idx,
                                         route_start + off,
@@ -983,12 +983,15 @@ def _sol_attn_sm100_bf16_kernel(
                             # Local retention is an attention-kernel policy,
                             # including hybrid rows whose selection came from
                             # an explicit mask.
-                            if cutlass.const_expr(
-                                force_local_blocks and not external_route
-                            ):
+                            if cutlass.const_expr(force_local_blocks == 0):
+                                exact_pred = exact_pred or (
+                                    q_block_idx == route_start + off
+                                )
+                            elif cutlass.const_expr(force_local_blocks > 0):
                                 distance = q_block_idx - (route_start + off)
                                 exact_pred = exact_pred or (
-                                    (distance >= -1) and (distance <= 1)
+                                    (distance >= -force_local_blocks)
+                                    and (distance <= force_local_blocks)
                                 )
                             # Sink is a KV-only contract. Text queries remain
                             # a caller-side dense operation in MMDiT models.
@@ -1637,7 +1640,7 @@ def _sol_attn_sm100_bf16_host(
     hybrid_route: cutlass.Constexpr[bool] = False,
     exact_only: cutlass.Constexpr[bool] = False,
     export_route: cutlass.Constexpr[bool] = False,
-    force_local_blocks: cutlass.Constexpr[bool] = True,
+    force_local_blocks: cutlass.Constexpr[int] = 1,
 ):
     q, k, v, o, kc, vc = tuple(
         assume_tensor_aligned(t) for t in (q, k, v, o, kc, vc)
@@ -1859,7 +1862,15 @@ class SolAttnForwardSm100:
         self.hybrid_route = hybrid_route
         self.exact_only = exact_only
         self.export_route = export_route
-        self.force_local_blocks = force_local_blocks
+        explicit_local_radius = type(force_local_blocks) is int
+        if type(force_local_blocks) is bool:
+            force_local_blocks = 1 if force_local_blocks else -1
+        if type(force_local_blocks) is not int or force_local_blocks < -1:
+            raise ValueError("force_local_blocks must be bool or an integer >= -1")
+        self.force_local_blocks = (
+            -1 if external_route and not explicit_local_radius
+            else force_local_blocks
+        )
 
     @cute.jit
     def __call__(

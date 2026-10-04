@@ -110,7 +110,15 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         self.hybrid_route = hybrid_route
         self.exact_only = exact_only
         self.export_route = export_route
-        self.force_local_blocks = force_local_blocks
+        explicit_local_radius = type(force_local_blocks) is int
+        if type(force_local_blocks) is bool:
+            force_local_blocks = 1 if force_local_blocks else -1
+        if type(force_local_blocks) is not int or force_local_blocks < -1:
+            raise ValueError("force_local_blocks must be bool or an integer >= -1")
+        self.local_block_radius = (
+            -1 if external_route and not explicit_local_radius
+            else force_local_blocks
+        )
         if external_route or hybrid_route or export_route:
             if (
                 self.sol_attn_packed_route_reduction
@@ -594,7 +602,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                                     + Float32(route_sums[3, route_col])
                                 )
                                 col_mean = col_sum * softmax_scale_log2 / q_len
-                                if const_expr(self.force_local_blocks):
+                                if const_expr(self.local_block_radius == 1):
                                     exact = sol_attn_selector.sol_attn_route_is_exact(
                                         m_block,
                                         group_start_n_block + off,
@@ -614,14 +622,16 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                                                 group_start_n_block + off,
                                             ]
                                         ) != Int32(0)
-                                        if const_expr(self.force_local_blocks):
-                                            distance = m_block - (
-                                                group_start_n_block + off
-                                            )
-                                            exact = exact or (
-                                                (distance >= Int32(-1))
-                                                and (distance <= Int32(1))
-                                            )
+                            if const_expr(self.local_block_radius == 0):
+                                exact = exact or (
+                                    m_block == group_start_n_block + off
+                                )
+                            elif const_expr(self.local_block_radius > 0):
+                                distance = m_block - (group_start_n_block + off)
+                                exact = exact or (
+                                    (distance >= Int32(-self.local_block_radius))
+                                    and (distance <= Int32(self.local_block_radius))
+                                )
                             if sink_enabled:
                                 exact = exact or (
                                     group_start_n_block + off
@@ -701,7 +711,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                         ) != Int32(0)
                     else:
                         col_mean = col_sum * softmax_scale_log2 / q_len
-                        if const_expr(self.force_local_blocks):
+                        if const_expr(self.local_block_radius == 1):
                             exact = sol_attn_selector.sol_attn_route_is_exact(
                                 m_block,
                                 group_start_n_block + Int32(off),
@@ -721,11 +731,16 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                                         group_start_n_block + Int32(off),
                                     ]
                                 ) != Int32(0)
-                                if const_expr(self.force_local_blocks):
-                                    distance = m_block - (group_start_n_block + Int32(off))
-                                    exact = exact or (
-                                        (distance >= Int32(-1)) and (distance <= Int32(1))
-                                    )
+                    if const_expr(self.local_block_radius == 0):
+                        exact = exact or (
+                            m_block == group_start_n_block + Int32(off)
+                        )
+                    elif const_expr(self.local_block_radius > 0):
+                        distance = m_block - (group_start_n_block + Int32(off))
+                        exact = exact or (
+                            (distance >= Int32(-self.local_block_radius))
+                            and (distance <= Int32(self.local_block_radius))
+                        )
                     if sink_enabled:
                         exact = exact or (
                             group_start_n_block + Int32(off)

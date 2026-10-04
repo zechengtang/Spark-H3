@@ -101,7 +101,11 @@ class SparkReweightForwardSm100:
         self.external_route = external_route
         self.hybrid_route = hybrid_route
         self.export_route = export_route
-        self.force_local_blocks = force_local_blocks
+        from .local_blocks import normalize_local_block_radius
+        explicit_local_radius = type(force_local_blocks) is int
+        self.local_block_radius = normalize_local_block_radius(force_local_blocks)
+        if external_route and not explicit_local_radius:
+            self.local_block_radius = -1
         self.prefetch_approx_k = prefetch_approx_k
         self.shared_log_mass = shared_log_mass
         self.debug_route_trace = debug_route_trace
@@ -745,7 +749,7 @@ class SparkReweightForwardSm100:
                                         q_len
                                     )
                                     if cutlass.const_expr(
-                                        self.force_local_blocks
+                                        self.local_block_radius == 1
                                     ):
                                         exact_pred = sol_attn_route_is_exact(
                                             q_tile_idx,
@@ -780,12 +784,18 @@ class SparkReweightForwardSm100:
                                 # policy, including hybrid rows whose selection
                                 # came from an explicit mask.
                                 if cutlass.const_expr(
-                                    self.force_local_blocks
-                                    and not self.external_route
+                                    self.local_block_radius == 0
+                                ):
+                                    exact_pred = exact_pred or (
+                                        q_tile_idx == route_start + off
+                                    )
+                                elif cutlass.const_expr(
+                                    self.local_block_radius > 0
                                 ):
                                     distance = q_tile_idx - (route_start + off)
                                     exact_pred = exact_pred or (
-                                        (distance >= -1) and (distance <= 1)
+                                        (distance >= -self.local_block_radius)
+                                        and (distance <= self.local_block_radius)
                                     )
                                 # Sink is a KV-only contract.  Text queries
                                 # remain a caller-side dense operation in

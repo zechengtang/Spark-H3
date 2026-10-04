@@ -29,6 +29,9 @@ class H3SparseAttentionConfig:
     sol_extra_dense_evaluations: tuple[int, ...] = ()
     sol_extra_dense_layers: tuple[int, ...] = ()
     sol_force_local_blocks: bool | None = None
+    # Optional symmetric exact-block radius outside the Top-K budget.  Zero
+    # retains only the self block; one is the legacy three-block policy.
+    sol_exact_block_radius: int | None = None
     sol_tail_granularity: Literal["query", "block", "block8x8"] = "query"
     sol_global_anchor_dtype: Literal["bfloat16", "float32"] = "float32"
     # Numeric ablations for virtual-query K/V summaries. The default preserves
@@ -84,6 +87,22 @@ class H3SparseAttentionConfig:
     landmark_tree_v2_aggregation: Literal["linear", "max"] = "linear"
     rope_sol_key_ridge_epsilon: float = 1e-3
 
+    # Reblock-only experiment controls.  Defaults preserve the production
+    # Spark-H3 path; consumers may opt into the alternatives explicitly.
+    landmark_tree_v2_m2_side: Literal["both", "query", "key", "none"] = "both"
+    landmark_tree_v2_m2_estimator: Literal[
+        "hilbert_midpoint", "flat64_block_mean", "flat64_midpoint_1",
+        "flat64_midpoint_2", "flat64_midpoint_4", "flat64_mean_diag", "full",
+    ] = "hilbert_midpoint"
+    landmark_tree_v2_proxy_iterations: Literal[0, 1, 2, 4] = 2
+    landmark_tree_v2_proxy_seed_rule: Literal[
+        "farthest_pair", "endpoint_order"
+    ] = "farthest_pair"
+    landmark_tree_v2_proxy_update_rule: Literal["mean", "medoid"] = "mean"
+    landmark_tree_v2_layout_reuse: Literal[
+        "independent", "q_from_k", "k_from_q"
+    ] = "independent"
+
     sol_route_global_weighted_mean: bool = False
     sol_route_global_weighted_side: Literal["both", "query", "key"] = "both"
     landmark_tree_v2_fanout_mode: Literal[
@@ -119,6 +138,20 @@ class H3SparseAttentionConfig:
                            tuple(sorted(set(self.sol_extra_dense_layers))))
         if self.sol_force_local_blocks is not None and type(self.sol_force_local_blocks) is not bool:
             raise ValueError("sol_force_local_blocks must be bool")
+        if (self.sol_exact_block_radius is not None
+                and (type(self.sol_exact_block_radius) is not int
+                     or self.sol_exact_block_radius < 0)):
+            raise ValueError(
+                "sol_exact_block_radius must be None or a nonnegative integer"
+            )
+        if (self.sol_exact_block_radius is not None
+                and self.sol_force_local_blocks is not None):
+            raise ValueError(
+                "set sol_exact_block_radius or sol_force_local_blocks, not both"
+            )
+        if (self.sol_exact_block_radius is not None
+                and self.sol_route_topk_ratio is None):
+            raise ValueError("sol_exact_block_radius requires Top-K routing")
         if self.sol_tail_granularity not in ("query", "block", "block8x8"):
             raise ValueError("sol_tail_granularity must be 'query', 'block', or 'block8x8'")
         if self.sol_global_anchor_dtype not in ("bfloat16", "float32"):
@@ -160,6 +193,28 @@ class H3SparseAttentionConfig:
             raise ValueError("global weighted routing requires Top-K routing")
         if not math.isfinite(self.rope_sol_key_ridge_epsilon) or self.rope_sol_key_ridge_epsilon < 0:
             raise ValueError("rope_sol_key_ridge_epsilon must be finite and nonnegative")
+        if self.landmark_tree_v2_m2_side not in ("both", "query", "key", "none"):
+            raise ValueError("landmark_tree_v2_m2_side must be both, query, key, or none")
+        if self.landmark_tree_v2_m2_estimator not in (
+            "hilbert_midpoint", "flat64_block_mean", "flat64_midpoint_1",
+            "flat64_midpoint_2", "flat64_midpoint_4", "flat64_mean_diag", "full",
+        ):
+            raise ValueError("invalid landmark_tree_v2_m2_estimator")
+        if self.landmark_tree_v2_proxy_iterations not in (0, 1, 2, 4):
+            raise ValueError("landmark_tree_v2_proxy_iterations must be 0, 1, 2, or 4")
+        if self.landmark_tree_v2_proxy_seed_rule not in ("farthest_pair", "endpoint_order"):
+            raise ValueError("invalid landmark_tree_v2_proxy_seed_rule")
+        if self.landmark_tree_v2_proxy_update_rule not in ("mean", "medoid"):
+            raise ValueError("invalid landmark_tree_v2_proxy_update_rule")
+        if self.landmark_tree_v2_layout_reuse not in ("independent", "q_from_k", "k_from_q"):
+            raise ValueError("invalid landmark_tree_v2_layout_reuse")
+        if (self.sol_exact_block_radius is not None
+                and self.sol_landmark_preprocess
+                and self.landmark_tree_v2_layout_reuse == "independent"):
+            raise ValueError(
+                "sol_exact_block_radius with reblock requires "
+                "landmark_tree_v2_layout_reuse='q_from_k' or 'k_from_q'"
+            )
         if self.sol_virtual_query_route_score not in ("native_mean", "mean", "weighted_k", "weighted_mass"):
             raise ValueError("invalid sol_virtual_query_route_score")
         virtual_query_enabled = (
@@ -257,9 +312,25 @@ class H3SparseAttentionConfig:
 
     @property
     def sol_local_blocks_enabled(self):
+        if self.sol_exact_block_radius is not None:
+            return True
         if self.sol_force_local_blocks is not None:
             return self.sol_force_local_blocks
         return not self.sol_landmark_preprocess
+
+    @property
+    def sol_local_block_radius(self):
+        """Kernel policy: -1 disables retention; nonnegative values are radii."""
+        if self.sol_exact_block_radius is not None:
+            return self.sol_exact_block_radius
+        return 1 if self.sol_local_blocks_enabled else -1
+
+    @property
+    def sol_local_block_policy(self):
+        """Preserve legacy bool calls while exposing an explicit radius."""
+        if self.sol_exact_block_radius is not None:
+            return self.sol_exact_block_radius
+        return self.sol_local_blocks_enabled
 
     @classmethod
     def sol(cls, num_inference_steps: int = 50, **overrides):
@@ -456,7 +527,9 @@ class _Controller:
         self.landmark_reblock_hierarchy = None
         self.sol_virtual_query_layout = None
         self.sol_route_density = None
+        self.exact_block_verbose_accumulator = None
         self.head_topk_budget = None
+        self.spark_reblock_frozen_tail_indices = None
 
     def begin_forward(self, _module, args, kwargs):
         self.evaluation_index += 1
@@ -481,6 +554,23 @@ class _Controller:
         return self.evaluation_index < self.config.dense_evaluations
 
     def summary(self):
+        exact_verbose = None
+        if self.exact_block_verbose_accumulator is not None:
+            accumulator = self.exact_block_verbose_accumulator
+            rows = int(accumulator["route_rows"].item())
+            local = int(accumulator["local_candidates"].item())
+            overlap = int(accumulator["already_selected"].item())
+            added = int(accumulator["added_exact_blocks"].item())
+            exact_verbose = {
+                "radius": accumulator["radius"],
+                "route_rows": rows,
+                "local_candidates": local,
+                "already_selected_by_topk": overlap,
+                "added_exact_blocks": added,
+                "mean_local_candidates_per_route_row": local / rows,
+                "mean_already_selected_per_route_row": overlap / rows,
+                "mean_added_exact_blocks_per_route_row": added / rows,
+            }
         return dict(method="sol", sol_backend=self.sol_backend,
                     completed_evaluations=self.evaluation_index + 1,
                     total_evaluations=self.config.total_evaluations,
@@ -489,6 +579,7 @@ class _Controller:
                     sol_extra_dense_layers=self.config.sol_extra_dense_layers,
                     processor_calls=dict(self.counts),
                     sol_route_density=self.sol_route_density,
+                    exact_block_verbose=exact_verbose,
                     sol_virtual_query_layout=self.sol_virtual_query_layout,
                     sol_force_local_blocks=self.config.sol_local_blocks_enabled,
                     sol_tail_granularity=self.config.sol_tail_granularity,
@@ -499,7 +590,13 @@ class _Controller:
                     sol_sparse_video_scope=self.config.sol_sparse_video_scope,
                     sparse_video_tokens=(None if self.layout is None else self.layout.video_tokens),
                     target_video_tokens=(None if self.layout is None else self.layout.target_video_tokens),
-                    condition_video_tokens=(None if self.layout is None else self.layout.condition_video_tokens))
+                    condition_video_tokens=(None if self.layout is None else self.layout.condition_video_tokens),
+                    landmark_tree_v2_m2_side=self.config.landmark_tree_v2_m2_side,
+                    landmark_tree_v2_m2_estimator=self.config.landmark_tree_v2_m2_estimator,
+                    landmark_tree_v2_proxy_iterations=self.config.landmark_tree_v2_proxy_iterations,
+                    landmark_tree_v2_proxy_seed_rule=self.config.landmark_tree_v2_proxy_seed_rule,
+                    landmark_tree_v2_proxy_update_rule=self.config.landmark_tree_v2_proxy_update_rule,
+                    landmark_tree_v2_layout_reuse=self.config.landmark_tree_v2_layout_reuse)
 
 
 def _sol_attention(controller, q, k, v, layout, layer, *, return_bthd=False):

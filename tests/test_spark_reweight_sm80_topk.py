@@ -112,6 +112,68 @@ def test_sm80_fused_topk_ratio_validation():
 
 
 @requires_sm80
+def test_sm80_self_exact_fused_fastpath_matches_explicit_union(monkeypatch):
+    from sol_attn.preprocess import _reduce_kv
+    from h3_sparse_attention.sol_numerator_virtual_q import virtual_q_attention
+
+    generator = torch.Generator(device="cuda").manual_seed(906)
+    batch, tokens, heads, dim = 1, 320, 1, 128
+    query_tokens, candidate_blocks, ratio = 256, 4, 0.25
+    q, k, v = (
+        torch.randn(
+            batch, tokens, heads, dim, generator=generator,
+            device="cuda", dtype=torch.float32,
+        ).to(torch.bfloat16)
+        for _ in range(3)
+    )
+    kc, vs = _reduce_kv(k, v)
+    blocks = kc.shape[1]
+    ranges = torch.tensor([[0, tokens]], device="cuda", dtype=torch.int64)
+    mapping = torch.zeros(blocks, device="cuda", dtype=torch.int64)
+
+    qmean = q.reshape(batch, blocks, 64, heads, dim).float().mean(2)
+    scores = torch.einsum(
+        "bqhd,bkhd->bqhk", qmean.to(torch.bfloat16).float(), kc.float()
+    ) * dim**-0.5
+    selected = torch.argsort(
+        scores[..., :candidate_blocks], dim=-1, descending=True, stable=True
+    )[..., :1]
+    route = torch.zeros(
+        batch, blocks, heads, blocks, device="cuda", dtype=torch.uint8
+    )
+    route.scatter_(-1, selected, 1)
+    route[:, :candidate_blocks, :, :candidate_blocks] |= torch.eye(
+        candidate_blocks, device="cuda", dtype=torch.uint8
+    )[None, :, None, :]
+
+    common = dict(
+        virtual_ranges=ranges,
+        leaf_to_virtual=mapping,
+        key_centroids=kc,
+        value_sums=vs,
+        sink_start=query_tokens,
+        sink_tokens=64,
+        _query_tokens=query_tokens,
+    )
+    monkeypatch.setenv("H3_SPARK_REWEIGHT_FUSED", "1")
+    fused = virtual_q_attention(
+        q, k, v, force_local_blocks=0, fused_topk_ratio=ratio, **common
+    )
+    monkeypatch.setenv("H3_SPARK_REWEIGHT_FUSED", "0")
+    reference = virtual_q_attention(
+        q, k, v, route=route, force_local_blocks=False, **common
+    )
+    torch.cuda.synchronize()
+
+    torch.testing.assert_close(
+        fused[:, :query_tokens].float(),
+        reference[:, :query_tokens].float(),
+        atol=0.002,
+        rtol=0.01,
+    )
+
+
+@requires_sm80
 def test_sm80_direct_summary_layout_matches_legacy_copy(monkeypatch):
     from sol_attn.preprocess import _reduce_kv
     from h3_sparse_attention.sol_numerator_virtual_q import virtual_q_attention

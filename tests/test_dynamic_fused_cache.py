@@ -1,4 +1,4 @@
-"""The SM120 fused callable cache must ignore variable text extents."""
+"""Fused SM80/SM120 callables reuse dynamic text extents and Top-K ratios."""
 
 import pytest
 import torch
@@ -188,3 +188,64 @@ def test_sm120_compiled_callable_reuses_different_fused_topk_ratios(monkeypatch)
     static = run(0.2)
     torch.cuda.synchronize()
     assert torch.equal(reused, static)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_sm80_compiled_callable_reuses_text_lengths_and_topk_ratios(monkeypatch):
+    if torch.cuda.get_device_capability() != (8, 0):
+        pytest.skip("SM80 required")
+
+    import h3_sparse_attention.sol_numerator_virtual_q as fused
+
+    monkeypatch.setenv("H3_SM80_RUNTIME_TOPK_RATIO", "1")
+    torch.manual_seed(915)
+    video_tokens = 512
+
+    def inputs(sink_tokens):
+        total_tokens = video_tokens + sink_tokens
+        blocks = (total_tokens + 63) // 64
+        q, k, v = [
+            torch.randn(1, total_tokens, 2, 128, device="cuda", dtype=torch.bfloat16)
+            for _ in range(3)
+        ]
+        ranges = torch.tensor(
+            [[0, video_tokens], [video_tokens, total_tokens]],
+            device="cuda", dtype=torch.int64,
+        )
+        mapping = torch.tensor(
+            [0] * (video_tokens // 64) + [1] * (blocks - video_tokens // 64),
+            device="cuda", dtype=torch.int64,
+        )
+        return (
+            q, k, v, fused.build_virtual_anchors(q, ranges), ranges, mapping,
+            fused.reduce_virtual_key_centroids(k),
+        )
+
+    def run(data, sink_tokens, ratio):
+        return fused._fused_virtual(
+            *data, None, None, video_tokens, sink_tokens,
+            force_local_blocks=False, _query_tokens=video_tokens,
+            fused_topk_ratio=ratio,
+        )[:, :video_tokens].clone()
+
+    shorter = inputs(64)
+    longer = inputs(81)
+    fused._FUSED_COMPILED.clear()
+    fused._FUSED_COMPILE_CALLS = 0
+    run(shorter, 64, 0.1)
+    first_ratio = run(longer, 81, 0.1)
+    second_ratio = run(longer, 81, 0.2)
+    assert fused.fused_compile_cache_stats()["entries"] == 1
+    assert fused.fused_compile_cache_stats()["compile_calls"] == 1
+    assert not torch.equal(first_ratio, second_ratio)
+    with pytest.raises(ValueError, match="fused_topk_ratio"):
+        run(longer, 81, 1.01)
+
+    fused._FUSED_COMPILED.clear()
+    fresh = run(longer, 81, 0.2)
+    monkeypatch.setenv("H3_SM80_RUNTIME_TOPK_RATIO", "0")
+    fused._FUSED_COMPILED.clear()
+    static = run(longer, 81, 0.2)
+    torch.cuda.synchronize()
+    assert torch.equal(second_ratio, fresh)
+    assert torch.equal(second_ratio, static)

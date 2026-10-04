@@ -18,6 +18,9 @@ _CUTE_CAPS=((9,0),(10,0),(12,0))
 
 def exact_attention(q,k,v,kc,vs,threshold=None,route=None,scale=None,sink_start=None,sink_tokens=0,exact_only=True,force_local_blocks=True,_query_tokens=None):
     """Stock selector and exact code. Optional export changes no route decisions."""
+    from .local_blocks import normalize_local_block_radius
+    explicit_local_radius = type(force_local_blocks) is int
+    force_local_blocks = normalize_local_block_radius(force_local_blocks)
     b,t,h,d=q.shape;n=triton.cdiv(t,64);scale=d**-.5 if scale is None else scale
     query_tokens=t if _query_tokens is None else operator.index(_query_tokens)
     if not 0 < query_tokens <= t or (query_tokens != t and query_tokens % 64):
@@ -27,6 +30,14 @@ def exact_attention(q,k,v,kc,vs,threshold=None,route=None,scale=None,sink_start=
     external=threshold is None and route is not None;hybrid=threshold is not None and route is not None
     if threshold is None:threshold=torch.zeros((b,n,h),device=q.device,dtype=torch.float32)
     actual=torch.empty((b,n,h,n),device=q.device,dtype=torch.uint8) if route is None else route.to(torch.uint8).clone()
+    if external and explicit_local_radius and force_local_blocks >= 0:
+        q_blocks = torch.arange(n, device=q.device)
+        local = (q_blocks[:, None] - q_blocks[None, :]).abs() <= force_local_blocks
+        actual |= local[None, :, None, :]
+    if external and not explicit_local_radius:
+        # Legacy explicit routes are authoritative even though this function's
+        # historical bool default is True.
+        force_local_blocks = -1
     lse=torch.empty((b,t,h),device=q.device,dtype=torch.float32)
     capability=tuple(torch.cuda.get_device_capability(q.device))
     if capability in _CUTE_CAPS and q.dtype==torch.bfloat16:
