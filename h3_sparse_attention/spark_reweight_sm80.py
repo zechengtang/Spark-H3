@@ -1162,6 +1162,7 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
         export_route: bool = False,
         force_local_blocks: bool = True,
         fused_topk_ratio: float = 0.0,
+        runtime_fused_topk_ratio: bool = True,
         prefetch_summary: bool = True,
         skip_final_tile_barrier: bool = True,
         **_kwargs,
@@ -1176,6 +1177,7 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
             raise ValueError("fused_topk_ratio must be in [0, 1]")
         self.fused_topk_route = fused_topk_ratio > 0.0
         self.fused_topk_numerator = round(fused_topk_ratio * 10000)
+        self.runtime_fused_topk_ratio = runtime_fused_topk_ratio
         self.force_local_blocks = force_local_blocks
         self.prefetch_summary = prefetch_summary
         self.skip_final_tile_barrier = skip_final_tile_barrier
@@ -1203,6 +1205,7 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
         softmax_scale: cutlass.Float32,
         sink_start_block: cutlass.Int32,
         sink_end_block: cutlass.Int32,
+        fused_topk_numerator: cutlass.Int32,
         stream: cuda.CUstream,
     ):
         del route_mask
@@ -1266,7 +1269,8 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
         self.fused_kernel(
             q, k, v, o, kc, av, threshold, lse, ak, lm, mapping,
             q_block_start, parent_start, head_start, softmax_scale,
-            sink_start_block, sink_end_block, sQ_layout, sKV_layout,
+            sink_start_block, sink_end_block, fused_topk_numerator,
+            sQ_layout, sKV_layout,
             gmem_copy, gmem_store, tiled_mma, SharedStorage,
         ).launch(
             grid=(q_block_count, head_count, q.shape[0]),
@@ -1296,6 +1300,7 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
         softmax_scale: cutlass.Float32,
         sink_start_block: cutlass.Int32,
         sink_end_block: cutlass.Int32,
+        fused_topk_numerator: cutlass.Int32,
         sQ_layout: cute.ComposedLayout,
         sKV_layout: cute.ComposedLayout,
         gmem_copy: cute.TiledCopy,
@@ -1483,8 +1488,13 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
                         )
             self.cta_sync_barrier.arrive_and_wait()
 
+            topk_numerator = (
+                fused_topk_numerator
+                if cutlass.const_expr(self.runtime_fused_topk_ratio)
+                else cutlass.Int32(self.fused_topk_numerator)
+            )
             target_topk = (
-                candidate_blocks * cutlass.Int32(self.fused_topk_numerator)
+                candidate_blocks * topk_numerator
                 + cutlass.Int32(5000)
             ) // cutlass.Int32(10000)
             if target_topk < cutlass.Int32(1):

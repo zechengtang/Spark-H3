@@ -733,6 +733,10 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         from .spark_reweight_sm100 import SparkReweightForwardSm100 as FusedKernel
     else:
         from .spark_reweight_sm120 import SparkReweightForwardSm120 as FusedKernel
+    # A cache hit skips constructing the kernel object, so keep SM80's ratio
+    # validation before looking up a runtime-ratio specialization.
+    if capability == (8,0) and not 0.0 <= fused_topk_ratio <= 1.0:
+        raise ValueError("fused_topk_ratio must be in [0, 1]")
     b,t,h,d=q.shape;n=triton.cdiv(t,64);p=a.shape[1]
     ranges=_host_ranges(virtual_ranges)
     query_tokens=t if _query_tokens is None else operator.index(_query_tokens)
@@ -868,14 +872,20 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         args=[to_cute_tensor(x) for x in tensors]
     stream=cuda.CUstream(torch.cuda.current_stream(q.device).cuda_stream)
     static_video_tokens = t - sink_tokens if sink_start is None else operator.index(sink_start)
+    runtime_sm80_topk_ratio = (
+        capability == (8,0)
+        and os.environ.get("H3_SM80_RUNTIME_TOPK_RATIO", "1") != "0"
+    )
     runtime_sm120_topk_ratio = (
         capability == (12,0)
         and os.environ.get("H3_SM120_RUNTIME_TOPK_RATIO", "1") != "0"
     )
     cache_topk_ratio = (
-        bool(fused_topk_ratio) if runtime_sm120_topk_ratio else fused_topk_ratio
+        bool(fused_topk_ratio)
+        if runtime_sm80_topk_ratio or runtime_sm120_topk_ratio
+        else fused_topk_ratio
     )
-    key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,force_local_blocks,runtime_sm120_topk_ratio,cache_topk_ratio,sm80_prefetch_summary,sm80_skip_final_tile_barrier,
+    key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,force_local_blocks,runtime_sm80_topk_ratio,runtime_sm120_topk_ratio,cache_topk_ratio,sm80_prefetch_summary,sm80_skip_final_tile_barrier,
          static_video_tokens,query_tokens,active_parents,chunk,head_chunk,
          tuple(_dynamic_tensor_cache_signature(x) for x in tensors))
     compiled=_FUSED_COMPILED.get(key)
@@ -900,13 +910,14 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
             qb_end=triton.cdiv(min(ranges[p_end-1][1],query_tokens),64)
             scalars=(qb_start,qb_end-qb_start,p_start,head_start,head_count,
                      d**-.5,sink_first,sink_last)
-            if capability == (12,0):
+            if capability in ((8,0), (12,0)):
                 scalars += (round(fused_topk_ratio * 10000),)
             if compiled is None:
                 kernel=(FusedKernel(external_route=external,hybrid_route=hybrid,
                                     export_route=export_route,
                                     force_local_blocks=force_local_blocks,
                                     fused_topk_ratio=fused_topk_ratio,
+                                    runtime_fused_topk_ratio=runtime_sm80_topk_ratio,
                                     prefetch_summary=sm80_prefetch_summary,
                                     skip_final_tile_barrier=sm80_skip_final_tile_barrier)
                         if capability==(8,0) else
