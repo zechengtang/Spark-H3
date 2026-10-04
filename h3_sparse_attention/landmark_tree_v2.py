@@ -1028,6 +1028,28 @@ class PreparedLandmarkTreeV2Permutation:
     def graph_input(self) -> torch.Tensor | None:
         return self._static_input if self._graph is not None else None
 
+    def acquire_graph_input(self) -> torch.Tensor | None:
+        """Return fixed storage that the next captured run can consume directly.
+
+        The first call remains eager.  After that warmup, allocating the graph
+        input before the caller produces transformed features avoids retaining
+        a full temporary while cloning it during capture.  A failed graph stays
+        on the ordinary eager path.
+        """
+
+        if self._graph is not None:
+            assert self._static_input is not None
+            return self._static_input
+        if self._graph_failed or self._calls == 0:
+            return None
+        if self._static_input is None:
+            self._static_input = torch.empty(
+                (self.batch, self.tokens, self.dim),
+                device=self.device,
+                dtype=torch.bfloat16,
+            )
+        return self._static_input
+
     @property
     def graph_inverse_norms(self) -> torch.Tensor | None:
         return self._static_inverse_norms if self._graph is not None else None
@@ -1094,7 +1116,11 @@ class PreparedLandmarkTreeV2Permutation:
             return self._compute(samples, inverse_norms, root_scores)
         try:
             torch.cuda.synchronize()
-            self._static_input = samples.detach().clone()
+            # Producers using ``acquire_graph_input`` already wrote directly
+            # into the fixed-address buffer.  Standalone callers retain the
+            # original clone-based behavior.
+            if samples is not self._static_input:
+                self._static_input = samples.detach().clone()
             self._static_inverse_norms = inverse_norms.detach().clone() if inverse_norms is not None else None
             self._static_root_scores = root_scores.detach().clone() if root_scores is not None else None
             warmup_stream = torch.cuda.Stream(device=samples.device)

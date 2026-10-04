@@ -365,12 +365,16 @@ def _landmark_tree_v2_combined_permutations(
     query_bthd: torch.Tensor,
     key_bthd: torch.Tensor,
     layout: PackedLayout,
+    *,
+    expand_shared: bool = True,
 ):
     """Metric transform plus prepared-plan tree build on the current stream.
 
     Returns ``(plan, metric_indices, combined_permutation, combined_inverse)``.
     Independent layouts use ``[K; Q]`` batches.  A shared-layout ablation only
-    constructs the source-side layout and then returns it for both sides.
+    constructs the source-side batch.  Direct diagnostic callers retain the
+    historical doubled return by default; the production Q/K wrapper requests
+    the single batch and aliases it instead of materializing duplicate indices.
     """
 
     from .landmark_tree_v2 import PreparedLandmarkTreeV2Permutation
@@ -479,7 +483,7 @@ def _landmark_tree_v2_combined_permutations(
             compact_indices=tuple(torch.cuda.get_device_capability(query.device)) == (8, 0),
         )
         controller.rope_sol_key_clustering_static[plan_key] = plan
-    transformed = plan.graph_input
+    transformed = plan.acquire_graph_input()
     if transformed is None:
         transformed = torch.empty(
             (plan_batch, video_tokens, dim),
@@ -578,7 +582,7 @@ def _landmark_tree_v2_combined_permutations(
         )
     _profile_end(controller, profile)
     del query_metric, key_metric
-    if layout_reuse != "independent":
+    if layout_reuse != "independent" and expand_shared:
         combined_permutation = torch.cat(
             (combined_permutation, combined_permutation), dim=0
         )
@@ -609,12 +613,23 @@ def _landmark_tree_v2_qk_block_permutations(
     video_tokens = int(layout.video_tokens)
     flat_batch = batch * heads
     plan, metric_indices, combined_permutation, combined_inverse = (
-        _landmark_tree_v2_combined_permutations(controller, query_bthd, key_bthd, layout)
+        _landmark_tree_v2_combined_permutations(
+            controller, query_bthd, key_bthd, layout, expand_shared=False
+        )
     )
-    key_permutation = combined_permutation[:flat_batch]
-    key_inverse = combined_inverse[:flat_batch]
-    query_permutation = combined_permutation[flat_batch:]
-    query_inverse = combined_inverse[flat_batch:]
+    layout_reuse = controller.config.landmark_tree_v2_layout_reuse
+    if layout_reuse == "independent":
+        key_permutation = combined_permutation[:flat_batch]
+        key_inverse = combined_inverse[:flat_batch]
+        query_permutation = combined_permutation[flat_batch:]
+        query_inverse = combined_inverse[flat_batch:]
+    else:
+        # Shared-layout modes deliberately use the same physical ordering for
+        # Q and K.  Keep that relationship as an alias: torch.cat would retain
+        # two redundant index batches in addition to the CUDA graph's source
+        # permutation and inverse on memory-bound long-sequence inference.
+        key_permutation = query_permutation = combined_permutation
+        key_inverse = query_inverse = combined_inverse
     num_excluded = video_tokens % BLOCK_SIZE
     active_blocks = (video_tokens - num_excluded) // BLOCK_SIZE
     common = {

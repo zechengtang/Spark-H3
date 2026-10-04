@@ -8,8 +8,12 @@ from h3_sparse_attention.mahalanobis_kmeans import (
     estimate_noncentered_second_moment,
     flat64_midpoint_sample_indices,
 )
+from h3_sparse_attention.landmark_tree_v2 import PreparedLandmarkTreeV2Permutation
 from h3_sparse_attention.processor import H3SparseAttentionConfig, PackedLayout, _Controller
-from h3_sparse_attention.spark_integration import _landmark_tree_v2_combined_permutations
+from h3_sparse_attention.spark_integration import (
+    _landmark_tree_v2_combined_permutations,
+    _landmark_tree_v2_qk_block_permutations,
+)
 
 
 def _direct_m2(x):
@@ -200,3 +204,95 @@ def test_legacy_mean_group2_still_builds_reblock_plan():
     assert plan.landmark_mode == "mean"
     assert torch.equal(permutation.sort(1).values, expected)
     assert torch.equal(inverse.gather(1, permutation), expected)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@pytest.mark.parametrize("layout_reuse", ["q_from_k", "k_from_q"])
+def test_shared_layout_aliases_qk_indices_without_duplicate_storage(layout_reuse):
+    grid = (1, 32, 64)
+    tokens = 2048
+    ids = torch.arange(tokens, device="cuda")
+    positions = torch.stack(
+        torch.meshgrid(
+            *(torch.arange(size, device="cuda") for size in grid), indexing="ij"
+        ), dim=-1,
+    ).reshape(tokens, 3)
+    layout = PackedLayout(ids, ids.clone(), grid, tokens, tokens, positions)
+    torch.manual_seed(107)
+    query = torch.randn(1, tokens, 1, 128, device="cuda", dtype=torch.bfloat16)
+    key = torch.randn_like(query)
+    config = H3SparseAttentionConfig.spark(
+        20, landmark_tree_v2_layout_reuse=layout_reuse
+    )
+    controller = _Controller(config)
+
+    # The third call exercises the captured CUDA-graph path.  Record the input
+    # passed into the second run to verify that capture consumes the producer's
+    # fixed buffer directly rather than cloning another full transformed input.
+    capture_input = {}
+    for call in range(3):
+        query_perm, query_inv, key_perm, key_inv, _, _ = (
+            _landmark_tree_v2_qk_block_permutations(
+                controller, query, key, layout
+            )
+        )
+        if call == 0:
+            plan = next(
+                value
+                for value in controller.rope_sol_key_clustering_static.values()
+                if isinstance(value, PreparedLandmarkTreeV2Permutation)
+            )
+            original_run = plan.run
+
+            def record_capture_input(samples, *args, **kwargs):
+                capture_input["data_ptr"] = samples.data_ptr()
+                return original_run(samples, *args, **kwargs)
+
+            plan.run = record_capture_input
+
+    assert plan.graph_active
+    assert capture_input["data_ptr"] == plan.graph_input.data_ptr()
+    assert query_perm.data_ptr() == key_perm.data_ptr()
+    assert query_inv.data_ptr() == key_inv.data_ptr()
+    assert query_perm.shape == (1, 1, tokens)
+    assert query_inv.shape == (1, 1, tokens)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_direct_graph_input_capture_failure_falls_back_to_eager(monkeypatch):
+    grid = (1, 16, 64)
+    tokens = 1024
+    ids = torch.arange(tokens, device="cuda")
+    positions = torch.stack(
+        torch.meshgrid(
+            *(torch.arange(size, device="cuda") for size in grid), indexing="ij"
+        ), dim=-1,
+    ).reshape(tokens, 3)
+    layout = PackedLayout(ids, ids.clone(), grid, tokens, tokens, positions)
+    torch.manual_seed(108)
+    query = torch.randn(1, tokens, 1, 128, device="cuda", dtype=torch.bfloat16)
+    key = torch.randn_like(query)
+    controller = _Controller(H3SparseAttentionConfig.spark(20))
+
+    first = _landmark_tree_v2_qk_block_permutations(
+        controller, query, key, layout
+    )
+    plan = next(
+        value
+        for value in controller.rope_sol_key_clustering_static.values()
+        if isinstance(value, PreparedLandmarkTreeV2Permutation)
+    )
+
+    def fail_capture():
+        raise RuntimeError("injected graph capture failure")
+
+    monkeypatch.setattr(torch.cuda, "CUDAGraph", fail_capture)
+    second = _landmark_tree_v2_qk_block_permutations(
+        controller, query, key, layout
+    )
+
+    assert plan._graph_failed
+    assert not plan.graph_active
+    assert plan._static_input is None
+    for expected, actual in zip(first[:4], second[:4]):
+        assert torch.equal(expected, actual)
