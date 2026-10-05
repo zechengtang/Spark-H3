@@ -8,6 +8,55 @@ import torch
 from .mahalanobis_kmeans import batched_cross_metric_factors
 
 
+def landmark_single_direction_factor(
+    query,
+    key,
+    indices,
+    feature_side,
+    moment="raw",
+    ridge=.001,
+    *,
+    m2_estimator="hilbert_midpoint",
+    full_chunk_size=4096,
+):
+    """Return the sole factor needed by one shared-layout source feature."""
+
+    if feature_side not in ("query", "key"):
+        raise ValueError("feature_side must be query or key")
+    opposite = key if feature_side == "query" else query
+    if moment == "raw":
+        if m2_estimator == "hilbert_midpoint":
+            from .mahalanobis_kmeans import batched_noncentered_metric_factor
+
+            return batched_noncentered_metric_factor(
+                opposite, indices, ridge_epsilon=ridge
+            )
+        from .mahalanobis_kmeans import (
+            estimate_noncentered_second_moment,
+            factor_noncentered_second_moment,
+        )
+
+        m2, _ = estimate_noncentered_second_moment(
+            opposite,
+            m2_estimator,
+            sample_indices=indices,
+            full_chunk_size=full_chunk_size,
+        )
+        return factor_noncentered_second_moment(m2, ridge_epsilon=ridge)
+    if moment != "unit":
+        raise ValueError(moment)
+    if m2_estimator != "hilbert_midpoint":
+        raise ValueError("unit moments currently require hilbert_midpoint")
+    from .mahalanobis_kmeans import batched_noncentered_metric_factor
+
+    selected = opposite.index_select(-2, indices).float()
+    selected = selected / selected.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    local_indices = torch.arange(indices.numel(), device=indices.device)
+    return batched_noncentered_metric_factor(
+        selected, local_indices, ridge_epsilon=ridge
+    )
+
+
 def landmark_direction_factors(
     query,
     key,

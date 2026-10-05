@@ -359,6 +359,34 @@ def _headwise_permute_video_tokens(
     return result
 
 
+def _required_reblock_m2_side(m2_side: str, layout_reuse: str) -> str:
+    """Intersect requested feature weighting with the layouts we actually build.
+
+    The side names describe transformed clustering features: ``key`` consumes
+    the query moment and ``query`` consumes the key moment.  A shared layout
+    only builds its source side, so constructing the other moment cannot affect
+    either returned permutation.
+    """
+
+    if layout_reuse == "independent":
+        return m2_side
+    if layout_reuse == "q_from_k":
+        return "key" if m2_side in ("both", "key") else "none"
+    if layout_reuse == "k_from_q":
+        return "query" if m2_side in ("both", "query") else "none"
+    raise ValueError(f"unknown layout reuse mode: {layout_reuse}")
+
+
+def _m2_side_from_features(*, query: bool, key: bool) -> str:
+    if query and key:
+        return "both"
+    if query:
+        return "query"
+    if key:
+        return "key"
+    return "none"
+
+
 @torch.no_grad()
 def _landmark_tree_v2_combined_permutations(
     controller: _Controller,
@@ -378,7 +406,10 @@ def _landmark_tree_v2_combined_permutations(
     """
 
     from .landmark_tree_v2 import PreparedLandmarkTreeV2Permutation
-    from .landmark_direction import landmark_direction_factors
+    from .landmark_direction import (
+        landmark_direction_factors,
+        landmark_single_direction_factor,
+    )
     from .mahalanobis_kmeans import (
         hilbert_midpoint_sample_indices,
     )
@@ -413,18 +444,38 @@ def _landmark_tree_v2_combined_permutations(
         .permute(0, 2, 1, 3)
         .reshape(flat_batch, video_tokens, dim)
     )
-    profile = _profile_begin(controller, "reblock_metric")
-    query_metric, key_metric = landmark_direction_factors(
-        query,
-        key,
-        metric_indices,
-        ridge=controller.config.rope_sol_key_ridge_epsilon,
-        moment=controller.config.landmark_tree_v2_moment_mode,
-        m2_estimator=controller.config.landmark_tree_v2_m2_estimator,
-        m2_side=controller.config.landmark_tree_v2_m2_side,
-    )
-    _profile_end(controller, profile)
     layout_reuse = controller.config.landmark_tree_v2_layout_reuse
+    required_m2_side = _required_reblock_m2_side(
+        controller.config.landmark_tree_v2_m2_side, layout_reuse
+    )
+    profile = _profile_begin(controller, "reblock_metric")
+    if required_m2_side == "none":
+        # None denotes an identity transform.  Keeping it implicit avoids both
+        # a batched D x D identity allocation and an O(N D^2) identity BMM.
+        query_metric = key_metric = None
+    elif required_m2_side in ("query", "key"):
+        single_metric = landmark_single_direction_factor(
+            query,
+            key,
+            metric_indices,
+            required_m2_side,
+            ridge=controller.config.rope_sol_key_ridge_epsilon,
+            moment=controller.config.landmark_tree_v2_moment_mode,
+            m2_estimator=controller.config.landmark_tree_v2_m2_estimator,
+        )
+        query_metric = single_metric if required_m2_side == "key" else None
+        key_metric = single_metric if required_m2_side == "query" else None
+    else:
+        query_metric, key_metric = landmark_direction_factors(
+            query,
+            key,
+            metric_indices,
+            ridge=controller.config.rope_sol_key_ridge_epsilon,
+            moment=controller.config.landmark_tree_v2_moment_mode,
+            m2_estimator=controller.config.landmark_tree_v2_m2_estimator,
+            m2_side=required_m2_side,
+        )
+    _profile_end(controller, profile)
     plan_batch = 2 * flat_batch if layout_reuse == "independent" else flat_batch
     plan_key = (
         "prepared_landmark_tree_v2_qk",
@@ -492,58 +543,126 @@ def _landmark_tree_v2_combined_permutations(
         )
     profile = _profile_begin(controller, "reblock_transform_bmm")
     if layout_reuse in ("independent", "q_from_k"):
-        torch.bmm(
-            key.to(torch.bfloat16), query_metric.to(torch.bfloat16),
-            out=transformed[:flat_batch],
-        )
+        if query_metric is None:
+            transformed[:flat_batch].copy_(key)
+        else:
+            torch.bmm(
+                key.to(torch.bfloat16), query_metric.to(torch.bfloat16),
+                out=transformed[:flat_batch],
+            )
     if layout_reuse == "independent":
-        torch.bmm(
-            query.to(torch.bfloat16), key_metric.to(torch.bfloat16),
-            out=transformed[flat_batch:],
-        )
+        if key_metric is None:
+            transformed[flat_batch:].copy_(query)
+        else:
+            torch.bmm(
+                query.to(torch.bfloat16), key_metric.to(torch.bfloat16),
+                out=transformed[flat_batch:],
+            )
     elif layout_reuse == "k_from_q":
-        torch.bmm(
-            query.to(torch.bfloat16), key_metric.to(torch.bfloat16),
-            out=transformed[:flat_batch],
-        )
+        if key_metric is None:
+            transformed[:flat_batch].copy_(query)
+        else:
+            torch.bmm(
+                query.to(torch.bfloat16), key_metric.to(torch.bfloat16),
+                out=transformed[:flat_batch],
+            )
     _profile_end(controller, profile)
     # M2 ablations must not gain or lose quality merely because their feature
     # norm chooses a different exact tail.  Reconstruct the production
     # Hilbert-M2 feature norm and freeze that identity for both independent
     # sides (or for the single source side of a shared layout).
     excluded_indices = None
+    remainder = video_tokens % BLOCK_SIZE
     needs_baseline_metric_tail = (
         controller.config.landmark_tree_v2_m2_side != "both"
         or controller.config.landmark_tree_v2_m2_estimator != "hilbert_midpoint"
     )
     needs_flat_order_tail = controller.config.landmark_tree_v2_initial_order != "flat"
-    if needs_baseline_metric_tail or needs_flat_order_tail:
+    # A multiple-of-64 sequence has no protected remainder.  Besides avoiding
+    # the reference M2/BMM, retaining None here is essential: an empty tensor
+    # would deliberately force PreparedLandmarkTreeV2Permutation into eager
+    # mode and disable its CUDA graph replay.
+    if remainder and (needs_baseline_metric_tail or needs_flat_order_tail):
         from .landmark_tree_clustering import _largest_norm_remainder
 
         profile = _profile_begin(controller, "reblock_frozen_tail_reference")
         if needs_baseline_metric_tail:
-            baseline_query_metric, baseline_key_metric = landmark_direction_factors(
-                query, key, metric_indices,
-                ridge=controller.config.rope_sol_key_ridge_epsilon,
-                moment=controller.config.landmark_tree_v2_moment_mode,
-                m2_estimator="hilbert_midpoint", m2_side="both",
+            baseline_side = _required_reblock_m2_side("both", layout_reuse)
+            current_is_baseline = (
+                controller.config.landmark_tree_v2_m2_estimator == "hilbert_midpoint"
             )
-            reference = torch.empty_like(transformed)
-            if layout_reuse in ("independent", "q_from_k"):
-                torch.bmm(
-                    key.to(torch.bfloat16), baseline_query_metric.to(torch.bfloat16),
-                    out=reference[:flat_batch],
-                )
-            if layout_reuse == "independent":
-                torch.bmm(
-                    query.to(torch.bfloat16), baseline_key_metric.to(torch.bfloat16),
-                    out=reference[flat_batch:],
-                )
-            elif layout_reuse == "k_from_q":
-                torch.bmm(
-                    query.to(torch.bfloat16), baseline_key_metric.to(torch.bfloat16),
-                    out=reference[:flat_batch],
-                )
+            reuse_key_feature = (
+                current_is_baseline
+                and baseline_side in ("both", "key")
+                and required_m2_side in ("both", "key")
+            )
+            reuse_query_feature = (
+                current_is_baseline
+                and baseline_side in ("both", "query")
+                and required_m2_side in ("both", "query")
+            )
+            missing_side = _m2_side_from_features(
+                query=(
+                    baseline_side in ("both", "query")
+                    and not reuse_query_feature
+                ),
+                key=(
+                    baseline_side in ("both", "key")
+                    and not reuse_key_feature
+                ),
+            )
+            if missing_side == "none":
+                reference = transformed
+                baseline_query_metric = baseline_key_metric = None
+            else:
+                if missing_side in ("query", "key"):
+                    baseline_single_metric = landmark_single_direction_factor(
+                        query, key, metric_indices, missing_side,
+                        ridge=controller.config.rope_sol_key_ridge_epsilon,
+                        moment=controller.config.landmark_tree_v2_moment_mode,
+                        m2_estimator="hilbert_midpoint",
+                    )
+                    baseline_query_metric = (
+                        baseline_single_metric if missing_side == "key" else None
+                    )
+                    baseline_key_metric = (
+                        baseline_single_metric if missing_side == "query" else None
+                    )
+                else:
+                    baseline_query_metric, baseline_key_metric = landmark_direction_factors(
+                        query, key, metric_indices,
+                        ridge=controller.config.rope_sol_key_ridge_epsilon,
+                        moment=controller.config.landmark_tree_v2_moment_mode,
+                        m2_estimator="hilbert_midpoint", m2_side=missing_side,
+                    )
+                reference = torch.empty_like(transformed)
+                if layout_reuse in ("independent", "q_from_k"):
+                    if reuse_key_feature:
+                        reference[:flat_batch].copy_(transformed[:flat_batch])
+                    else:
+                        torch.bmm(
+                            key.to(torch.bfloat16),
+                            baseline_query_metric.to(torch.bfloat16),
+                            out=reference[:flat_batch],
+                        )
+                if layout_reuse == "independent":
+                    if reuse_query_feature:
+                        reference[flat_batch:].copy_(transformed[flat_batch:])
+                    else:
+                        torch.bmm(
+                            query.to(torch.bfloat16),
+                            baseline_key_metric.to(torch.bfloat16),
+                            out=reference[flat_batch:],
+                        )
+                elif layout_reuse == "k_from_q":
+                    if reuse_query_feature:
+                        reference[:flat_batch].copy_(transformed[:flat_batch])
+                    else:
+                        torch.bmm(
+                            query.to(torch.bfloat16),
+                            baseline_key_metric.to(torch.bfloat16),
+                            out=reference[:flat_batch],
+                        )
         else:
             # Changing only the root order must not change which original
             # tokens occupy the protected exact remainder.  The current
@@ -551,7 +670,6 @@ def _landmark_tree_v2_combined_permutations(
             # Hilbert-M2 features, so select the tail before applying the
             # alternative root permutation.
             reference = transformed
-        remainder = video_tokens % BLOCK_SIZE
         mask = _largest_norm_remainder(reference, remainder, validate=True)
         original_ids = torch.arange(
             video_tokens, device=query.device, dtype=torch.long

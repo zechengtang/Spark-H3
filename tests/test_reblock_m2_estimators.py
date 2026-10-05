@@ -5,6 +5,8 @@ import torch
 
 from h3_sparse_attention.landmark_direction import landmark_direction_factors
 from h3_sparse_attention.mahalanobis_kmeans import (
+    batched_cross_metric_factors,
+    batched_noncentered_metric_factor,
     estimate_noncentered_second_moment,
     flat64_midpoint_sample_indices,
 )
@@ -13,6 +15,7 @@ from h3_sparse_attention.processor import H3SparseAttentionConfig, PackedLayout,
 from h3_sparse_attention.spark_integration import (
     _landmark_tree_v2_combined_permutations,
     _landmark_tree_v2_qk_block_permutations,
+    _required_reblock_m2_side,
 )
 
 
@@ -127,6 +130,22 @@ def test_landmark_direction_default_path_is_unchanged_and_sides_are_identity():
     assert not torch.equal(key_factor, identity)
 
 
+def test_single_metric_factor_is_bitwise_joint_factor_slice():
+    torch.manual_seed(61)
+    q = torch.randn(3, 73, 8, dtype=torch.bfloat16)
+    k = torch.randn_like(q)
+    indices = torch.tensor([1, 9, 17, 31, 48, 63, 71])
+    joint_query, joint_key = batched_cross_metric_factors(
+        q, k, indices, key_centered=False
+    )
+    assert torch.equal(
+        batched_noncentered_metric_factor(q, indices), joint_query
+    )
+    assert torch.equal(
+        batched_noncentered_metric_factor(k, indices), joint_key
+    )
+
+
 @pytest.mark.parametrize(
     ("side", "query_constructed", "key_constructed"),
     [
@@ -177,6 +196,27 @@ def test_config_defaults_and_experiment_validation():
 
     with pytest.raises(ValueError, match="m2_estimator"):
         H3SparseAttentionConfig.spark(20, landmark_tree_v2_m2_estimator="bad")
+
+
+@pytest.mark.parametrize(
+    ("layout_reuse", "requested", "required"),
+    [
+        ("independent", "both", "both"),
+        ("independent", "query", "query"),
+        ("q_from_k", "both", "key"),
+        ("q_from_k", "key", "key"),
+        ("q_from_k", "query", "none"),
+        ("q_from_k", "none", "none"),
+        ("k_from_q", "both", "query"),
+        ("k_from_q", "query", "query"),
+        ("k_from_q", "key", "none"),
+        ("k_from_q", "none", "none"),
+    ],
+)
+def test_shared_layout_only_requires_source_feature_m2(
+    layout_reuse, requested, required
+):
+    assert _required_reblock_m2_side(requested, layout_reuse) == required
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
@@ -256,6 +296,134 @@ def test_shared_layout_aliases_qk_indices_without_duplicate_storage(layout_reuse
     assert query_inv.data_ptr() == key_inv.data_ptr()
     assert query_perm.shape == (1, 1, tokens)
     assert query_inv.shape == (1, 1, tokens)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@pytest.mark.parametrize("layout_reuse", ["q_from_k", "k_from_q"])
+@pytest.mark.parametrize("m2_side", ["both", "query", "key", "none"])
+@pytest.mark.parametrize("m2_estimator", ["hilbert_midpoint", "full"])
+@pytest.mark.parametrize("tokens", [2048, 2061])
+def test_shared_layout_matches_independent_source_bitwise(
+    layout_reuse, m2_side, m2_estimator, tokens
+):
+    grid = (1, 1, tokens)
+    ids = torch.arange(tokens, device="cuda")
+    positions = torch.stack(
+        torch.meshgrid(
+            *(torch.arange(size, device="cuda") for size in grid), indexing="ij"
+        ), dim=-1,
+    ).reshape(tokens, 3)
+    layout = PackedLayout(ids, ids.clone(), grid, tokens, tokens, positions)
+    torch.manual_seed(109)
+    query = torch.randn(1, tokens, 2, 128, device="cuda", dtype=torch.bfloat16)
+    key = torch.randn_like(query)
+
+    independent = _landmark_tree_v2_combined_permutations(
+        _Controller(H3SparseAttentionConfig.spark(
+            20,
+            landmark_tree_v2_layout_reuse="independent",
+            landmark_tree_v2_m2_side=m2_side,
+            landmark_tree_v2_m2_estimator=m2_estimator,
+        )),
+        query,
+        key,
+        layout,
+        expand_shared=False,
+    )
+    shared = _landmark_tree_v2_combined_permutations(
+        _Controller(H3SparseAttentionConfig.spark(
+            20,
+            landmark_tree_v2_layout_reuse=layout_reuse,
+            landmark_tree_v2_m2_side=m2_side,
+            landmark_tree_v2_m2_estimator=m2_estimator,
+        )),
+        query,
+        key,
+        layout,
+        expand_shared=False,
+    )
+    source = slice(0, 2) if layout_reuse == "q_from_k" else slice(2, 4)
+    assert torch.equal(shared[2], independent[2][source])
+    assert torch.equal(shared[3], independent[3][source])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_zero_remainder_unweighted_shared_layout_skips_all_m2_and_captures_graph(
+    monkeypatch,
+):
+    import h3_sparse_attention.landmark_direction as landmark_direction
+
+    grid = (1, 32, 64)
+    tokens = 2048
+    ids = torch.arange(tokens, device="cuda")
+    positions = torch.stack(
+        torch.meshgrid(
+            *(torch.arange(size, device="cuda") for size in grid), indexing="ij"
+        ), dim=-1,
+    ).reshape(tokens, 3)
+    layout = PackedLayout(ids, ids.clone(), grid, tokens, tokens, positions)
+    torch.manual_seed(110)
+    query = torch.randn(1, tokens, 1, 128, device="cuda", dtype=torch.bfloat16)
+    key = torch.randn_like(query)
+    controller = _Controller(H3SparseAttentionConfig.spark(
+        20,
+        landmark_tree_v2_layout_reuse="q_from_k",
+        landmark_tree_v2_m2_side="none",
+    ))
+    calls = []
+    original = landmark_direction.landmark_direction_factors
+
+    def record(*args, **kwargs):
+        calls.append(kwargs.get("m2_side"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(landmark_direction, "landmark_direction_factors", record)
+    for _ in range(3):
+        _landmark_tree_v2_combined_permutations(
+            controller, query, key, layout, expand_shared=False
+        )
+    plan = next(
+        value
+        for value in controller.rope_sol_key_clustering_static.values()
+        if isinstance(value, PreparedLandmarkTreeV2Permutation)
+    )
+    assert calls == []
+    assert plan.graph_active
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_shared_weighted_source_reuses_transform_for_frozen_tail(monkeypatch):
+    import h3_sparse_attention.landmark_direction as landmark_direction
+
+    grid = (1, 1, 2061)
+    tokens = 2061
+    ids = torch.arange(tokens, device="cuda")
+    positions = torch.stack(
+        torch.meshgrid(
+            *(torch.arange(size, device="cuda") for size in grid), indexing="ij"
+        ), dim=-1,
+    ).reshape(tokens, 3)
+    layout = PackedLayout(ids, ids.clone(), grid, tokens, tokens, positions)
+    torch.manual_seed(111)
+    query = torch.randn(1, tokens, 1, 128, device="cuda", dtype=torch.bfloat16)
+    key = torch.randn_like(query)
+    controller = _Controller(H3SparseAttentionConfig.spark(
+        20,
+        landmark_tree_v2_layout_reuse="q_from_k",
+        landmark_tree_v2_m2_side="key",
+    ))
+    calls = []
+    original = landmark_direction.landmark_single_direction_factor
+
+    def record(*args, **kwargs):
+        calls.append(args[3])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(landmark_direction, "landmark_single_direction_factor", record)
+    _landmark_tree_v2_combined_permutations(
+        controller, query, key, layout, expand_shared=False
+    )
+    assert calls == ["key"]
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")

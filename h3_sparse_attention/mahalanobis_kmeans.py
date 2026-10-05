@@ -386,3 +386,40 @@ def batched_cross_metric_factors(
     query_factor, key_factor = factors.split(batch, dim=0)
     shape = (*batch_shape, dim, dim)
     return query_factor.reshape(shape), key_factor.reshape(shape)
+
+
+def batched_noncentered_metric_factor(
+    samples: torch.Tensor,
+    sample_indices: torch.Tensor,
+    *,
+    ridge_epsilon: float = 1e-3,
+) -> torch.Tensor:
+    """Build one sampled non-centered M2 factor without a dummy peer batch.
+
+    This is the single-layout counterpart of ``batched_cross_metric_factors``.
+    It deliberately uses the same Gram, symmetrization, ridge, and solver
+    sequence so selecting one factor from the old joint call remains bitwise
+    reproducible.
+    """
+
+    if samples.ndim < 2 or not samples.is_floating_point():
+        raise ValueError("samples must be floating point [..., N, D]")
+    if ridge_epsilon < 0:
+        raise ValueError("ridge_epsilon must be non-negative")
+    indices = sample_indices.to(device=samples.device, dtype=torch.long)
+    if indices.ndim != 1 or indices.numel() == 0:
+        raise ValueError("sample_indices must be a non-empty vector")
+    selected = samples.index_select(-2, indices).float()
+    batch_shape = selected.shape[:-2]
+    count, dim = selected.shape[-2:]
+    flat = selected.reshape(-1, count, dim)
+    moment = torch.bmm(flat.transpose(1, 2), flat) / count
+    moment = 0.5 * (moment + moment.transpose(1, 2))
+    trace = moment.diagonal(dim1=-2, dim2=-1).sum(-1) / dim
+    moment.diagonal(dim1=-2, dim2=-1).add_(ridge_epsilon * trace[:, None])
+    if metric_factor_method() == "cholesky":
+        factor, _ = torch.linalg.cholesky_ex(moment, check_errors=False)
+    else:
+        eigenvalues, eigenvectors = torch.linalg.eigh(moment)
+        factor = eigenvectors * eigenvalues.clamp_min(0.0).sqrt().unsqueeze(-2)
+    return factor.reshape(*batch_shape, dim, dim)
