@@ -56,7 +56,7 @@ def _reduce_parts(PART, RANGES, A, H: tl.constexpr, N: tl.constexpr, P: tl.const
 
 
 def permute_with_virtual_anchors(q, permutation, virtual_ranges, *, video_tokens, split=False,
-                                 anchor_dtype=None):
+                                 anchor_dtype=None, reuse_input=False):
     """Return reordered Q and parent anchors; inputs use validated LMv2 topology."""
     if q.ndim != 4 or q.shape[-1] != 128 or not q.is_cuda or not q.is_contiguous() or q.dtype not in (torch.bfloat16, torch.float16):
         raise ValueError('requires contiguous CUDA BTH128 BF16/FP16 Q')
@@ -64,6 +64,8 @@ def permute_with_virtual_anchors(q, permutation, virtual_ranges, *, video_tokens
     anchor_dtype = q.dtype if anchor_dtype is None else anchor_dtype
     if anchor_dtype not in (q.dtype, torch.float32):
         raise ValueError('anchor_dtype must match Q or be float32')
+    if type(reuse_input) is not bool:
+        raise TypeError('reuse_input must be bool')
     if not 0 < video_tokens <= t or permutation.shape != (b, h, video_tokens):
         raise ValueError('invalid video token count or permutation shape')
     if virtual_ranges.ndim != 2 or virtual_ranges.shape[1] != 2 or not virtual_ranges.shape[0]:
@@ -84,4 +86,8 @@ def permute_with_virtual_anchors(q, permutation, virtual_ranges, *, video_tokens
         num_warps=4)
     if split:
         _reduce_parts[(p, b * h)](partial, virtual_ranges, anchors, h, n, p, num_warps=4)
+    if reuse_input:
+        q.copy_(out)
+        del out
+        out = q
     return out, anchors

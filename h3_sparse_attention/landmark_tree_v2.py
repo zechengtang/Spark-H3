@@ -1069,7 +1069,8 @@ class PreparedLandmarkTreeV2Permutation:
 
     @torch.no_grad()
     def run(self, samples: torch.Tensor, inverse_norms=None,
-            root_scores=None, excluded_indices=None) -> tuple[torch.Tensor, torch.Tensor]:
+            root_scores=None, excluded_indices=None, *,
+            allow_cuda_graph: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
         expected = (self.batch, self.tokens, self.dim)
         if samples.shape != expected or samples.dtype != torch.bfloat16:
             raise ValueError(
@@ -1092,6 +1093,12 @@ class PreparedLandmarkTreeV2Permutation:
             or root_scores.dtype != torch.float32 or not root_scores.is_cuda
         ):
             raise ValueError("root_scores must be CUDA FP32 [batch,tokens,directions]")
+        if type(allow_cuda_graph) is not bool:
+            raise TypeError("allow_cuda_graph must be bool")
+        if not allow_cuda_graph:
+            return self._compute(
+                samples, inverse_norms, root_scores, excluded_indices
+            )
         if excluded_indices is not None:
             # Frozen-tail ablations are intentionally eager.  Keeping the tail
             # explicit avoids capturing one identity and silently replaying it
