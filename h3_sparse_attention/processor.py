@@ -599,7 +599,8 @@ class _Controller:
                     landmark_tree_v2_layout_reuse=self.config.landmark_tree_v2_layout_reuse)
 
 
-def _sol_attention(controller, q, k, v, layout, layer, *, return_bthd=False):
+def _sol_attention(controller, q, k, v, layout, layer, *, return_bthd=False,
+                   inputs_bthd=False):
     from sol_attn import get_sol_attn_backend, sol_attn
 
     cfg = controller.config
@@ -607,11 +608,18 @@ def _sol_attention(controller, q, k, v, layout, layer, *, return_bthd=False):
     if allocator is not None:
         if cfg.sol_route_topk_ratio is None:
             raise ValueError("head budget allocation requires a Top-K configuration")
-        controller.head_topk_budget = allocator(layer, controller.evaluation_index, v, layout.video_tokens)
+        budget_values = v.permute(0, 2, 1, 3) if inputs_bthd else v
+        controller.head_topk_budget = allocator(
+            layer, controller.evaluation_index, budget_values, layout.video_tokens
+        )
     else:
         controller.head_topk_budget = None
     if cfg.sol_landmark_preprocess or cfg.sol_route_topk_ratio is not None:
-        from .spark_integration import spark_attention
+        from .spark_integration import spark_attention, spark_attention_bthd
+        if inputs_bthd:
+            return spark_attention_bthd(
+                controller, q, k, v, layout, layer, return_bthd=return_bthd
+            )
         return spark_attention(controller, q, k, v, layout, layer, return_bthd=return_bthd)
     q, k, v = (x.permute(0, 2, 1, 3).contiguous() for x in (q, k, v))
     sink_start = layout.video_tokens
@@ -705,16 +713,44 @@ class _H3SparseProcessor:
         if rotary_emb is not None:
             query = _apply_rotary_emb(query, *rotary_emb)
             key = _apply_rotary_emb(key, *rotary_emb)
+        query_dtype = query.dtype
 
         permutation = layout.permutation
-        q, k, v = (
-            tensor.index_select(1, permutation).permute(0, 2, 1, 3)
-            for tensor in (query, key, value)
+        packed_q, packed_k, packed_v = (
+            tensor.index_select(1, permutation) for tensor in (query, key, value)
         )
-        output = _sol_attention(controller, q, k, v, layout, self.layer,
-                                return_bthd=True)
-        output = output.index_select(1, layout.inverse_permutation)
-        output = output.flatten(2, 3).type_as(query)
+        # The packed tensors own their storage.  Keeping the producer-order
+        # projections alive across reblocking and sparse attention costs three
+        # full BTHD buffers (about 4 GiB at 345-frame/768p) for no benefit.
+        del query, key, value
+        from .spark_integration import _sm80_low_memory_reblock
+        native_bthd = (
+            controller.config.sol_landmark_preprocess
+            and _sm80_low_memory_reblock(packed_q)
+        )
+        if native_bthd:
+            q, k, v = packed_q, packed_k, packed_v
+        else:
+            q, k, v = (
+                tensor.permute(0, 2, 1, 3)
+                for tensor in (packed_q, packed_k, packed_v)
+            )
+        output = _sol_attention(
+            controller, q, k, v, layout, self.layer,
+            return_bthd=True, inputs_bthd=native_bthd,
+        )
+        if native_bthd:
+            # Q is dead after attention and has the exact BTHD destination
+            # shape. Reuse it for the producer-order gather so the long SM80
+            # path does not retain another full attention output at to_out.
+            torch.index_select(
+                output, 1, layout.inverse_permutation, out=packed_q
+            )
+            output = packed_q
+            del q, k, v, packed_k, packed_v
+        else:
+            output = output.index_select(1, layout.inverse_permutation)
+        output = output.flatten(2, 3).to(query_dtype)
         output = attn.to_out[0](output)
         output = attn.to_out[1](output)
         controller.counts["sparse:sol"] += 1

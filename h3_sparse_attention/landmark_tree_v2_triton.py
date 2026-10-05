@@ -88,6 +88,37 @@ if triton is not None:
         tl.store(second_output + output_offset, second_value, mask=mask)
 
     @triton.jit
+    def _headwise_permute_video_to_bhvd_kernel(
+        values,
+        permutation,
+        workspace,
+        video_elements,
+        tokens,
+        heads,
+        video_tokens,
+        dim: tl.constexpr,
+        BLOCK: tl.constexpr,
+    ):
+        output_offset = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+        mask = output_offset < video_elements
+        feature = output_offset % dim
+        row = output_offset // dim
+        token = row % video_tokens
+        batch_head = row // video_tokens
+        head = batch_head % heads
+        batch = batch_head // heads
+        source_token = tl.load(
+            permutation + batch_head * video_tokens + token,
+            mask=mask,
+            other=0,
+        )
+        source_offset = (
+            ((batch * tokens + source_token) * heads + head) * dim + feature
+        )
+        value = tl.load(values + source_offset, mask=mask)
+        tl.store(workspace + output_offset, value, mask=mask)
+
+    @triton.jit
     def _indexed_group_mean_kernel(
         source,
         indices,
@@ -270,6 +301,50 @@ def headwise_permute_bthd(
     return output
 
 
+def headwise_permute_bthd_low_memory(
+    values: torch.Tensor,
+    permutation: torch.Tensor,
+    *,
+    video_tokens: int,
+    workspace: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Permute through one temporary and retain the input allocation."""
+    if workspace is None:
+        temporary = headwise_permute_bthd(
+            values, permutation, video_tokens=video_tokens
+        )
+        values.copy_(temporary)
+        del temporary
+        return values
+    batch, tokens, heads, dim = values.shape
+    required = batch * heads * video_tokens * dim
+    if (
+        workspace.device != values.device
+        or workspace.dtype != values.dtype
+        or not workspace.is_contiguous()
+        or workspace.numel() < required
+    ):
+        raise ValueError("workspace must be contiguous matching storage for BHVD video")
+    flat_workspace = workspace.view(-1)[:required]
+    block = 1024
+    _headwise_permute_video_to_bhvd_kernel[(triton.cdiv(required, block),)](
+        values,
+        permutation,
+        flat_workspace,
+        required,
+        tokens,
+        heads,
+        video_tokens,
+        dim=dim,
+        BLOCK=block,
+        num_warps=8,
+    )
+    values[:, :video_tokens].copy_(
+        flat_workspace.view(batch, heads, video_tokens, dim).permute(0, 2, 1, 3)
+    )
+    return values
+
+
 def headwise_permute_pair_bthd(
     first: torch.Tensor,
     second: torch.Tensor,
@@ -317,6 +392,7 @@ def headwise_permute_pair_bthd_low_memory(
     permutation: torch.Tensor,
     *,
     video_tokens: int,
+    workspace: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Permute a pair with one temporary, reusing ``first`` as its output.
 
@@ -328,15 +404,25 @@ def headwise_permute_pair_bthd_low_memory(
     the peak.
     """
 
-    first_output = headwise_permute_bthd(
-        first, permutation, video_tokens=video_tokens
+    if workspace is not None:
+        headwise_permute_bthd_low_memory(
+            first, permutation, video_tokens=video_tokens, workspace=workspace
+        )
+        headwise_permute_bthd_low_memory(
+            second, permutation, video_tokens=video_tokens, workspace=workspace
+        )
+        return first, second
+    temporary = torch.empty_like(first)
+    headwise_permute_bthd(
+        first, permutation, video_tokens=video_tokens, out=temporary
     )
-    first.copy_(first_output)
-    del first_output
-    second_output = headwise_permute_bthd(
-        second, permutation, video_tokens=video_tokens
+    first.copy_(temporary)
+    headwise_permute_bthd(
+        second, permutation, video_tokens=video_tokens, out=temporary
     )
-    return first, second_output
+    second.copy_(temporary)
+    del temporary
+    return first, second
 
 
 def indexed_group_mean(

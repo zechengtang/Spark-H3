@@ -33,6 +33,7 @@ def test_installer_defaults_and_global_frontier():
 def test_paired_headwise_permutation_matches_two_independent_launches():
     from h3_sparse_attention.landmark_tree_v2_triton import (
         headwise_permute_bthd,
+        headwise_permute_bthd_low_memory,
         headwise_permute_pair_bthd,
         headwise_permute_pair_bthd_low_memory,
     )
@@ -62,11 +63,68 @@ def test_paired_headwise_permutation_matches_two_independent_launches():
     )
     assert returned.data_ptr() == destination.data_ptr()
     torch.testing.assert_close(returned, expected_first, rtol=0, atol=0)
-    low_first, low_second = headwise_permute_pair_bthd_low_memory(
-        first.clone(), second.clone(), permutation, video_tokens=video_tokens
+    low_single_input = first.clone()
+    low_single_ptr = low_single_input.data_ptr()
+    low_single = headwise_permute_bthd_low_memory(
+        low_single_input, permutation, video_tokens=video_tokens
     )
+    assert low_single.data_ptr() == low_single_ptr
+    torch.testing.assert_close(low_single, expected_first, rtol=0, atol=0)
+    low_first_input, low_second_input = first.clone(), second.clone()
+    low_first_ptr, low_second_ptr = (
+        low_first_input.data_ptr(), low_second_input.data_ptr()
+    )
+    low_first, low_second = headwise_permute_pair_bthd_low_memory(
+        low_first_input, low_second_input, permutation, video_tokens=video_tokens
+    )
+    assert low_first.data_ptr() == low_first_ptr
+    assert low_second.data_ptr() == low_second_ptr
     torch.testing.assert_close(low_first, expected_first, rtol=0, atol=0)
     torch.testing.assert_close(low_second, expected_second, rtol=0, atol=0)
+    shared_workspace = torch.empty(
+        first.shape[0], first.shape[2], video_tokens, first.shape[3],
+        device='cuda', dtype=first.dtype,
+    )
+    workspace_first, workspace_second = first.clone(), second.clone()
+    workspace_first_ptr = workspace_first.data_ptr()
+    workspace_second_ptr = workspace_second.data_ptr()
+    workspace_first, workspace_second = headwise_permute_pair_bthd_low_memory(
+        workspace_first, workspace_second, permutation,
+        video_tokens=video_tokens, workspace=shared_workspace,
+    )
+    assert workspace_first.data_ptr() == workspace_first_ptr
+    assert workspace_second.data_ptr() == workspace_second_ptr
+    torch.testing.assert_close(workspace_first, expected_first, rtol=0, atol=0)
+    torch.testing.assert_close(workspace_second, expected_second, rtol=0, atol=0)
+    from h3_sparse_attention.virtual_q_permute import permute_with_virtual_anchors
+    ranges = torch.tensor([[0, first.shape[1]]], device='cuda', dtype=torch.int64)
+    anchor_source = first.clone()
+    expected_q, expected_anchor = permute_with_virtual_anchors(
+        anchor_source, permutation, ranges, video_tokens=video_tokens
+    )
+    reused_source = first.clone()
+    reused_ptr = reused_source.data_ptr()
+    reused_q, reused_anchor = permute_with_virtual_anchors(
+        reused_source, permutation, ranges, video_tokens=video_tokens,
+        reuse_input=True,
+    )
+    assert reused_q.data_ptr() == reused_ptr
+    torch.testing.assert_close(reused_q, expected_q, rtol=0, atol=0)
+    torch.testing.assert_close(reused_anchor, expected_anchor, rtol=0, atol=0)
+
+
+def test_long_sequence_low_memory_reblock_is_sm80_only(monkeypatch):
+    from types import SimpleNamespace
+    from h3_sparse_attention.spark_integration import _sm80_low_memory_reblock
+
+    fake = SimpleNamespace(is_cuda=True, shape=(1, 90_001, 1, 128), device='cuda')
+    monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (8, 0))
+    assert _sm80_low_memory_reblock(fake)
+    monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (12, 0))
+    assert not _sm80_low_memory_reblock(fake)
+    fake.shape = (1, 90_000, 1, 128)
+    monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (8, 0))
+    assert not _sm80_low_memory_reblock(fake)
 
 
 def test_overrides_and_plain_sol_opt_in():

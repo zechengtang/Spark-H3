@@ -445,6 +445,11 @@ def _landmark_tree_v2_combined_permutations(
         .reshape(flat_batch, video_tokens, dim)
     )
     layout_reuse = controller.config.landmark_tree_v2_layout_reuse
+    eager_low_memory = bool(
+        query.is_cuda
+        and video_tokens > 90_000
+        and tuple(torch.cuda.get_device_capability(query.device)) == (8, 0)
+    )
     required_m2_side = _required_reblock_m2_side(
         controller.config.landmark_tree_v2_m2_side, layout_reuse
     )
@@ -534,7 +539,12 @@ def _landmark_tree_v2_combined_permutations(
             compact_indices=tuple(torch.cuda.get_device_capability(query.device)) == (8, 0),
         )
         controller.rope_sol_key_clustering_static[plan_key] = plan
-    transformed = plan.acquire_graph_input()
+    # This eager fallback is designed and validated for A800 80GB long-sequence
+    # inference. A successful graph capture keeps its private pool alive through
+    # attention. Shared-layout plans are small enough to capture while the
+    # larger independent plan often falls back to eager execution, which made
+    # the nominally cheaper shared path use more peak memory.
+    transformed = None if eager_low_memory else plan.acquire_graph_input()
     if transformed is None:
         transformed = torch.empty(
             (plan_batch, video_tokens, dim),
@@ -691,14 +701,19 @@ def _landmark_tree_v2_combined_permutations(
         elif layout_reuse == "k_from_q":
             inverse_norms[:flat_batch].copy_(query.float().norm(dim=-1, keepdim=True).clamp_min(1e-12).reciprocal())
     profile = _profile_begin(controller, "reblock_tree")
-    if plan.graph_active and excluded_indices is None:
+    if not eager_low_memory and plan.graph_active and excluded_indices is None:
         combined_permutation, combined_inverse = plan.replay()
     else:
         combined_permutation, combined_inverse = plan.run(
             transformed, inverse_norms=inverse_norms,
             excluded_indices=excluded_indices,
+            allow_cuda_graph=not eager_low_memory,
         )
     _profile_end(controller, profile)
+    # The graph input is dead until the next reblock build. On the SM80 long
+    # path it is large enough to serve as the shared video-permutation
+    # workspace, avoiding another full BTHD allocation during attention.
+    controller.spark_reblock_permute_workspace = transformed
     del query_metric, key_metric
     if layout_reuse != "independent" and expand_shared:
         combined_permutation = torch.cat(
@@ -849,6 +864,20 @@ def spark_attention(
     )
 
 
+def _sm80_low_memory_reblock(tensor: torch.Tensor) -> bool:
+    """Select the long-sequence storage-reuse path used by A800 80GB.
+
+    This heuristic was designed and validated specifically for A800 80GB. The
+    SM80 capability check preserves the current deployment behavior, but must
+    not be taken as validation for every SM80 GPU or memory capacity.
+    """
+    return bool(
+        tensor.is_cuda
+        and tensor.shape[1] > 90_000
+        and tuple(torch.cuda.get_device_capability(tensor.device)) == (8, 0)
+    )
+
+
 def spark_attention_bthd(
     controller: _Controller,
     q_bthd: torch.Tensor,
@@ -881,6 +910,11 @@ def spark_attention_bthd(
             f"Spark-H3 has no supported kernel for SM{capability[0]}{capability[1]}; "
             f"supported architectures are {supported}"
         )
+    sm80_low_memory = _sm80_low_memory_reblock(q_bthd)
+    reblock_workspace = (
+        getattr(controller, "spark_reblock_permute_workspace", None)
+        if sm80_low_memory else None
+    )
 
     # The producer has already placed the target-video grid first and all
     # packed context after it.
@@ -987,22 +1021,58 @@ def spark_attention_bthd(
                 and not needs_query_padding
             ):
                 profile = _profile_begin(controller, "reblock_q_and_anchors")
-                q_bthd, anchors = permute_with_virtual_anchors(q_bthd, query_permutation,
-                    ranges, video_tokens=layout.video_tokens,
-                    anchor_dtype=(torch.float32 if cfg.sol_global_anchor_dtype == "float32" else q_bthd.dtype))
+                anchor_dtype = (
+                    torch.float32
+                    if cfg.sol_global_anchor_dtype == "float32"
+                    else q_bthd.dtype
+                )
+                if sm80_low_memory and reblock_workspace is not None:
+                    from .landmark_tree_v2_triton import headwise_permute_bthd_low_memory
+                    from .sol_numerator_virtual_q import build_virtual_anchors
+                    q_bthd = headwise_permute_bthd_low_memory(
+                        q_bthd, query_permutation,
+                        video_tokens=layout.video_tokens,
+                        workspace=reblock_workspace,
+                    )
+                    anchors = build_virtual_anchors(
+                        q_bthd, ranges, dtype=anchor_dtype
+                    )
+                else:
+                    q_bthd, anchors = permute_with_virtual_anchors(
+                        q_bthd, query_permutation, ranges,
+                        video_tokens=layout.video_tokens,
+                        anchor_dtype=anchor_dtype,
+                        reuse_input=sm80_low_memory,
+                    )
                 _profile_end(controller, profile)
                 controller.counts["sol_virtual_query_fused_permute_calls"] += 1
             else:
                 profile = _profile_begin(controller, "reblock_q")
-                q_bthd = _headwise_permute_video_tokens(
-                    q_bthd, query_permutation, video_tokens=layout.video_tokens)
+                if sm80_low_memory:
+                    from .landmark_tree_v2_triton import headwise_permute_bthd_low_memory
+                    q_bthd = headwise_permute_bthd_low_memory(
+                        q_bthd, query_permutation,
+                        video_tokens=layout.video_tokens,
+                        workspace=reblock_workspace,
+                    )
+                else:
+                    q_bthd = _headwise_permute_video_tokens(
+                        q_bthd, query_permutation, video_tokens=layout.video_tokens)
                 _profile_end(controller, profile)
             virtual_query_data = (ranges, mapping, anchors)
         else:
             profile = _profile_begin(controller, "reblock_q")
-            q_bthd = _headwise_permute_video_tokens(
-                q_bthd, query_permutation, video_tokens=layout.video_tokens
-            )
+            if sm80_low_memory:
+                from .landmark_tree_v2_triton import headwise_permute_bthd_low_memory
+                q_bthd = headwise_permute_bthd_low_memory(
+                    q_bthd, query_permutation,
+                    video_tokens=layout.video_tokens,
+                    workspace=reblock_workspace,
+                )
+            else:
+                q_bthd = _headwise_permute_video_tokens(
+                    q_bthd, query_permutation, video_tokens=layout.video_tokens
+                )
             _profile_end(controller, profile)
         profile = _profile_begin(controller, "reblock_kv")
         if (
@@ -1022,7 +1092,7 @@ def spark_attention_bthd(
             # shapes retain the faster paired gather.
             permute_pair = (
                 headwise_permute_pair_bthd_low_memory
-                if q_bthd.shape[1] > 90_000
+                if sm80_low_memory
                 else headwise_permute_pair_bthd
             )
             k_bthd, v_bthd = permute_pair(
@@ -1030,6 +1100,11 @@ def spark_attention_bthd(
                 v_bthd,
                 key_permutation,
                 video_tokens=layout.video_tokens,
+                **(
+                    {"workspace": reblock_workspace}
+                    if sm80_low_memory and reblock_workspace is not None
+                    else {}
+                ),
             )
         else:
             k_bthd = _headwise_permute_video_tokens(
@@ -1038,6 +1113,11 @@ def spark_attention_bthd(
             v_bthd = _headwise_permute_video_tokens(
                 v_bthd, key_permutation, video_tokens=layout.video_tokens
             )
+        if sm80_low_memory:
+            # The transform buffer has now served Q, K, and V.  Do not retain
+            # it through score construction or the output projection.
+            controller.spark_reblock_permute_workspace = None
+            reblock_workspace = None
         _profile_end(controller, profile)
         controller.counts["sol_landmark_preprocess_calls"] += 1
     elif getattr(controller, "spark_identity_reweight", False):
@@ -1188,8 +1268,7 @@ def spark_attention_bthd(
         # the CUDA allocator can reuse that storage on memory-bound SM80 runs.
         inverse_out = None
         if (
-            tuple(torch.cuda.get_device_capability(output.device)) == (8, 0)
-            and output.shape[1] > 90_000
+            _sm80_low_memory_reblock(output)
         ):
             # At the 345-frame boundary another 1.39 GiB BTHD allocation does
             # not fit. K is dead after the sparse mainloop and dense suffix, so
