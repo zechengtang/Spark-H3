@@ -19,6 +19,11 @@ class H3AccelerationConfig:
     torch_compile: bool = True
     compile_mode: str | None = None
     compile_dynamic: bool | None = None
+    # Keep the post-2026-09 reproducibility repair enabled by default.  Setting
+    # this false restores the legacy whole-block compile path for controlled
+    # replay of historical artifacts: no deterministic Inductor option and no
+    # eager attention boundary.
+    compile_reproducibility_fix: bool = True
     compile_deterministic: bool = True
     vae_fp16: bool = False
 
@@ -63,24 +68,36 @@ class H3AccelerationPlugin:
         if blocks is None:
             raise TypeError("expected a MiniMax-H3 pipeline with transformer blocks")
 
-        # Keep Inductor's reduction choices deterministic across worker processes.
-        options = dict(torch._inductor.list_mode_options(self.config.compile_mode or "default"))
-        options["deterministic"] = self.config.compile_deterministic
+        options = None
+        if self.config.compile_reproducibility_fix:
+            # Keep Inductor's reduction choices deterministic across worker processes.
+            options = dict(torch._inductor.list_mode_options(self.config.compile_mode or "default"))
+            options["deterministic"] = self.config.compile_deterministic
         for block in blocks:
-            attention = getattr(block, "attn", None)
-            if attention is not None:
-                self._attention_forward_originals.append(
-                    (attention, attention.__dict__.get("forward", _MISSING))
-                )
-                attention.forward = torch.compiler.disable(attention.forward)
+            if self.config.compile_reproducibility_fix:
+                attention = getattr(block, "attn", None)
+                if attention is not None:
+                    self._attention_forward_originals.append(
+                        (attention, attention.__dict__.get("forward", _MISSING))
+                    )
+                    attention.forward = torch.compiler.disable(attention.forward)
             self._forward_originals.append(
                 (block, block.__dict__.get("forward", _MISSING))
             )
-            block.forward = torch.compile(
-                block.forward,
-                options=options,
-                dynamic=self.config.compile_dynamic,
-            )
+            if self.config.compile_reproducibility_fix:
+                block.forward = torch.compile(
+                    block.forward,
+                    options=options,
+                    dynamic=self.config.compile_dynamic,
+                )
+            else:
+                # Exact pre-repair API shape: compiling with ``mode`` also
+                # restores Inductor's runtime reduction autotuning behavior.
+                block.forward = torch.compile(
+                    block.forward,
+                    mode=self.config.compile_mode,
+                    dynamic=self.config.compile_dynamic,
+                )
 
     def remove(self) -> None:
         for block, original in reversed(self._forward_originals):

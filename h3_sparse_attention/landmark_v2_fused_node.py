@@ -45,7 +45,9 @@ def _fused_midpoint_directions_kernel(
     landmark = tl.arange(0, LANDMARKS)
     start = landmark * N // LANDMARKS
     length = (landmark + 1) * N // LANDMARKS - start
-    rows = tl.load(global_indices + parent.to(tl.int64) * N + start + length // 2)
+    rows = tl.load(
+        global_indices + parent.to(tl.int64) * N + start + length // 2
+    ).to(tl.int64)
     if FP8:
         center = tl.load(
             source + rows[:, None] * 128 + dims[None, :]
@@ -260,7 +262,11 @@ def _fused_node_split_kernel(
     for offset in tl.static_range(0, 1 if MIDPOINT else MAX_LEN, ROWS_PER_STEP):
         local_rows = offset + step_rows
         active = local_rows[None, :] < sample_length[:, None]
-        rows = tl.load(base + sample_start[:, None] + local_rows[None, :], mask=active, other=0)
+        rows = tl.load(
+            base + sample_start[:, None] + local_rows[None, :],
+            mask=active,
+            other=0,
+        ).to(tl.int64)
         if FP8:
             value = tl.load(source + rows[:, :, None] * 128 + dims[None, None, :],
                             mask=active[:, :, None], other=0).to(tl.float8e4nv, bitcast=True).to(tl.float32)
@@ -298,7 +304,7 @@ def _fused_node_split_kernel(
     for tile in tl.static_range(0, BLOCK_N, BLOCK_T):
         rows = tile + tl.arange(0, BLOCK_T)
         active = rows < N
-        source_rows = tl.load(base + rows, mask=active, other=0)
+        source_rows = tl.load(base + rows, mask=active, other=0).to(tl.int64)
         if FP8:
             x = tl.load(source + source_rows[:, None] * 128 + dims[None, :],
                         mask=active[:, None], other=0).to(tl.float8e4nv, bitcast=True).to(tl.float32)

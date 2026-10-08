@@ -1,6 +1,7 @@
 """Spark dependencies adapted from MiniMax-H3-Sparse; see PORT_MANIFEST.json."""
 from __future__ import annotations
 
+import os
 
 import torch
 
@@ -131,6 +132,7 @@ if triton is not None:
     ):
         group = tl.program_id(0) * BLOCK_G + tl.arange(0, BLOCK_G)
         parent = tl.program_id(1)
+        parent64 = parent.to(tl.int64)
         dims = tl.arange(0, BLOCK_D)[None, :]
         group = group[:, None]
         valid_group = group < tokens // group_size
@@ -138,7 +140,7 @@ if triton is not None:
         total = tl.zeros((BLOCK_G, BLOCK_D), dtype=tl.float32)
         group_start = group * group_size
         for offset in tl.static_range(group_size):
-            source_row = tl.load(indices + parent * tokens + group_start + offset, valid_group, 0)
+            source_row = tl.load(indices + parent * tokens + group_start + offset, valid_group, 0).to(tl.int64)
             value = tl.load(
                 source + source_row * dim + dims,
                 mask=dim_mask & valid_group,
@@ -146,7 +148,7 @@ if triton is not None:
             ).to(tl.float32)
             total += value
         tl.store(
-            output + (parent * (tokens // group_size) + group) * dim + dims,
+            output + (parent64 * (tokens // group_size) + group.to(tl.int64)) * dim + dims,
             total / group_size,
             mask=dim_mask & valid_group,
         )
@@ -166,6 +168,8 @@ if triton is not None:
 
         group = tl.program_id(0)
         parent = tl.program_id(1)
+        group64 = group.to(tl.int64)
+        parent64 = parent.to(tl.int64)
         dims = tl.arange(0, BLOCK_D)
         dim_mask = dims < dim
         coarse_total = tl.zeros((BLOCK_D,), dtype=tl.float32)
@@ -173,7 +177,7 @@ if triton is not None:
         fine_right = tl.zeros((BLOCK_D,), dtype=tl.float32)
         group_start = group * 8
         for offset in tl.static_range(8):
-            source_row = tl.load(indices + parent * tokens + group_start + offset)
+            source_row = tl.load(indices + parent * tokens + group_start + offset).to(tl.int64)
             value = tl.load(
                 source + source_row * dim + dims,
                 mask=dim_mask,
@@ -185,11 +189,11 @@ if triton is not None:
             else:
                 fine_right += value
         tl.store(
-            coarse_output + (parent * (tokens // 8) + group) * dim + dims,
+            coarse_output + (parent64 * (tokens // 8) + group64) * dim + dims,
             coarse_total / 8,
             mask=dim_mask,
         )
-        fine_base = (parent * (tokens // 4) + group * 2) * dim
+        fine_base = (parent64 * (tokens // 4) + group64 * 2) * dim
         tl.store(fine_output + fine_base + dims, fine_left / 4, mask=dim_mask)
         tl.store(
             fine_output + fine_base + dim + dims,
@@ -214,6 +218,7 @@ if triton is not None:
     ):
         landmark = tl.program_id(0)
         parent = tl.program_id(1)
+        parent64 = parent.to(tl.int64)
         dims = tl.arange(0, BLOCK_D)
         dim_mask = dims < dim
         start = landmark * groups // landmarks
@@ -228,7 +233,7 @@ if triton is not None:
             if INDIRECT:
                 source_row = tl.load(indices + parent * groups + group).to(tl.int64)
             else:
-                source_row = parent * groups + group
+                source_row = parent64 * groups + group
             if FP8:
                 # FP8 E4M3 rows stored as uint8; decode after the load.
                 value = tl.load(
@@ -244,7 +249,7 @@ if triton is not None:
                 ).to(tl.float32)
             total += value
         tl.store(
-            centers + (parent * landmarks + landmark) * dim + dims,
+            centers + (parent64 * landmarks + landmark) * dim + dims,
             total / (end - start),
             mask=dim_mask,
         )
@@ -441,6 +446,19 @@ def indexed_group_mean(
     if group_size not in (1, 2, 4, 8) or tokens % group_size:
         raise ValueError("group_size must be 1, 2, 4, or 8 and divide the token count")
     indices = global_indices.contiguous()
+    if os.environ.get("H3_LMV2_DEBUG_BOUNDS", "0") == "1":
+        # This deliberately synchronizes.  It is a diagnostic guard for
+        # distinguishing a bad recursive permutation from a Triton kernel
+        # fault; keep it disabled in production.
+        lower = int(indices.min().item())
+        upper = int(indices.max().item())
+        if lower < 0 or upper >= source.shape[0]:
+            raise RuntimeError(
+                "indexed_group_mean received out-of-range indices: "
+                f"min={lower}, max={upper}, source_rows={source.shape[0]}, "
+                f"shape={tuple(indices.shape)}, dtype={indices.dtype}, "
+                f"group_size={group_size}"
+            )
     output = torch.empty(
         (parents, tokens // group_size, dim),
         device=source.device,

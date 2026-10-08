@@ -163,6 +163,32 @@ def test_target_and_condition_video_selection_with_heterogeneous_grids():
     assert layout.permutation.tolist() == [0, 1, 3, 4, 5, 6, 2]
 
 
+def test_target_and_condition_video_selection_with_heterogeneous_condition_planes():
+    # The condition itself may concatenate multiple image/video references
+    # with different spatial grids.  Each time plane is dense even though
+    # their union is not one Cartesian grid.
+    tags = torch.tensor([0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0])
+    positions = torch.tensor([
+        [0, 0, 0], [0, 0, 1],
+        [1, 0, 0], [1, 0, 1], [1, 1, 0], [1, 1, 1],
+        [0, 0, 0],
+        [2, 0, 0], [2, 0, 1], [2, 1, 0], [2, 1, 1],
+    ])
+    layout = _packed_layout(
+        tags,
+        positions,
+        video_indices=torch.tensor([0, 1, 2, 3, 4, 5, 7, 8, 9, 10]),
+        timestep_indices=torch.tensor([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1]),
+        text_indices=torch.tensor([6]),
+        sparse_video_scope="target_and_condition",
+    )
+    assert layout.grid == (1, 1, 10)
+    assert layout.video_tokens == 10
+    assert layout.target_video_tokens == 4
+    assert layout.condition_video_tokens == 6
+    assert layout.permutation.tolist() == [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 6]
+
+
 class TinyTransformer(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -259,7 +285,16 @@ def test_prepared_compact_indices_preserve_exact_permutation():
 def test_sol_sm80_native_backend(monkeypatch):
     import sol_attn.interface as interface
     monkeypatch.setattr(interface, "_cute_runtime_available", lambda: False)
-    assert interface.get_sol_attn_backend("cuda") == "triton_sm80"
+    # Backend selection for SM80 should not depend on the architecture of the
+    # GPU that happens to run this test.  Also verify the runtime selection for
+    # the current device with CuTe disabled.
+    assert interface._backend_for_arch(
+        (8, 0), cute_available=False
+    ) == "triton_sm80"
+    capability = tuple(torch.cuda.get_device_capability())
+    assert interface.get_sol_attn_backend("cuda") == interface._backend_for_arch(
+        capability, cute_available=False
+    )
     q, k, v = [torch.randn(1, 137, 1, 128, device="cuda", dtype=torch.bfloat16)
                for _ in range(3)]
     output = interface.sol_attn(q, k, v, sink_start=0, sink_tokens=137,

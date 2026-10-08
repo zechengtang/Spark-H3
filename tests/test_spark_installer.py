@@ -113,7 +113,7 @@ def test_paired_headwise_permutation_matches_two_independent_launches():
     torch.testing.assert_close(reused_anchor, expected_anchor, rtol=0, atol=0)
 
 
-def test_long_sequence_low_memory_reblock_is_sm80_only(monkeypatch):
+def test_long_sequence_low_memory_reblock_supports_sm80_and_sm120(monkeypatch):
     from types import SimpleNamespace
     from h3_sparse_attention.spark_integration import _sm80_low_memory_reblock
 
@@ -121,6 +121,8 @@ def test_long_sequence_low_memory_reblock_is_sm80_only(monkeypatch):
     monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (8, 0))
     assert _sm80_low_memory_reblock(fake)
     monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (12, 0))
+    assert _sm80_low_memory_reblock(fake)
+    monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (9, 0))
     assert not _sm80_low_memory_reblock(fake)
     fake.shape = (1, 90_000, 1, 128)
     monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (8, 0))

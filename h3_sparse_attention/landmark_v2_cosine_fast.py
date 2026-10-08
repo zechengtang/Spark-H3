@@ -51,19 +51,23 @@ def _fp16x3_dot(a, b):
 def _score(X, DIR, OUT, INDICES, N:tl.constexpr, S:tl.constexpr, BM:tl.constexpr,
            MODE:tl.constexpr, INDIRECT:tl.constexpr, FP8:tl.constexpr):
     b=tl.program_id(1)
+    b64=b.to(tl.int64)
     rows=tl.program_id(0)*BM+tl.arange(0,BM)
     k=tl.arange(0,128)
     cols=tl.arange(0,32 if S > 16 else 16)
     if INDIRECT:
         source_rows=tl.load(INDICES+b*N+rows,rows<N,0).to(tl.int64)
     else:
-        source_rows=b*N+rows
+        # The 2x SelfLift feature table can exceed INT32_MAX elements even
+        # though its row indices fit in int32.  Promote before multiplying by
+        # the 128-wide row stride or the pointer offset wraps around.
+        source_rows=(b64*N+rows.to(tl.int64))
     if FP8:
         # FP8 E4M3 rows stored as uint8; decode after the load.
         x=tl.load(X+source_rows[:,None]*128+k[None,:],rows[:,None]<N,0).to(tl.float8e4nv,bitcast=True).to(tl.float32)
     else:
         x=tl.load(X+source_rows[:,None]*128+k[None,:],rows[:,None]<N,0).to(tl.float32)
-    d=tl.load(DIR+b*S*128+cols[:,None]*128+k[None,:],cols[:,None]<S,0).to(tl.float32)
+    d=tl.load(DIR+b64*S*128+cols[:,None]*128+k[None,:],cols[:,None]<S,0).to(tl.float32)
     norm=tl.maximum(libdevice.sqrt_rn(tl.sum(x*x,axis=1)),1.e-12)
     if MODE == 'fp16':
         # Normalize in FP32 before narrowing: raw BF16 features can exceed
@@ -80,7 +84,7 @@ def _score(X, DIR, OUT, INDICES, N:tl.constexpr, S:tl.constexpr, BM:tl.constexpr
     else:
         dot=tl.dot(x,tl.trans(d),input_precision='tf32x3')
     scores=dot if MODE == 'fp16' or MODE == 'fp16x3' else dot/norm[:,None]
-    tl.store(OUT+b*N*S+rows[:,None]*S+cols[None,:],scores,(rows[:,None]<N)&(cols[None,:]<S))
+    tl.store(OUT+b64*N*S+rows[:,None].to(tl.int64)*S+cols[None,:],scores,(rows[:,None]<N)&(cols[None,:]<S))
 
 
 def fused_cosine_scores(samples,directions,mode='tf32x3',block_m=64):

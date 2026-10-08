@@ -468,6 +468,21 @@ def _packed_layout(
         )
         return positions, shape, order, is_dense
 
+    def heterogeneous_time_plane_order(indices):
+        """Raster-order a composite whose time planes may use different grids."""
+        positions = position_ids.index_select(0, indices)
+        ordered_indices = []
+        ordered_positions = []
+        for time_value in positions[:, 0].unique(sorted=True):
+            plane_mask = positions[:, 0] == time_value
+            plane = indices.index_select(0, torch.nonzero(plane_mask, as_tuple=False).flatten())
+            plane_pos, plane_grid, plane_order, plane_dense = dense_grid_order(plane)
+            if not plane_dense or plane_grid[0] != 1:
+                return positions, indices, False
+            ordered_indices.append(plane.index_select(0, plane_order))
+            ordered_positions.append(plane_pos.index_select(0, plane_order))
+        return positions, torch.cat(ordered_indices), True
+
     pos, grid, order, is_dense = dense_grid_order(video)
     if is_dense:
         ordered_video = video.index_select(0, order)
@@ -482,6 +497,12 @@ def _packed_layout(
         segment_positions = []
         for name, segment in (("condition", condition_video), ("target", target_video)):
             segment_pos, segment_grid, segment_order, segment_dense = dense_grid_order(segment)
+            if not segment_dense and name == "condition":
+                segment_pos, ordered_segment, segment_dense = heterogeneous_time_plane_order(segment)
+                if segment_dense:
+                    segment_indices.append(ordered_segment)
+                    segment_positions.append(position_ids.index_select(0, ordered_segment))
+                    continue
             if not segment_dense:
                 raise ValueError(
                     f"{name} video tokens do not form a dense grid: "
@@ -648,6 +669,22 @@ class _H3SparseProcessor:
         self.controller.counts[f"dense:{reason}"] += 1
         return self.original(attn, hidden_states, rotary_emb, attention_mask)
 
+    @staticmethod
+    def _apply_rotary_low_memory(hidden_states, rotary_emb, chunk_rows=32_768):
+        """Apply the official rotary function in sequence chunks, reusing Q/K storage."""
+        from diffusers.models.transformers.transformer_minimax_h3 import _apply_rotary_emb
+
+        if hidden_states.shape[1] <= chunk_rows:
+            return _apply_rotary_emb(hidden_states, *rotary_emb)
+        cos, sin = rotary_emb
+        for start in range(0, hidden_states.shape[1], chunk_rows):
+            end = min(start + chunk_rows, hidden_states.shape[1])
+            rotated = _apply_rotary_emb(
+                hidden_states[:, start:end], cos[start:end], sin[start:end]
+            )
+            hidden_states[:, start:end].copy_(rotated)
+        return hidden_states
+
     def __call__(self, attn, hidden_states, rotary_emb=None, attention_mask=None):
         controller = self.controller
         layout = controller.layout
@@ -691,6 +728,7 @@ class _H3SparseProcessor:
 
         from diffusers.models.transformers.transformer_minimax_h3 import _apply_rotary_emb
 
+        projections_preprocessed = False
         if attn.fused_projections:
             query, key, value = attn.to_qkv(hidden_states).chunk(3, dim=-1)
         else:
@@ -702,27 +740,44 @@ class _H3SparseProcessor:
             if shared_qkv is not None:
                 query, key, value = shared_qkv
             else:
-                query, key, value = (
-                    attn.to_q(hidden_states),
-                    attn.to_k(hidden_states),
-                    attn.to_v(hidden_states),
+                # At 2x SelfLift resolution each full Q/K/V projection is
+                # several GiB.  Materialize and preprocess them sequentially
+                # so Q rotary does not transiently coexist with raw K and V.
+                # This preserves the exact projection/norm/rotary operations;
+                # only tensor lifetime changes.
+                query = attn.norm_q(
+                    attn.to_q(hidden_states).unflatten(-1, (attn.heads, -1))
                 )
-        query = attn.norm_q(query.unflatten(-1, (attn.heads, -1)))
-        key = attn.norm_k(key.unflatten(-1, (attn.heads, -1)))
-        value = value.unflatten(-1, (attn.heads, -1))
-        if rotary_emb is not None:
-            query = _apply_rotary_emb(query, *rotary_emb)
-            key = _apply_rotary_emb(key, *rotary_emb)
+                if rotary_emb is not None:
+                    query = self._apply_rotary_low_memory(query, rotary_emb)
+                key = attn.norm_k(
+                    attn.to_k(hidden_states).unflatten(-1, (attn.heads, -1))
+                )
+                if rotary_emb is not None:
+                    key = self._apply_rotary_low_memory(key, rotary_emb)
+                value = attn.to_v(hidden_states).unflatten(-1, (attn.heads, -1))
+                projections_preprocessed = True
+        if not projections_preprocessed:
+            query = attn.norm_q(query.unflatten(-1, (attn.heads, -1)))
+            key = attn.norm_k(key.unflatten(-1, (attn.heads, -1)))
+            value = value.unflatten(-1, (attn.heads, -1))
+            if rotary_emb is not None:
+                query = _apply_rotary_emb(query, *rotary_emb)
+                key = _apply_rotary_emb(key, *rotary_emb)
         query_dtype = query.dtype
 
         permutation = layout.permutation
-        packed_q, packed_k, packed_v = (
-            tensor.index_select(1, permutation) for tensor in (query, key, value)
-        )
-        # The packed tensors own their storage.  Keeping the producer-order
-        # projections alive across reblocking and sparse attention costs three
-        # full BTHD buffers (about 4 GiB at 345-frame/768p) for no benefit.
-        del query, key, value
+        # Reblock one projection at a time and release its producer-order
+        # storage immediately.  A tuple comprehension keeps all three source
+        # projections alive until all three packed copies exist; at SelfLift
+        # 2x resolution that transiently adds more than 10 GiB for no numeric
+        # benefit and can exhaust even a 96 GiB device.
+        packed_q = query.index_select(1, permutation)
+        del query
+        packed_k = key.index_select(1, permutation)
+        del key
+        packed_v = value.index_select(1, permutation)
+        del value
         from .spark_integration import _sm80_low_memory_reblock
         native_bthd = (
             controller.config.sol_landmark_preprocess

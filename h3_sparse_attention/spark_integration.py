@@ -445,10 +445,14 @@ def _landmark_tree_v2_combined_permutations(
         .reshape(flat_batch, video_tokens, dim)
     )
     layout_reuse = controller.config.landmark_tree_v2_layout_reuse
+    device_capability = (
+        tuple(torch.cuda.get_device_capability(query.device))
+        if query.is_cuda else None
+    )
     eager_low_memory = bool(
         query.is_cuda
         and video_tokens > 90_000
-        and tuple(torch.cuda.get_device_capability(query.device)) == (8, 0)
+        and device_capability in ((8, 0), (12, 0))
     )
     required_m2_side = _required_reblock_m2_side(
         controller.config.landmark_tree_v2_m2_side, layout_reuse
@@ -536,7 +540,7 @@ def _landmark_tree_v2_combined_permutations(
             grid_shape=layout.grid,
             initial_order=controller.config.landmark_tree_v2_initial_order,
             device=query.device,
-            compact_indices=tuple(torch.cuda.get_device_capability(query.device)) == (8, 0),
+            compact_indices=device_capability in ((8, 0), (12, 0)),
         )
         controller.rope_sol_key_clustering_static[plan_key] = plan
     # This eager fallback is designed and validated for A800 80GB long-sequence
@@ -865,16 +869,17 @@ def spark_attention(
 
 
 def _sm80_low_memory_reblock(tensor: torch.Tensor) -> bool:
-    """Select the long-sequence storage-reuse path used by A800 80GB.
+    """Select the long-sequence storage-reuse path used by A800 and Blackwell.
 
-    This heuristic was designed and validated specifically for A800 80GB. The
-    SM80 capability check preserves the current deployment behavior, but must
-    not be taken as validation for every SM80 GPU or memory capacity.
+    The path was originally introduced for A800 80GB.  Its operations are
+    architecture-independent packed-BTHD gathers/storage reuse, and SM120
+    needs the same lifetime discipline for 2x SelfLift sequences.  Keep the
+    allow-list narrow rather than changing behavior on untested devices.
     """
     return bool(
         tensor.is_cuda
         and tensor.shape[1] > 90_000
-        and tuple(torch.cuda.get_device_capability(tensor.device)) == (8, 0)
+        and tuple(torch.cuda.get_device_capability(tensor.device)) in ((8, 0), (12, 0))
     )
 
 

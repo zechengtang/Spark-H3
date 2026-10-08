@@ -21,18 +21,39 @@ def test_sol_layout_roundtrip_exact(monkeypatch,fused,context,reblock):
     package=types.ModuleType('sol_attn');package.sol_attn=fake_sol;package.get_sol_attn_backend=lambda device:'test'
     monkeypatch.setitem(sys.modules,'sol_attn',package)
     if reblock:
-        qp=torch.stack([torch.randperm(128) for _ in range(heads)])[None]
-        kp=torch.stack([torch.randperm(128) for _ in range(heads)])[None]
-        monkeypatch.setattr(__import__('h3_sparse_attention.spark_integration',fromlist=['_landmark_tree_v2_qk_block_permutations']),'_landmark_tree_v2_qk_block_permutations',lambda *a:(qp,qp.argsort(-1),kp,kp.argsort(-1),{},{}))
+        # Reblock dispatches through the CUDA-only Spark boundary.  This is a
+        # processor layout test, so replace that boundary while retaining its
+        # BTHD input/output contract; GPU kernel behavior is covered separately
+        # by the Spark integration tests.
+        integration=__import__(
+            'h3_sparse_attention.spark_integration',
+            fromlist=['spark_attention_bthd'],
+        )
+        def fake_spark_attention_bthd(
+            controller, q, k, v, layout, layer, *, return_bthd=True
+        ):
+            assert q.is_contiguous() and k.is_contiguous() and v.is_contiguous()
+            output=q*.25+k*.5+v
+            return output if return_bthd else output.permute(0,2,1,3).contiguous()
+        monkeypatch.setattr(
+            integration, 'spark_attention_bthd', fake_spark_attention_bthd
+        )
     linear=lambda size:nn.Linear(hidden,size,bias=False,dtype=torch.bfloat16)
     attn=types.SimpleNamespace(heads=heads,fused_projections=fused,to_qkv=linear(3*hidden),to_q=linear(hidden),to_k=linear(hidden),to_v=linear(hidden),norm_q=nn.Identity(),norm_k=nn.Identity(),to_out=[linear(hidden),nn.Identity()])
     processor=proc._H3SparseProcessor(0,None,controller)
     x=torch.randn(1,n,hidden,dtype=torch.bfloat16)
     native_attention = proc._sol_attention
-    def checked_attention(controller, q, k, v, layout, layer, *, return_bthd=False):
+    def checked_attention(
+        controller, q, k, v, layout, layer, *, return_bthd=False,
+        inputs_bthd=False,
+    ):
         assert return_bthd
+        assert not inputs_bthd
         assert all(t.permute(0,2,1,3).is_contiguous() for t in (q,k,v))
-        return native_attention(controller,q,k,v,layout,layer,return_bthd=True)
+        return native_attention(
+            controller, q, k, v, layout, layer,
+            return_bthd=True, inputs_bthd=inputs_bthd,
+        )
     with torch.no_grad():
         query,key,value = attn.to_qkv(x).chunk(3,-1) if fused else (attn.to_q(x),attn.to_k(x),attn.to_v(x))
         q,k,v = [t.unflatten(-1,(heads,-1)).index_select(1,perm).permute(0,2,1,3).contiguous()
