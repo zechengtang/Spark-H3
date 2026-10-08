@@ -20,10 +20,32 @@ dense. It does not replace each attention module's `forward` method.
 
 ## Install
 
-See the dedicated [ComfyUI installation and workflow guide](comfyui/README.md).
-The installer builds the patched comfy-kitchen Spark CUDA backend alongside
-the custom node. Restart ComfyUI afterward; the node appears as **MiniMax H3
-Spark Attention (SM120)** in `model_patches/attention`.
+The recommended release artifact is the standalone
+`ComfyUI-Spark-H3-<version>.zip`. It contains only the custom node, its reblock
+runtime, workflows, and compatible backend wheels—not this repository's model
+or research assets. Extract it below `custom_nodes` and run its installer with
+the same Python interpreter that starts ComfyUI:
+
+```bash
+cd /path/to/ComfyUI/custom_nodes
+unzip /path/to/ComfyUI-Spark-H3-<version>.zip
+/path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
+```
+
+The cross-platform installer first accepts an existing compatible backend,
+then selects a bundled or pinned-release wheel. It falls back to building the
+pinned, patched `comfy-kitchen` source only when no wheel matches. Source builds
+require Git, CMake, Ninja, a C++ compiler, and CUDA `nvcc`.
+
+The currently validated prebuilt wheel is Linux x86_64 with Python 3.12+ and
+SM120. Python 3.10/3.11 requires its own wheel or source compilation. Windows
+packaging is prepared, but the Windows wheel and SM120 runtime have not yet been
+validated. Non-SM120 GPUs can test node loading and dense fallback only.
+
+Restart ComfyUI afterward; the node appears as **MiniMax H3 Spark Attention
+(SM120)** in `model_patches/attention`. See the dedicated
+[ComfyUI installation and workflow guide](comfyui/README.md) for model files and
+examples.
 
 ## Workflow
 
@@ -99,6 +121,10 @@ minimum-token and dense-layer gating use the same
 policy object as ComfyUI's official sparse node.
 The public Spark node uses the full reweight path and a dense video tail;
 research ablation and tail-mode controls are not exposed in the node UI.
+The default `reblock_layout=q_reuse_k` builds the K-side landmark layout once
+and aliases that permutation for Q, matching Spark's `q_from_k` mode while
+avoiding the query-side M2 transform, tree plan, and duplicate index storage.
+Select `independent` to reproduce the former separately planned Q/K layouts.
 The default `topk_mode=topk_ratio` selects a fraction of the target video's
 64-token key blocks with `topk_ratio` (default 0.2). Set
 `topk_mode=topk_blocks` to request a fixed number with `topk_blocks` (default

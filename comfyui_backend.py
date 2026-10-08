@@ -47,13 +47,14 @@ class ComfySparkConfig:
     landmark_tree_v2_root_fanout: int | None = None
     landmark_tree_v2_landmark_mode: str = "midpoint"
     landmark_tree_v2_landmark_count: int = 32
-    landmark_tree_v2_midpoint_direction_mode: str = "fused"
+    landmark_tree_v2_midpoint_direction_mode: str = "legacy"
     landmark_tree_v2_aggregation: str = "linear"
     landmark_tree_v2_distance: str = "cosine"
     landmark_tree_v2_mean_mode: str = "raw"
     landmark_tree_v2_moment_mode: str = "raw"
     landmark_tree_v2_order_mode: str = "parent_order"
     landmark_tree_v2_group_size: int | tuple[int, ...] = 1
+    landmark_tree_v2_layout_reuse: str = "q_from_k"
     rope_sol_key_ridge_epsilon: float = 1e-3
 
     def __post_init__(self) -> None:
@@ -73,6 +74,10 @@ class ComfySparkConfig:
             raise ValueError("global_anchor_dtype must be 'float32' or 'bfloat16'")
         if self.landmark_tree_v2_midpoint_direction_mode not in ("legacy", "fused"):
             raise ValueError("landmark_tree_v2_midpoint_direction_mode must be 'legacy' or 'fused'")
+        if self.landmark_tree_v2_layout_reuse not in ("independent", "q_from_k"):
+            raise ValueError(
+                "landmark_tree_v2_layout_reuse must be 'independent' or 'q_from_k'"
+            )
         if self.force_local_blocks is not None and type(self.force_local_blocks) is not bool:
             raise ValueError("force_local_blocks must be bool or None")
 

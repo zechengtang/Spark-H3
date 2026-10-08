@@ -4,16 +4,49 @@
 
 ## 安装
 
-先按 [ComfyUI 官方说明](https://docs.comfy.org/installation/manual_install)安装支持 MiniMax-H3 的版本（0.30.0 或更新版本），并准备 CUDA 12.8 或更新版本的 `nvcc`。使用**启动 ComfyUI 的同一个 Python**运行安装脚本：
+先按 [ComfyUI 官方说明](https://docs.comfy.org/installation/manual_install)安装支持 MiniMax-H3 的版本（0.30.0 或更新版本）。正式 Release 提供该资产后，推荐下载独立的
+`ComfyUI-Spark-H3-<version>.zip`。该包仅包含节点、reblock 运行时代码、示例
+workflow 和匹配的 kernel wheel，不包含模型权重或主仓库中的研究资料。
+
+将 ZIP 直接解压到 `ComfyUI/custom_nodes`，再用**启动 ComfyUI 的同一个
+Python**运行安装器：
+
+```bash
+cd /path/to/ComfyUI/custom_nodes
+unzip /path/to/ComfyUI-Spark-H3-<version>.zip
+/path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
+```
+
+安装器优先使用已经安装的 Spark 后端、包内 wheel 或固定 GitHub Release
+中的兼容 wheel；只有找不到 wheel 时才会拉取固定版本的
+`comfy-kitchen 0.2.36`、应用 Spark patch 并源码编译。源码回退需要 Git、
+CMake、Ninja、C++ 编译器和 CUDA 12.8 或更新版本的 `nvcc`。安装后重启
+ComfyUI；如果 Python 不在示例路径，请换成实际路径。
+
+当前已验证的预编译配置为 Linux x86_64、Python 3.12+ 和 NVIDIA SM120。
+Python 3.10/3.11 需要对应 wheel，否则会进入源码编译。Windows 打包路径已
+准备好，但 Windows wheel 和 SM120 运行仍待单独验证。非 SM120 显卡只能
+测试节点加载和 dense fallback，不能验证 Spark kernel。
+
+如果暂时没有 Release ZIP，也可以直接克隆当前仓库；这种方式功能相同，但
+会下载主仓库中的其他内容：
 
 ```bash
 cd /path/to/ComfyUI/custom_nodes
 git clone https://github.com/zechengtang/Spark-H3.git
-cd Spark-H3
-bash comfyui/install.sh /path/to/ComfyUI/.venv/bin/python
+/path/to/ComfyUI/.venv/bin/python Spark-H3/comfyui/install.py
 ```
 
-脚本会安装节点依赖，并为 ComfyUI 使用的 `comfy-kitchen 0.2.36` 编译 Spark 扩展。安装后重启 ComfyUI。首次安装需要联网和编译；如果你的 Python 不在示例路径，请换成实际路径。
+维护者可以从当前主仓库生成一个不包含模型权重和研究资料的独立节点包：
+
+```bash
+python tools/build_comfyui_package.py \
+  --publisher-id YOUR_COMFY_REGISTRY_PUBLISHER_ID
+```
+
+输出位于 `dist/comfyui/ComfyUI-Spark-H3`，同时生成可直接解压到
+`custom_nodes` 的 ZIP。发布正式版本前，可用 `comfyui/kernel_builder.py`
+构建 SM120 backend wheel，并通过 `--kernel-wheel` 将其装入离线安装包。
 
 ## 模型与工作流
 

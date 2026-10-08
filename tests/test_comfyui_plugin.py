@@ -120,16 +120,25 @@ def test_spark_ablation_modes_are_orthogonal():
     assert list(MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]).index("topk_mode") < list(MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]).index("topk_ratio") < list(MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]).index("topk_blocks")
     assert "topk_blocks" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["required"]
     assert full.config.landmark_tree_v2_group_size == 1
+    assert full.config.landmark_tree_v2_layout_reuse == "q_from_k"
+    independent = _RunState.create(
+        20, 0.2, 0.1, reblock_layout="independent"
+    ).controller
+    assert independent.config.landmark_tree_v2_layout_reuse == "independent"
     assert optimized.config.landmark_tree_v2_group_size == (8, 4, 1)
     assert reuse.reblock_reuse_layers == 2
     assert reuse.config.landmark_tree_v2_group_size == 1
     assert full.config.video_tail_mode == "dense"
-    assert full.config.landmark_tree_v2_midpoint_direction_mode == "fused"
+    assert full.config.landmark_tree_v2_midpoint_direction_mode == "legacy"
     assert "midpoint_direction_mode" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
     assert "midpoint_direction_mode" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
     assert full.config.global_anchor_dtype == "float32"
     assert "global_anchor_dtype" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
     assert "global_anchor_dtype" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
+    reblock_layout = MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]["reblock_layout"]
+    assert reblock_layout[0] == ["q_reuse_k", "independent"]
+    assert reblock_layout[1]["default"] == "q_reuse_k"
+    assert "reblock_layout" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
     fused_midpoint = _RunState.create(20, 0.2, 0.1, midpoint_direction_mode="fused")
     assert fused_midpoint.controller.config.landmark_tree_v2_midpoint_direction_mode == "fused"
     with pytest.raises(ValueError, match="midpoint_direction_mode"):
@@ -141,6 +150,8 @@ def test_spark_ablation_modes_are_orthogonal():
         _RunState.create(20, 0.2, 0.1, topk_mode="invalid")
     with pytest.raises(ValueError, match="topk_blocks"):
         _RunState.create(20, 0.2, 0.1, topk_blocks=0)
+    with pytest.raises(ValueError, match="reblock_layout"):
+        _RunState.create(20, 0.2, 0.1, reblock_layout="invalid")
 
 
 def test_comfy_video_tail_rejects_unimplemented_pad():
@@ -174,7 +185,92 @@ def test_spark_local_exact_override_validation():
     assert ComfySparkConfig(force_local_blocks=False).force_local_blocks is False
     with pytest.raises(ValueError, match="force_local_blocks"):
         ComfySparkConfig(force_local_blocks=1)
+    with pytest.raises(ValueError, match="layout_reuse"):
+        ComfySparkConfig(landmark_tree_v2_layout_reuse="k_from_q")
     assert "tail_granularity" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@pytest.mark.parametrize("group_size", [1, (8, 4, 1)])
+def test_comfy_q_reuse_k_aliases_independent_key_layout_bitwise(
+    group_size, monkeypatch
+):
+    import comfyui_reblock_plan
+    from comfyui_backend import (
+        ComfyPackedLayout,
+        ComfySparkConfig,
+        ComfySparkController,
+        comfy_kitchen_spark_attention,
+    )
+    from comfyui_reblock_plan import build_comfy_reblock_permutations
+
+    device = torch.device("cuda")
+    video_tokens = 2048
+    tokens = video_tokens + 64
+    heads = 2
+    ids = torch.arange(tokens, device=device)
+    layout = ComfyPackedLayout(
+        permutation=ids,
+        inverse_permutation=ids.clone(),
+        grid=(1, 32, 64),
+        video_tokens=video_tokens,
+        sequence_length=tokens,
+        video_positions=torch.zeros(video_tokens, 3, device=device),
+    )
+    generator = torch.Generator(device=device).manual_seed(20261008)
+    query = torch.randn(
+        1, tokens, heads, 128,
+        generator=generator, device=device, dtype=torch.bfloat16,
+    )
+    key = torch.randn(
+        query.shape,
+        generator=generator, device=device, dtype=torch.bfloat16,
+    )
+    value = torch.randn(
+        query.shape,
+        generator=generator, device=device, dtype=torch.bfloat16,
+    )
+    independent_controller = ComfySparkController(ComfySparkConfig(
+        landmark_tree_v2_layout_reuse="independent",
+        landmark_tree_v2_group_size=group_size,
+    ))
+    shared_controller = ComfySparkController(ComfySparkConfig(
+        landmark_tree_v2_layout_reuse="q_from_k",
+        landmark_tree_v2_group_size=group_size,
+    ))
+    # Three calls cover initial graph capture and subsequent graph replay.
+    for _ in range(3):
+        independent = build_comfy_reblock_permutations(
+            independent_controller, query, key, layout
+        )
+        shared = build_comfy_reblock_permutations(
+            shared_controller, query, key, layout
+        )
+
+        assert torch.equal(shared[0], independent[2])
+        assert torch.equal(shared[2], independent[2])
+        assert shared[0].data_ptr() == shared[2].data_ptr()
+        assert shared[1] is None
+
+    expected_layout = (independent[2], None, independent[2], None)
+    monkeypatch.setattr(
+        comfyui_reblock_plan,
+        "build_comfy_reblock_permutations",
+        lambda *_args, **_kwargs: expected_layout,
+    )
+    expected = comfy_kitchen_spark_attention(
+        independent_controller, query, key, value, layout, layer=1
+    )
+    reused_layout = (shared[0], None, shared[2], None)
+    monkeypatch.setattr(
+        comfyui_reblock_plan,
+        "build_comfy_reblock_permutations",
+        lambda *_args, **_kwargs: reused_layout,
+    )
+    actual = comfy_kitchen_spark_attention(
+        shared_controller, query, key, value, layout, layer=1
+    )
+    assert torch.equal(actual, expected)
 
 
 @pytest.mark.parametrize("video_tokens,total_tokens,topk_mode,topk_blocks,expected_ratio", [

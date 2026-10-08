@@ -17,6 +17,7 @@
 <p>
   <a href="#demo">🎬 Demo</a> &nbsp;·&nbsp;
   <a href="#quick-start">🚀 Quick Start</a> &nbsp;·&nbsp;
+  <a href="#comfyui-installation">🧩 ComfyUI</a> &nbsp;·&nbsp;
   <a href="https://zechengtang.github.io/Spark-H3/">📖 Technical Blog</a> &nbsp;·&nbsp;
   <a href="#project-status">🧭 Project Status</a>
 </p>
@@ -78,6 +79,52 @@ with install_h3_spark_attn(
     result = pipe(**inputs, num_inference_steps=num_inference_steps)
 ```
 
+<a id="comfyui-installation"></a>
+
+### ComfyUI standalone installation
+
+The ComfyUI integration can be distributed as a small standalone custom-node
+ZIP instead of cloning this complete research repository. A release bundle
+contains the node, its reblock runtime, example workflows, and—when available—a
+matching Spark-enabled `comfy-kitchen` wheel. It does not contain model weights.
+
+For tagged releases that include the artifact, download
+`ComfyUI-Spark-H3-<version>.zip` from the release assets, then extract it
+directly under `ComfyUI/custom_nodes`:
+
+```bash
+cd /path/to/ComfyUI/custom_nodes
+unzip /path/to/ComfyUI-Spark-H3-<version>.zip
+
+# Always use the same Python interpreter that starts ComfyUI.
+/path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
+```
+
+The installer checks for an existing compatible backend, then tries a bundled
+wheel and the pinned release wheel. Only when none matches does it clone the
+pinned `comfy-kitchen` source, apply the bundled Spark patch, and compile it.
+Source fallback requires Git, CMake, Ninja, a C++ compiler, and CUDA `nvcc`.
+
+The currently validated prebuilt configuration is Linux x86_64, Python 3.12+
+and an NVIDIA SM120 GPU. Python 3.10/3.11 needs a matching wheel or the source
+fallback. Windows packaging is prepared but a Windows wheel and SM120 runtime
+still require separate validation. The Spark node itself executes only on
+SM120; `strict=false` on another GPU tests dense fallback, not Spark.
+
+After restarting ComfyUI, add **MiniMax H3 Spark Attention (SM120)** between the
+native MiniMax-H3 model loader and `BasicGuider`. See the
+[ComfyUI guide](comfyui/README.md) for model placement, workflows, and node
+parameters.
+
+Maintainers can assemble the standalone directory and deterministic ZIP from a
+source checkout:
+
+```bash
+python tools/build_comfyui_package.py \
+  --publisher-id YOUR_COMFY_REGISTRY_PUBLISHER_ID \
+  --kernel-wheel /path/to/comfy_kitchen-0.2.36+spark.h3.1-*.whl
+```
+
 ### Step-count convention
 
 `MiniMaxH3Scheduler` includes the final `σ=0` endpoint in
@@ -110,7 +157,7 @@ requirements, defaults, and options. -->
 | Status | Item | Resources |
 |---|---|---|
 | ✅ Available | Fused Spark kernels for SM80 and SM120 | [Kernel documentation](h3_sparse_attention/README.md) · [Performance matrix](docs/kernel_performance_matrix.md) |
-| ✅ Available | ComfyUI preview implementation based on `comfy-kitchen` | [ComfyUI guide](comfyui/README.md) |
+| ✅ Available | Standalone ComfyUI node packaging with wheel-first installation and source fallback | [ComfyUI guide](comfyui/README.md) |
 | ✅ Available | Release Ref2VA inference examples | [Spark-Ref2VA Preview](docs/blogs/spark-attn/README.md#spark-ref2va-preview) |
 | 🚧 In progress | Test and validate the ComfyUI implementation on NVIDIA GeForce RTX 50 series | — |
 | 🗓️ Planned | Standalone stable ComfyUI implementation without a `comfy-kitchen` dependency | — |

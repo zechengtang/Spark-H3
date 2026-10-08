@@ -113,11 +113,12 @@ class _RunState:
         video_tail_mode: str = "dense",
         global_anchor_dtype: str = "float32",
         tail_granularity: str = "query",
-        midpoint_direction_mode: str = "fused",
+        midpoint_direction_mode: str = "legacy",
         topk_mode: str = "topk_ratio",
         topk_blocks: int = 228,
         warmup_mode: str = "warmup_ratio",
         warmup_steps: int = 4,
+        reblock_layout: str = "q_reuse_k",
     ):
         if warmup_mode not in ("warmup_ratio", "warmup_steps"):
             raise ValueError("warmup_mode must be 'warmup_ratio' or 'warmup_steps'")
@@ -125,8 +126,17 @@ class _RunState:
             raise ValueError("warmup_ratio must lie in [0, 1]")
         if type(warmup_steps) is not int or warmup_steps < 0:
             raise ValueError("warmup_steps must be a nonnegative integer")
-        # Spark's public factory models the Diffusers pipeline's N-1 evaluations.
-        # ComfyUI executes one model evaluation per sampler step, hence steps + 1.
+        layout_reuse = {
+            "q_reuse_k": "q_from_k",
+            "q_from_k": "q_from_k",
+            "independent": "independent",
+        }.get(reblock_layout)
+        if layout_reuse is None:
+            raise ValueError(
+                "reblock_layout must be 'q_reuse_k' or 'independent'"
+            )
+        # ComfyUI's steps and the Diffusers installer's num_denoise_steps both
+        # count actual model evaluations, so warmup uses this value directly.
         common = dict(
             topk_ratio=topk_ratio,
             topk_mode=topk_mode,
@@ -135,6 +145,7 @@ class _RunState:
             global_anchor_dtype=global_anchor_dtype,
             tail_granularity=tail_granularity,
             landmark_tree_v2_midpoint_direction_mode=midpoint_direction_mode,
+            landmark_tree_v2_layout_reuse=layout_reuse,
         )
         if ablation_mode == "full":
             config = ComfySparkConfig(**common)
@@ -560,6 +571,9 @@ class MiniMaxH3SparkAttentionSM120:
                 "tail_granularity": (["query", "block"],
                                      {"default": "query",
                                       "tooltip": "近似分支的 Q 粒度：query（默认）对应 sol-engine Sol，只下采样 K/V、保留逐条真实 Q；block 对应 ComfyUI Sol，Q 和 K/V 都按块下采样，同一 Q 块共享近似结果。精确分支仍使用真实 Q。"}),
+                "reblock_layout": (["q_reuse_k", "independent"],
+                                   {"default": "q_reuse_k",
+                                    "tooltip": "reblock 布局：q_reuse_k 只构造 K 侧布局并让 Q 复用，减少 M2、树构建和索引开销；independent 分别构造 Q/K 布局，用于兼容旧结果。"}),
             },
         }
 
@@ -592,7 +606,8 @@ class MiniMaxH3SparkAttentionSM120:
         warmup_mode="warmup_ratio",
         warmup_steps=4,
         global_anchor_dtype="float32",
-        midpoint_direction_mode="fused",
+        midpoint_direction_mode="legacy",
+        reblock_layout="q_reuse_k",
     ):
         if not enabled:
             return (model,)
@@ -616,6 +631,7 @@ class MiniMaxH3SparkAttentionSM120:
             topk_blocks=int(topk_blocks),
             warmup_mode=str(warmup_mode),
             warmup_steps=int(warmup_steps),
+            reblock_layout=str(reblock_layout),
         )
         model_sampling = model.get_model_object("model_sampling")
         policy = SparseAttnPatch(
@@ -661,13 +677,14 @@ class MiniMaxH3SparkAttentionSM120:
         )
         log.info(
             "[Spark-H3] installed ComfyUI-native producer on %d H3 blocks "
-            "(mode %s, tail %s, anchor %s, approximation %s, midpoint %s, Top-K %s, warmup %s, dense blocks %s)",
+            "(mode %s, tail %s, anchor %s, approximation %s, midpoint %s, reblock %s, Top-K %s, warmup %s, dense blocks %s)",
             len(blocks),
             str(ablation_mode),
             str(video_tail_mode),
             state.controller.config.global_anchor_dtype,
             str(tail_granularity),
             state.controller.config.landmark_tree_v2_midpoint_direction_mode,
+            state.controller.config.landmark_tree_v2_layout_reuse,
             (f"{int(topk_blocks)} blocks" if topk_mode == "topk_blocks"
              else f"{100.0 * float(topk_ratio):.0f}%"),
             (f"{state.warmup_evaluations} steps" if warmup_mode == "warmup_steps"
@@ -690,6 +707,7 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
         required.pop("warmup_mode")
         required.pop("warmup_steps")
         inputs["optional"].pop("tail_granularity")
+        inputs["optional"].pop("reblock_layout")
         required["tau"] = (
             "FLOAT",
             {"default": 1.0, "min": 0.0, "max": 4.0, "step": 0.05},

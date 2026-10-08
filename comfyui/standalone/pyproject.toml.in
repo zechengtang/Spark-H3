@@ -1,0 +1,24 @@
+[project]
+name = "comfyui-spark-h3"
+version = "@VERSION@"
+description = "Spark block-sparse attention nodes for ComfyUI's native MiniMax-H3 model"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dynamic = ["dependencies"]
+classifiers = [
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+]
+
+[project.urls]
+Repository = "https://github.com/zechengtang/Spark-H3"
+Documentation = "https://github.com/zechengtang/Spark-H3/blob/main/comfyui/README.md"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.comfy]
+PublisherId = "@PUBLISHER_ID@"
+DisplayName = "ComfyUI Spark-H3"
+requires-comfyui = ">=0.30.0"

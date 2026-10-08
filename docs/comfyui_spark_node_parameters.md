@@ -27,5 +27,6 @@
 | `warmup_mode` | 预热长度的表示方式：`warmup_ratio` 使用 `0–1` 比例，`warmup_steps` 使用固定次数。只读取当前模式对应的参数。 |
 | `warmup_steps` | 前多少次模型调用保持 dense。仅在 `warmup_mode=warmup_steps` 时生效；20 步采样设 `4` 相当于 20% 预热。 |
 | `tail_granularity` | 近似分支的 Q 粒度。`query`（默认）对应 sol-engine 的 Sol 实现思路：只对 K/V 下采样，每条真实 Q 分别消费近似汇总。`block` 对应 ComfyUI 的 Sol 实现思路：Q 和 K/V 都按块下采样，同一 Q 块共享近似结果。Spark 的精确分支在两种模式下仍使用真实 Q；此参数不控制视频尾块的 dense 策略。 |
+| `reblock_layout` | reblock 布局。默认 `q_reuse_k`（与 Python API 的 `q_from_k` 同义）只构造 K 侧布局并让 Q 共用同一 permutation，从而省去 Q 侧 M2、投影、树构建和重复索引存储。`independent` 分别构造 Q/K 布局，用于复现旧版行为。 |
 
 `warmup_ratio` 和 `topk_ratio` 都填 `0.2` 表示 20%，`topk_blocks=228` 表示固定选择 228 个块。`warmup_mode` 和 `topk_mode` 分别决定哪一个输入真正生效。
