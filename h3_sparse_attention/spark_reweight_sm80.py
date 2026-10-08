@@ -1157,9 +1157,9 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
     def __init__(
         self,
         *,
-        external_route: bool = False,
-        packed_external_route: bool = False,
-        skip_external_route_qk: bool = False,
+        external_route: bool = True,
+        packed_external_route: bool = True,
+        skip_external_route_qk: bool = True,
         hybrid_route: bool = False,
         export_route: bool = False,
         force_local_blocks: bool = True,

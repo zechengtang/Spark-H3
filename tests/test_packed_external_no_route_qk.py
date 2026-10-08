@@ -34,15 +34,15 @@ def test_route_qk_free_default_falls_back_outside_supported_gpus():
 
 
 def test_route_qk_free_kernel_disables_centroid_handoff():
-    optimized = SparkReweightForwardSm120(
-        packed_external_route=True, skip_external_route_qk=True
-    )
+    optimized = SparkReweightForwardSm120()
+    assert optimized.external_route
+    assert optimized.packed_external_route
     assert optimized.skip_external_route_qk
     assert not optimized.prefetch_next_route_k
     with pytest.raises(ValueError, match="packed external"):
-        SparkReweightForwardSm120(skip_external_route_qk=True)
+        SparkReweightForwardSm120(packed_external_route=False)
     with pytest.raises(ValueError, match="route-QK-free"):
-        SparkReweightForwardSm120(packed_external_route=True)
+        SparkReweightForwardSm120(skip_external_route_qk=False)
 
 
 def test_direct_packed_route_rejects_removed_route_qk_path():
@@ -62,18 +62,17 @@ def test_direct_packed_route_rejects_removed_route_qk_path():
 
 
 def test_sm80_route_qk_free_kernel_is_packed_external_only():
-    optimized = SparkReweightForwardSm80(
-        external_route=True,
-        packed_external_route=True,
-        skip_external_route_qk=True,
-    )
+    optimized = SparkReweightForwardSm80()
     assert optimized.external_route
     assert optimized.packed_external_route
     assert optimized.skip_external_route_qk
     with pytest.raises(ValueError, match="packed external"):
-        SparkReweightForwardSm80(skip_external_route_qk=True)
+        SparkReweightForwardSm80(packed_external_route=False)
     with pytest.raises(NotImplementedError, match="only route-QK-free"):
-        SparkReweightForwardSm80(external_route=True)
+        SparkReweightForwardSm80(
+            packed_external_route=False,
+            skip_external_route_qk=False,
+        )
 
 
 @pytest.mark.skipif(
