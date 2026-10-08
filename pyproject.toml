@@ -13,12 +13,13 @@ dependencies = ["torch>=2.4"]
 [project.optional-dependencies]
 cuda = ["triton>=3.2", "nvidia-cutlass-dsl>=4.4", "cuda-python>=12"]
 test = ["pytest>=8"]
+lbh = ["diffusers>=0.36.0", "huggingface-hub>=0.28", "safetensors>=0.4"]
 
 [tool.setuptools]
 license-files = ["LICENSE", "sol_attn/THIRD_PARTY_NOTICES.md", "sol_attn/sm100/LICENSE.flash-attention"]
 
 [tool.setuptools.packages.find]
-include = ["h3_sparse_attention*", "sol_attn*"]
+include = ["h3_sparse_attention*", "h3_lbh*", "sol_attn*"]
 
 [tool.setuptools.package-data]
 h3_sparse_attention = ["*.md", "PORT_MANIFEST.json"]
