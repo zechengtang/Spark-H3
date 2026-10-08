@@ -1158,6 +1158,8 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
         self,
         *,
         external_route: bool = False,
+        packed_external_route: bool = False,
+        skip_external_route_qk: bool = False,
         hybrid_route: bool = False,
         export_route: bool = False,
         force_local_blocks: bool = True,
@@ -1169,10 +1171,23 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
     ):
         super().__init__(128, m_block_size=64, n_block_size=64,
                          num_threads=128, is_causal=False)
-        if external_route or hybrid_route or export_route:
-            raise NotImplementedError(
-                "SM80 fused Spark does not implement external/hybrid/export routing"
+        if skip_external_route_qk and not packed_external_route:
+            raise ValueError(
+                "route-QK-free specialization requires packed external routing"
             )
+        if packed_external_route and not external_route:
+            raise ValueError("packed external routing requires external_route=True")
+        if hybrid_route or export_route or (
+            external_route and not (
+                packed_external_route and skip_external_route_qk
+            )
+        ):
+            raise NotImplementedError(
+                "SM80 fused Spark implements only route-QK-free packed external routing"
+            )
+        self.external_route = external_route
+        self.packed_external_route = packed_external_route
+        self.skip_external_route_qk = skip_external_route_qk
         if fused_topk_ratio < 0.0 or fused_topk_ratio > 1.0:
             raise ValueError("fused_topk_ratio must be in [0, 1]")
         self.fused_topk_route = fused_topk_ratio > 0.0
@@ -1212,7 +1227,6 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
         fused_topk_numerator: cutlass.Int32,
         stream: cuda.CUstream,
     ):
-        del route_mask
         if cutlass.const_expr(
             q.element_type != cutlass.BFloat16
             or k.element_type != cutlass.BFloat16
@@ -1271,7 +1285,7 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
             permutation_mnk=(64, 16, 16),
         )
         self.fused_kernel(
-            q, k, v, o, kc, av, threshold, lse, ak, lm, mapping,
+            q, k, v, o, kc, av, threshold, route_mask, lse, ak, lm, mapping,
             q_block_start, parent_start, head_start, softmax_scale,
             sink_start_block, sink_end_block, fused_topk_numerator,
             sQ_layout, sKV_layout,
@@ -1294,6 +1308,7 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
         mKC: cute.Tensor,
         mAV: cute.Tensor,
         mThreshold: cute.Tensor,
+        mRouteMask: cute.Tensor,
         mLSE: cute.Tensor,
         mAK: cute.Tensor,
         mLM: cute.Tensor,
@@ -1406,13 +1421,14 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
         cute.arch.cp_async_wait_group(0)
         self.cta_sync_barrier.arrive_and_wait()
 
-        # The cutoff was produced from a BF16 query centroid. Recreate that
-        # centroid once per CTA so integrated routing uses identical operands.
-        qsum = cutlass.Float32.zero
-        for row in cutlass.range_constexpr(64):
-            qsum += cutlass.Float32(sQ[row, tidx])
-        (qmean_ptr + tidx).store(qsum / cutlass.Float32(q_len))
-        self.cta_sync_barrier.arrive_and_wait()
+        # External packed routing already contains the exact mask, so its
+        # specialization does not build a query centroid or execute route QK.
+        if cutlass.const_expr(not self.skip_external_route_qk):
+            qsum = cutlass.Float32.zero
+            for row in cutlass.range_constexpr(64):
+                qsum += cutlass.Float32(sQ[row, tidx])
+            (qmean_ptr + tidx).store(qsum / cutlass.Float32(q_len))
+            self.cta_sync_barrier.arrive_and_wait()
 
         thr_mma = tiled_mma.get_slice(tidx)
         tSrQ = thr_mma.make_fragment_A(thr_mma.partition_A(sQ))
@@ -1667,7 +1683,9 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
                 column = warp_idx + item * 4
                 block = group_start + column
                 route_score = cutlass.Float32.zero
-                if cutlass.const_expr(not self.fused_topk_route):
+                if cutlass.const_expr(
+                    not self.fused_topk_route and not self.external_route
+                ):
                     if block < blocks:
                         for part in cutlass.range_constexpr(4):
                             dim = lane + part * 32
@@ -1687,6 +1705,20 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
                                         (fused_route_scores_ptr + block).load()
                                     ) == cutlass.Float32.inf
                                 )
+                        elif cutlass.const_expr(self.external_route):
+                            route_word = cutlass.Int32(
+                                mRouteMask[
+                                    batch,
+                                    q_block,
+                                    head,
+                                    block // cutlass.Int32(32),
+                                ]
+                            )
+                            route_bit = block % cutlass.Int32(32)
+                            exact = (
+                                ((route_word >> route_bit) & cutlass.Int32(1))
+                                != cutlass.Int32(0)
+                            )
                         else:
                             exact = route_score * scale_log2 > threshold
                         if block >= sink_start_block and block < sink_end_block:

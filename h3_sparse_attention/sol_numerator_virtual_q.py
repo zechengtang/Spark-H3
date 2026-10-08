@@ -13,6 +13,7 @@ import torch
 import triton
 import triton.language as tl
 from .sol_vaware_compensation import exact_attention
+from .device_policy import is_a800_80gb
 
 
 # Keep the query-conditioned K/V summaries bounded at production sequence
@@ -635,7 +636,7 @@ def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=N
                               summary_math=summary_math,logmass_key=logmass_key,
                               reweight_components=reweight_components)
     if skip_external_route_qk:
-        raise NotImplementedError('route-QK-free specialization requires the fused SM120 virtual-query backend')
+        raise NotImplementedError('route-QK-free specialization requires the fused SM80/SM120 virtual-query backend')
     if fused_topk_ratio:
         raise ValueError('block tail requires an external Top-K route, not fused routing')
     if route is not None and route.dtype==torch.int32:
@@ -760,8 +761,12 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         raise ValueError('route-QK-free path requires a packed external route')
     external=threshold is None and route is not None
     hybrid=threshold is not None and route is not None
-    if packed_external and capability != (12,0):
-        raise NotImplementedError("packed external routes currently require SM120")
+    if packed_external and capability not in ((8,0), (12,0)):
+        raise NotImplementedError("packed external routes currently require SM80 or SM120")
+    if packed_external and capability == (8,0) and not skip_external_route_qk:
+        raise NotImplementedError(
+            "SM80 packed external routes require skip_external_route_qk=True"
+        )
     if packed_external and export_route:
         raise ValueError("packed external routes cannot be exported as a dense mask")
     if threshold is None:
@@ -779,7 +784,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     # private permuted-Q storage at the 345-frame SM80 boundary, where another
     # full BTHD destination would exceed 80 GiB.  The unlaunched dense suffix
     # remains untouched and is still available to its SDPA call.
-    reuse_q=(capability == (8,0) and t > 90_000 and not export_route
+    reuse_q=(is_a800_80gb(q.device) and t > 90_000 and not export_route
              and os.environ.get('H3_SPARK_REWEIGHT_INPLACE_Q','1') != '0')
     out=(q if reuse_q
          else torch.empty_like(q))
@@ -918,7 +923,10 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
             if capability in ((8,0), (12,0)):
                 scalars += (round(fused_topk_ratio * 10000),)
             if compiled is None:
-                kernel=(FusedKernel(external_route=external,hybrid_route=hybrid,
+                kernel=(FusedKernel(external_route=external,
+                                    packed_external_route=packed_external,
+                                    skip_external_route_qk=skip_external_route_qk,
+                                    hybrid_route=hybrid,
                                     export_route=export_route,
                                     force_local_blocks=force_local_blocks,
                                     fused_topk_ratio=fused_topk_ratio,

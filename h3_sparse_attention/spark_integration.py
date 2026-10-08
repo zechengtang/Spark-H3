@@ -13,6 +13,7 @@ import torch
 
 
 import torch.nn.functional as F
+from .device_policy import is_a800_80gb
 
 
 _LOG2_E = math.log2(math.e)
@@ -452,7 +453,7 @@ def _landmark_tree_v2_combined_permutations(
     eager_low_memory = bool(
         query.is_cuda
         and video_tokens > 90_000
-        and device_capability in ((8, 0), (12, 0))
+        and is_a800_80gb(query.device)
     )
     required_m2_side = _required_reblock_m2_side(
         controller.config.landmark_tree_v2_m2_side, layout_reuse
@@ -869,17 +870,11 @@ def spark_attention(
 
 
 def _sm80_low_memory_reblock(tensor: torch.Tensor) -> bool:
-    """Select the long-sequence storage-reuse path used by A800 and Blackwell.
-
-    The path was originally introduced for A800 80GB.  Its operations are
-    architecture-independent packed-BTHD gathers/storage reuse, and SM120
-    needs the same lifetime discipline for 2x SelfLift sequences.  Keep the
-    allow-list narrow rather than changing behavior on untested devices.
-    """
+    """Select the long-sequence storage-reuse path only on A800 80GB."""
     return bool(
         tensor.is_cuda
         and tensor.shape[1] > 90_000
-        and tuple(torch.cuda.get_device_capability(tensor.device)) in ((8, 0), (12, 0))
+        and is_a800_80gb(tensor.device)
     )
 
 
@@ -1308,11 +1303,12 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     cfg = controller.config
     capability = tuple(torch.cuda.get_device_capability(q.device))
     if capability == (8, 0) and cfg.sol_route_topk_execution not in (
-        "threshold", "fused"
+        "threshold", "fused", "packed_external_no_route_qk"
     ):
         raise RuntimeError(
             f"SM80 does not implement sol_route_topk_execution="
-            f"{cfg.sol_route_topk_execution!r}; use 'threshold' or 'fused'"
+            f"{cfg.sol_route_topk_execution!r}; use 'threshold', 'fused', "
+            "or 'packed_external_no_route_qk'"
         )
     from .sol_numerator_virtual_q import virtual_q_backend, reduce_virtual_key_centroids
     profile = _profile_begin(controller, "topk_reduce_kv")
@@ -1387,7 +1383,13 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         and not partial_video
         and cfg.sol_route_topk_execution in ("packed_external", "packed_external_no_route_qk")
         and cfg.sol_route_topk_cutoff_mode == "gemm_radix"
-        and tuple(torch.cuda.get_device_capability(q.device)) == (12, 0)
+        and (
+            capability == (12, 0)
+            or (
+                capability == (8, 0)
+                and cfg.sol_route_topk_execution == "packed_external_no_route_qk"
+            )
+        )
         and _query_tokens is not None
         and virtual_query_data is not None
         and virtual_q_backend(q).endswith("fused_virtual_query")

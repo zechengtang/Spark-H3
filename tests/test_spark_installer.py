@@ -113,17 +113,45 @@ def test_paired_headwise_permutation_matches_two_independent_launches():
     torch.testing.assert_close(reused_anchor, expected_anchor, rtol=0, atol=0)
 
 
-def test_long_sequence_low_memory_reblock_supports_sm80_and_sm120(monkeypatch):
+def test_long_sequence_low_memory_reblock_is_a800_80gb_only(monkeypatch):
     from types import SimpleNamespace
     from h3_sparse_attention.spark_integration import _sm80_low_memory_reblock
 
     fake = SimpleNamespace(is_cuda=True, shape=(1, 90_001, 1, 128), device='cuda')
     monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (8, 0))
+    monkeypatch.setattr(
+        torch.cuda, 'get_device_properties',
+        lambda _device: SimpleNamespace(
+            name='NVIDIA A800-SXM4-80GB', total_memory=80 << 30
+        ),
+    )
     assert _sm80_low_memory_reblock(fake)
-    monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (12, 0))
-    assert _sm80_low_memory_reblock(fake)
-    monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (9, 0))
+
+    monkeypatch.setattr(
+        torch.cuda, 'get_device_properties',
+        lambda _device: SimpleNamespace(
+            name='NVIDIA A800-SXM4-40GB', total_memory=40 << 30
+        ),
+    )
     assert not _sm80_low_memory_reblock(fake)
+
+    monkeypatch.setattr(
+        torch.cuda, 'get_device_properties',
+        lambda _device: SimpleNamespace(
+            name='NVIDIA A100-SXM4-80GB', total_memory=80 << 30
+        ),
+    )
+    assert not _sm80_low_memory_reblock(fake)
+
+    monkeypatch.setattr(
+        torch.cuda, 'get_device_properties',
+        lambda _device: SimpleNamespace(
+            name='NVIDIA A800-SXM4-80GB', total_memory=80 << 30
+        ),
+    )
+    monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (12, 0))
+    assert not _sm80_low_memory_reblock(fake)
+
     fake.shape = (1, 90_000, 1, 128)
     monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda _device: (8, 0))
     assert not _sm80_low_memory_reblock(fake)
