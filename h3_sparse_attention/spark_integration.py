@@ -1285,6 +1285,16 @@ def spark_attention_bthd(
     return output if return_bthd else output.permute(0, 2, 1, 3).contiguous()
 
 
+def _effective_topk_execution(requested, capability):
+    """Resolve architecture-specific execution for the public default."""
+    if requested == "packed_external_no_route_qk" and capability not in (
+        (8, 0),
+        (12, 0),
+    ):
+        return "threshold"
+    return requested
+
+
 @torch.compiler.disable
 @torch.no_grad()
 def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, _query_tokens=None):
@@ -1302,12 +1312,17 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
 
     cfg = controller.config
     capability = tuple(torch.cuda.get_device_capability(q.device))
-    if capability == (8, 0) and cfg.sol_route_topk_execution not in (
+    execution = _effective_topk_execution(cfg.sol_route_topk_execution, capability)
+    if execution != cfg.sol_route_topk_execution:
+        controller.counts[
+            f"route_execution_fallback:{cfg.sol_route_topk_execution}->{execution}"
+        ] += 1
+    if capability == (8, 0) and execution not in (
         "threshold", "fused", "packed_external_no_route_qk"
     ):
         raise RuntimeError(
             f"SM80 does not implement sol_route_topk_execution="
-            f"{cfg.sol_route_topk_execution!r}; use 'threshold', 'fused', "
+            f"{execution!r}; use 'threshold', 'fused', "
             "or 'packed_external_no_route_qk'"
         )
     from .sol_numerator_virtual_q import virtual_q_backend, reduce_virtual_key_centroids
@@ -1355,7 +1370,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     elif (
         backend is not None
         and not partial_video
-        and cfg.sol_route_topk_execution == "fused"
+        and execution == "fused"
         and virtual_query_data is not None
         and tuple(torch.cuda.get_device_capability(q.device)) in ((8, 0), (12, 0))
         and _query_tokens is not None
@@ -1381,13 +1396,13 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     elif (
         backend is not None
         and not partial_video
-        and cfg.sol_route_topk_execution in ("packed_external", "packed_external_no_route_qk")
+        and execution == "packed_external_no_route_qk"
         and cfg.sol_route_topk_cutoff_mode == "gemm_radix"
         and (
             capability == (12, 0)
             or (
                 capability == (8, 0)
-                and cfg.sol_route_topk_execution == "packed_external_no_route_qk"
+                and execution == "packed_external_no_route_qk"
             )
         )
         and _query_tokens is not None
@@ -1451,6 +1466,19 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     if virtual_query_data is not None:
         from .sol_numerator_virtual_q import virtual_q_attention, virtual_q_backend
         ranges, mapping, anchors = virtual_query_data
+        # The route-QK-free kernel requires an SM80/SM120 packed int32 route. Some
+        # compatibility/ablation paths deliberately use a threshold or a bool
+        # route instead; keep those paths functional by using the regular
+        # external-route/threshold merge in that case.
+        skip_external_route_qk = (
+            execution == "packed_external_no_route_qk"
+            and route is not None
+            and route.dtype == torch.int32
+        )
+        if execution == "packed_external_no_route_qk" and not skip_external_route_qk:
+            controller.counts[
+                "route_qk_free_fallback:compatible_route_merge"
+            ] += 1
         profile = _profile_begin(controller, "topk_fused_virtual")
         output = virtual_q_attention(q, k, v, virtual_ranges=ranges, leaf_to_virtual=mapping,
             virtual_anchors=anchors, precomputed_summaries=summaries, key_centroids=kc,
@@ -1464,12 +1492,10 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
             _query_tokens=_query_tokens,
             fused_topk_ratio=(
                 cfg.sol_route_topk_ratio
-                if cfg.sol_route_topk_execution == "fused"
+                if execution == "fused"
                 else 0.0
             ),
-            skip_external_route_qk=(
-                cfg.sol_route_topk_execution == "packed_external_no_route_qk"
-            ))
+            skip_external_route_qk=skip_external_route_qk)
         _profile_end(controller, profile)
         controller.sol_backend = virtual_q_backend(q)
         controller.counts["sol_virtual_query_calls"] += 1

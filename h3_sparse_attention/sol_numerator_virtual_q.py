@@ -512,7 +512,7 @@ def _unpack_packed_route(P,R,N:tl.constexpr,QB:tl.constexpr,H:tl.constexpr,W:tl.
 
 
 def unpack_packed_route(route, blocks):
-    """Expand an SM120 packed external route for the block-tail reference path."""
+    """Expand an SM80/SM120 packed route for the block-tail reference path."""
     if route.ndim!=4 or route.dtype!=torch.int32 or route.shape[-1]!=triton.cdiv(blocks,32):
         raise ValueError('invalid packed route shape or dtype')
     b,query_blocks,h,words=route.shape
@@ -597,8 +597,13 @@ def _streamed_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,route,exact_output,
 def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=None,precomputed_summaries=None,key_centroids=None,value_sums=None,threshold=None,route=None,sink_start=None,sink_tokens=0,scale=None,force_local_blocks=True,tail_granularity='query',_query_tokens=None,anchor_dtype=None,summary_math='tensorcore',logmass_key='stored',reweight_components='full',**kwargs):
     fused_topk_ratio = float(kwargs.pop("fused_topk_ratio", 0.0))
     skip_external_route_qk = bool(kwargs.pop("skip_external_route_qk", False))
+    packed_external_route = (
+        route is not None and route.dtype == torch.int32 and route.ndim == 4
+    )
     if skip_external_route_qk and (route is None or route.dtype != torch.int32):
         raise ValueError('route-QK-free path requires a packed external route')
+    if packed_external_route and not skip_external_route_qk:
+        raise ValueError('packed external routes require route-QK-free execution')
     if tail_granularity not in ('query','block','block8x8'):
         raise ValueError("tail_granularity must be 'query', 'block', or 'block8x8'")
     if summary_math not in ('tensorcore','comfy_fp32') or logmass_key not in ('stored','pre_round'):
@@ -635,8 +640,6 @@ def virtual_q_attention(q,k,v,*,virtual_ranges,leaf_to_virtual,virtual_anchors=N
                               skip_external_route_qk=skip_external_route_qk,
                               summary_math=summary_math,logmass_key=logmass_key,
                               reweight_components=reweight_components)
-    if skip_external_route_qk:
-        raise NotImplementedError('route-QK-free specialization requires the fused SM80/SM120 virtual-query backend')
     if fused_topk_ratio:
         raise ValueError('block tail requires an external Top-K route, not fused routing')
     if route is not None and route.dtype==torch.int32:
@@ -763,10 +766,8 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     hybrid=threshold is not None and route is not None
     if packed_external and capability not in ((8,0), (12,0)):
         raise NotImplementedError("packed external routes currently require SM80 or SM120")
-    if packed_external and capability == (8,0) and not skip_external_route_qk:
-        raise NotImplementedError(
-            "SM80 packed external routes require skip_external_route_qk=True"
-        )
+    if packed_external and not skip_external_route_qk:
+        raise ValueError("packed external routes require route-QK-free execution")
     if packed_external and export_route:
         raise ValueError("packed external routes cannot be exported as a dense mask")
     if threshold is None:

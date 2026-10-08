@@ -101,7 +101,14 @@ cached reblocking plans and query topology.
 Default Spark settings match the source:
 
 - Native mean Top-K routing with ratio `0.1`, `gemm_radix` cutoffs, and
-  `threshold` execution, matching the historical compiled Table 4 run.
+  `packed_external_no_route_qk` execution. This exports the packed route once
+  and avoids recomputing route QK inside the attention kernel. Set
+  `sol_route_topk_execution="threshold"` explicitly for the historical
+  compiled Table 4 path. The packed route is implemented on SM80 and SM120;
+  SM90 and SM100 resolve this default to `threshold` and report that fallback
+  in the plugin summary. The slower legacy `packed_external` execution was
+  removed after dual-SM120 verification showed bitwise-identical output; old
+  configurations receive a migration error directing them to the no-QK mode.
 - Landmark-v2 Q/K reblocking using opposite second moments, cosine distance,
   fanout 16 with `power_of_two_fanout` scheduling, 32 midpoint landmarks, and no temporal grouping.
 - The midpoint direction builder defaults to the historical two-stage
@@ -124,8 +131,9 @@ block-granularity mode. Exact attention still uses the real query rows, and
 Top-K/reblock/global-reweight settings do not change. This opt-in mode uses
 the existing exact route/export plus a separate Triton block-tail merge;
 it is a functional compatibility path, not the fused query-mode fast path.
-For Top-K it supports `threshold` (the Spark default) and `packed_external`
-routing, but not `fused` routing. The default `"query"` mode is unchanged.
+For Top-K it supports `threshold` and `packed_external_no_route_qk` routing,
+but not `fused` routing. The default
+`"query"` mode is unchanged.
 
 For reweight **numeric** ablations, the Diffusers installer also accepts
 `sol_global_anchor_dtype="bfloat16"`,

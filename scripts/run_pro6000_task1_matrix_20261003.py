@@ -12,7 +12,7 @@ SAMPLES=base.BENCH/"vbench_core5_percent_subsets/20pct/samples.json"
 SOURCE=Path("/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913")
 CASES=(2,13,31,33); GPUS=(0,1,2,3)
 DURATIONS={"5s":120,"10s":240,"14p4s":345}
-ARMS=("legacy_threshold","fused_threshold","fused_packed_external","fused_packed_external_no_route_qk")
+ARMS=("legacy_threshold","fused_threshold","fused_packed_external_no_route_qk")
 
 def cases():
     return base.pipeline().load_cases(SAMPLES,list(CASES),expected_indices=tuple(range(1,51)))
@@ -30,7 +30,6 @@ def config(arm,steps=20):
     if arm!="legacy_threshold": kw["landmark_tree_v2_midpoint_direction_mode"]="fused"
     kw["sol_route_topk_execution"]={
         "legacy_threshold":"threshold","fused_threshold":"threshold",
-        "fused_packed_external":"packed_external",
         "fused_packed_external_no_route_qk":"packed_external_no_route_qk"}[arm]
     return H3SparseAttentionConfig.spark(steps,**kw)
 

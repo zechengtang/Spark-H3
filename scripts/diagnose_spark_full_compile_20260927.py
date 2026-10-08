@@ -30,7 +30,7 @@ def config(_method):
         sol_reweight_summary_math="comfy_fp32",
         sol_reweight_logmass_key="pre_round",
         sol_reweight_components="full",
-        sol_route_topk_execution="packed_external",
+        sol_route_topk_execution="packed_external_no_route_qk",
     )
 
 
@@ -53,7 +53,7 @@ def configure():
     prior.config = config
     prior.configure()
     prior.route.spark_config = config
-    prior.route.EXECUTIONS = {METHOD: "packed_external"}
+    prior.route.EXECUTIONS = {METHOD: "packed_external_no_route_qk"}
     prior.route.parse_args = parse_args
     original_run_one = prior.route.run_one
 

@@ -1,4 +1,4 @@
-"""The route-QK-free SM120 path must remain opt-in."""
+"""The route-QK-free packed-external path is the Spark default."""
 
 import os
 from types import SimpleNamespace
@@ -11,27 +11,54 @@ from h3_sparse_attention.spark_reweight_sm120 import SparkReweightForwardSm120
 from h3_sparse_attention.spark_reweight_sm80 import SparkReweightForwardSm80
 
 
-def test_route_qk_free_selector_is_opt_in():
-    baseline = H3SparseAttentionConfig.spark(20, sol_route_topk_execution="packed_external")
-    optimized = H3SparseAttentionConfig.spark(
-        20, sol_route_topk_execution="packed_external_no_route_qk"
-    )
-    assert baseline.sol_route_topk_execution == "packed_external"
-    assert optimized.sol_route_topk_execution == "packed_external_no_route_qk"
+def test_route_qk_free_selector_is_default():
+    baseline = H3SparseAttentionConfig.spark(20)
+    optimized = H3SparseAttentionConfig.spark(20, sol_route_topk_execution="threshold")
+    assert baseline.sol_route_topk_execution == "packed_external_no_route_qk"
+    assert optimized.sol_route_topk_execution == "threshold"
     assert optimized.landmark_tree_v2_children == baseline.landmark_tree_v2_children == 16
+    with pytest.raises(ValueError, match="bitwise-equivalent but slower"):
+        H3SparseAttentionConfig.spark(
+            20, sol_route_topk_execution="packed_external"
+        )
+
+
+def test_route_qk_free_default_falls_back_outside_supported_gpus():
+    from h3_sparse_attention.spark_integration import _effective_topk_execution
+
+    requested = "packed_external_no_route_qk"
+    assert _effective_topk_execution(requested, (12, 0)) == requested
+    assert _effective_topk_execution(requested, (8, 0)) == requested
+    assert _effective_topk_execution(requested, (9, 0)) == "threshold"
+    assert _effective_topk_execution("threshold", (12, 0)) == "threshold"
 
 
 def test_route_qk_free_kernel_disables_centroid_handoff():
-    baseline = SparkReweightForwardSm120(packed_external_route=True)
     optimized = SparkReweightForwardSm120(
         packed_external_route=True, skip_external_route_qk=True
     )
-    assert not baseline.skip_external_route_qk
-    assert baseline.prefetch_next_route_k
     assert optimized.skip_external_route_qk
     assert not optimized.prefetch_next_route_k
     with pytest.raises(ValueError, match="packed external"):
         SparkReweightForwardSm120(skip_external_route_qk=True)
+    with pytest.raises(ValueError, match="route-QK-free"):
+        SparkReweightForwardSm120(packed_external_route=True)
+
+
+def test_direct_packed_route_rejects_removed_route_qk_path():
+    from h3_sparse_attention.sol_numerator_virtual_q import virtual_q_attention
+
+    q = torch.empty((1, 64, 1, 128), dtype=torch.bfloat16)
+    route = torch.zeros((1, 1, 1, 1), dtype=torch.int32)
+    with pytest.raises(ValueError, match="route-QK-free"):
+        virtual_q_attention(
+            q,
+            q,
+            q,
+            virtual_ranges=torch.tensor([[0, 64]], dtype=torch.int64),
+            leaf_to_virtual=torch.zeros(1, dtype=torch.int64),
+            route=route,
+        )
 
 
 def test_sm80_route_qk_free_kernel_is_packed_external_only():
@@ -110,7 +137,7 @@ def test_sm80_route_qk_free_matches_fused_topk(monkeypatch):
     os.environ.get("H3_RUN_KERNEL_PARITY") != "1" or not torch.cuda.is_available(),
     reason="run explicitly on an idle SM120 GPU with H3_RUN_KERNEL_PARITY=1",
 )
-def test_sm120_fused_and_route_qk_free_match_existing_packed_external():
+def test_sm120_route_qk_free_repeats_bitwise():
     if torch.cuda.get_device_capability() != (12, 0):
         pytest.skip("SM120 specialization")
     from h3_sparse_attention.processor import _Controller
@@ -125,7 +152,8 @@ def test_sm120_fused_and_route_qk_free_match_existing_packed_external():
     mapping = torch.tensor([0] * 128 + [1], device="cuda", dtype=torch.int64)
     layout = SimpleNamespace(video_tokens=8192, sequence_length=8256)
     outputs = []
-    for execution in ("fused", "packed_external", "packed_external_no_route_qk"):
+    for _ in range(2):
+        execution = "packed_external_no_route_qk"
         controller = _Controller(H3SparseAttentionConfig.spark(
             20, sol_route_topk_execution=execution, sol_log_density=False,
         ))
@@ -133,11 +161,5 @@ def test_sm120_fused_and_route_qk_free_match_existing_packed_external():
             controller, q, k, v, layout,
             virtual_query_data=(ranges, mapping, None), _query_tokens=8192,
         ))
-        expected_counter = (
-            "sol_topk_fused_route_calls"
-            if execution == "fused"
-            else "sol_topk_packed_route_calls"
-        )
-        assert controller.counts[expected_counter] == 1
-    torch.testing.assert_close(outputs[0], outputs[1], rtol=0, atol=0)
-    torch.testing.assert_close(outputs[1], outputs[2], rtol=0, atol=0)
+        assert controller.counts["sol_topk_packed_route_calls"] == 1
+    assert torch.equal(outputs[0], outputs[1])

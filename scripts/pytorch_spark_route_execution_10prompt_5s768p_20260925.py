@@ -22,10 +22,10 @@ OUT = Path("/autodl-fs/data/h3_outputs") / NAME
 DENSE_OUT = Path("/autodl-fs/data/h3_outputs/pytorch_spark_tail_ablation_50prompt_5s768p_seed42_20260925/dense")
 SAMPLES = base.BENCH / "vbench_core5_percent_subsets/20pct/samples.json"
 CASES = tuple(range(1, 11))
-METHODS = ("spark_threshold", "spark_packed_external", "spark_fused")
+METHODS = ("spark_threshold", "spark_external_no_qk", "spark_fused")
 EXECUTIONS = {
     "spark_threshold": "threshold",
-    "spark_packed_external": "packed_external",
+    "spark_external_no_qk": "packed_external_no_route_qk",
     "spark_fused": "fused",
 }
 GPUS = (2, 3)
@@ -87,7 +87,7 @@ def prepare():
     shutil.copy2(__file__, ROOT / "runner_source.py")
     base.write(ROOT / "protocol.json", dict(
         name=NAME,
-        purpose="Compare threshold, packed-external, and CTA-local fused Spark route execution",
+        purpose="Compare threshold, packed external-no-QK, and CTA-local fused Spark route execution",
         pipeline="native PyTorch/Diffusers",
         dataset="first 10 prompts of VBench core-five 20% subset",
         cases=all_cases,

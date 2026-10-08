@@ -30,7 +30,7 @@ def test_dynamic_signature_preserves_static_abi_properties():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 @pytest.mark.parametrize(
     "execution",
-    ("threshold", "fused", "packed_external", "packed_external_no_route_qk"),
+    ("threshold", "fused", "packed_external_no_route_qk"),
 )
 def test_sm120_compiled_callable_reuses_different_sink_lengths(execution):
     if torch.cuda.get_device_capability() != (12, 0):
@@ -74,7 +74,7 @@ def test_sm120_compiled_callable_reuses_different_sink_lengths(execution):
             else None
         )
         route = None
-        if execution.startswith("packed_external"):
+        if execution == "packed_external_no_route_qk":
             route = torch.full(
                 (1, video_tokens // 64, heads, (blocks + 31) // 32),
                 -1,

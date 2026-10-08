@@ -75,6 +75,8 @@ class SparkReweightForwardSm120:
         self.packed_external_route = packed_external_route
         if skip_external_route_qk and not packed_external_route:
             raise ValueError("route-QK-free specialization requires packed external routing")
+        if packed_external_route and not skip_external_route_qk:
+            raise ValueError("packed external routing requires route-QK-free execution")
         self.skip_external_route_qk = skip_external_route_qk
         self.prefetch_next_route_k = prefetch_next_route_k and not skip_external_route_qk
         self.fused_topk_ratio = fused_topk_ratio

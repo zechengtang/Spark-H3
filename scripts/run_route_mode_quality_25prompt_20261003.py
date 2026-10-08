@@ -30,7 +30,6 @@ ALL_METHODS = (
     "dense",
     "legacy_threshold",
     "fused_threshold",
-    "fused_packed_external",
     "fused_packed_external_no_route_qk",
 )
 GENERATED = {
@@ -78,7 +77,6 @@ def config(method, steps=20):
     kwargs["sol_route_topk_execution"] = {
         "legacy_threshold": "threshold",
         "fused_threshold": "threshold",
-        "fused_packed_external": "packed_external",
         "fused_packed_external_no_route_qk": "packed_external_no_route_qk",
     }[method]
     return H3SparseAttentionConfig.spark(steps, **kwargs)

@@ -54,7 +54,9 @@ def configure():
     route.ROOT, route.OUT = ROOT, OUT
     route.SAMPLES, route.CASES = SAMPLES, CASES
     route.METHODS, route.GPUS = METHODS, GPUS
-    route.EXECUTIONS = {method: "packed_external" for method in METHODS}
+    route.EXECUTIONS = {
+        method: "packed_external_no_route_qk" for method in METHODS
+    }
     route.DENSE_OUT = ROOT / "dense_reference"
     route.spark_config = config
     route.cases = cases

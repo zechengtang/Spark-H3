@@ -46,8 +46,8 @@ class H3SparseAttentionConfig:
         "gemm_radix", "gaussian_moments"
     ] = "gemm_radix"
     sol_route_topk_execution: Literal[
-        "threshold", "packed_external", "packed_external_no_route_qk", "fused"
-    ] = "threshold"
+        "threshold", "packed_external_no_route_qk", "fused"
+    ] = "packed_external_no_route_qk"
     sol_sparse_video_scope: Literal["target", "target_and_condition"] = "target"
     sol_video_tail_mode: Literal["dense", "pad"] = "dense"
     # Benchmark-only compatibility switch for the pre-tail-fix behavior.  It
@@ -167,8 +167,14 @@ class H3SparseAttentionConfig:
             raise ValueError("sol_route_topk_ratio must lie in (0, 1]")
         if self.sol_route_topk_cutoff_mode not in ("gemm_radix", "gaussian_moments"):
             raise ValueError("invalid sol_route_topk_cutoff_mode")
+        if self.sol_route_topk_execution == "packed_external":
+            raise ValueError(
+                "sol_route_topk_execution='packed_external' was removed because "
+                "it is bitwise-equivalent but slower; use "
+                "'packed_external_no_route_qk'"
+            )
         if self.sol_route_topk_execution not in (
-            "threshold", "packed_external", "packed_external_no_route_qk", "fused"
+            "threshold", "packed_external_no_route_qk", "fused"
         ):
             raise ValueError("invalid sol_route_topk_execution")
         if self.sol_sparse_video_scope not in ("target", "target_and_condition"):
@@ -230,7 +236,10 @@ class H3SparseAttentionConfig:
         if (self.sol_tail_granularity in ("block", "block8x8")
                 and self.sol_route_topk_ratio is not None
                 and self.sol_route_topk_execution == "fused"):
-            raise ValueError("block tail requires threshold or packed_external Top-K routing")
+            raise ValueError(
+                "block tail requires threshold or packed_external_no_route_qk "
+                "Top-K routing"
+            )
         if self.sol_virtual_query_route_score != "native_mean" and not virtual_query_enabled:
             raise ValueError("reweighted routing requires virtual query summaries")
         if self.sol_virtual_query_levels_up is not None and self.sol_virtual_query_target_blocks is not None:
@@ -344,9 +353,10 @@ class H3SparseAttentionConfig:
         defaults = dict(
             sol_route_topk_ratio=0.1,
             sol_route_topk_cutoff_mode="gemm_radix",
-            # Match the compiled Table 4 Spark path by default. The packed
-            # external route and FP32 anchor remain explicit ablations.
-            sol_route_topk_execution="threshold",
+            # Export the packed route once and let the attention kernel consume
+            # it without recomputing route QK. The threshold path remains an
+            # explicit compatibility option.
+            sol_route_topk_execution="packed_external_no_route_qk",
             sol_global_anchor_dtype="bfloat16",
             sol_landmark_preprocess=True,
             sol_landmark_preprocess_version="v2",

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Fixed-input diagnostics for fused midpoint directions and external routing.
+"""Fixed-input diagnostics for fused midpoint directions and no-QK routing.
 
 This script is intentionally read-only with respect to historical artifacts.  It
 loads two existing post-RoPE captures, replays route construction and the SM120
-attention implementations, and writes only compact JSON metrics.
+attention implementations, and writes only compact JSON metrics.  The dated
+filename is retained for provenance; the removed route-QK packed-external mode
+is no longer executed.
 """
 from __future__ import annotations
 
@@ -220,7 +222,7 @@ def attention_outputs(q, k, v, layout, permutation, hierarchy):
     outputs = {}
     try:
         spark_integration._landmark_tree_v2_qk_block_permutations = fixed
-        for execution in ("threshold", "packed_external", "packed_external_no_route_qk"):
+        for execution in ("threshold", "packed_external_no_route_qk"):
             controller = _Controller(make_config("legacy", execution))
             controller.evaluation_index = 4
             outputs[execution] = spark_integration.spark_attention_bthd(
@@ -230,12 +232,6 @@ def attention_outputs(q, k, v, layout, permutation, hierarchy):
     finally:
         spark_integration._landmark_tree_v2_qk_block_permutations = original
     return {
-        "packed_external_vs_no_route_qk": tensor_metrics(
-            outputs["packed_external"], outputs["packed_external_no_route_qk"]
-        ),
-        "threshold_vs_packed_external": tensor_metrics(
-            outputs["threshold"], outputs["packed_external"]
-        ),
         "threshold_vs_no_route_qk": tensor_metrics(
             outputs["threshold"], outputs["packed_external_no_route_qk"]
         ),

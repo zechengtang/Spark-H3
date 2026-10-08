@@ -16,14 +16,14 @@ def test_block_tail_configuration_is_opt_in():
         H3SparseAttentionConfig.spark(20, sol_tail_granularity="invalid")
     with pytest.raises(ValueError, match="virtual query summaries"):
         H3SparseAttentionConfig.sol(20, sol_tail_granularity="block")
-    with pytest.raises(ValueError, match="threshold or packed_external"):
+    with pytest.raises(ValueError, match="threshold or packed_external_no_route_qk"):
         H3SparseAttentionConfig.spark(
             20, sol_tail_granularity="block", sol_route_topk_execution="fused"
         )
     assert H3SparseAttentionConfig.spark(
         20, sol_tail_granularity="block8x8"
     ).sol_tail_granularity == "block8x8"
-    with pytest.raises(ValueError, match="threshold or packed_external"):
+    with pytest.raises(ValueError, match="threshold or packed_external_no_route_qk"):
         H3SparseAttentionConfig.spark(
             20, sol_tail_granularity="block8x8", sol_route_topk_execution="fused"
         )
@@ -148,7 +148,7 @@ def test_block_tail_runs_with_production_packed_topk_route():
     layout = SimpleNamespace(video_tokens=8192, sequence_length=8256)
     controller = _Controller(H3SparseAttentionConfig.spark(
         20, sol_tail_granularity="block", sol_log_density=False,
-        sol_route_topk_execution="packed_external",
+        sol_route_topk_execution="packed_external_no_route_qk",
     ))
     output = _spark_topk_attention(
         controller, q, k, v, layout,

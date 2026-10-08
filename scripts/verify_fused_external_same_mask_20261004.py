@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""SM120 execution parity after constructing an identical exact mask."""
+"""SM120 threshold/no-QK diagnostics after constructing an exact mask.
+
+The dated filename is retained for provenance.  The removed route-QK
+packed-external mode is no longer executed.
+"""
 from __future__ import annotations
 
 import json
@@ -72,7 +76,7 @@ def main() -> None:
     mapping = torch.tensor([0] * 128 + [1], device="cuda", dtype=torch.int64)
     layout = SimpleNamespace(video_tokens=8192, sequence_length=8256)
     outputs = {}
-    for execution in ("threshold", "packed_external", "packed_external_no_route_qk"):
+    for execution in ("threshold", "packed_external_no_route_qk"):
         controller = _Controller(H3SparseAttentionConfig.spark(
             20, sol_route_topk_execution=execution, sol_route_topk_ratio=0.25,
             sol_log_density=False, sol_force_local_blocks=False,
@@ -92,11 +96,8 @@ def main() -> None:
             int(threshold_mask.sum(-1).min()), int(threshold_mask.sum(-1).max())
         ],
         "packed_budget": packed_stats["target_topk_blocks_per_query"],
-        "threshold_vs_packed_external": compare(
-            outputs["threshold"], outputs["packed_external"]
-        ),
-        "packed_external_vs_no_route_qk": compare(
-            outputs["packed_external"], outputs["packed_external_no_route_qk"]
+        "threshold_vs_no_route_qk": compare(
+            outputs["threshold"], outputs["packed_external_no_route_qk"]
         ),
     }
     OUTPUT.write_text(json.dumps(result, indent=2) + "\n")
