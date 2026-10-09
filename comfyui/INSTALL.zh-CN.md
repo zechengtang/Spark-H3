@@ -6,6 +6,8 @@
 - Linux x86_64、Python 3.12+ 和 CUDA BF16。
 - NVIDIA SM120 GPU（RTX 50 系）。
 
+SM89 支持正在快速开发中，但暂未包含在本次发布包中。
+
 安装包不包含 ComfyUI 本体和 MiniMax-H3 模型权重。
 
 ## 选择版本
