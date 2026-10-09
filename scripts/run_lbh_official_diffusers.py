@@ -94,8 +94,8 @@ def parse_args():
     parser.set_defaults(runtime_warmup=True)
     parser.add_argument("--spark-topk-ratio", type=float, default=0.1)
     parser.add_argument(
-        "--spark-dense-layers", type=int, default=1,
-        help="Number of leading transformer layers kept dense in Spark mode (default: 1).",
+        "--spark-dense-layers", type=int, default=0,
+        help="Number of leading transformer layers kept dense in Spark mode (default: 0).",
     )
     parser.add_argument(
         "--spark-layout-reuse",

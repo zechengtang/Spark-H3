@@ -79,9 +79,10 @@ class H3LBHOfficialConfig:
     lift_only: bool = False
     use_spark: bool = False
     spark_overrides: dict = field(default_factory=lambda: {
-        "warmup_percent": 0.0,
+        "warmup_mode": "warmup_steps",
+        "warmup_steps": 0,
         "sol_route_topk_ratio": 0.1,
-        "sol_dense_layers": 1,
+        "sol_dense_layers": 0,
         "landmark_tree_v2_layout_reuse": "q_from_k",
     })
 
@@ -377,7 +378,9 @@ class MiniMaxH3LBHOfficialDenoiseStep(MiniMaxH3DenoiseStep):
                 from h3_sparse_attention import install_h3_spark_attn
 
                 context = install_h3_spark_attn(
-                    transformer, num_inference_steps=high_evaluations + 1, **dict(cfg.spark_overrides)
+                    transformer,
+                    num_denoise_steps=high_evaluations,
+                    **dict(cfg.spark_overrides),
                 )
             with context:
                 for index, t in enumerate(block_state.timesteps):
