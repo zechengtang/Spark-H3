@@ -1,4 +1,5 @@
 *.safetensors
+!comfyui/assets/adaln_curve_projection.safetensors
 __pycache__/
 *.py[cod]
 .pytest_cache/
