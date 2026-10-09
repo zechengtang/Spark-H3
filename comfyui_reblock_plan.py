@@ -8,6 +8,9 @@ from __future__ import annotations
 import torch
 
 
+BLOCK_SIZE = 64
+
+
 @torch.no_grad()
 def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
     try:
@@ -21,7 +24,6 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
         from .h3_sparse_attention.mahalanobis_kmeans import (
             hilbert_midpoint_sample_indices,
         )
-        from .h3_sparse_attention.rope_sol_kernel import BLOCK_SIZE
     except ImportError:  # Direct source-tree imports used by tests and development.
         from h3_sparse_attention.landmark_direction import (
             landmark_direction_factors,
@@ -33,7 +35,6 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
         from h3_sparse_attention.mahalanobis_kmeans import (
             hilbert_midpoint_sample_indices,
         )
-        from h3_sparse_attention.rope_sol_kernel import BLOCK_SIZE
 
     if query_bthd.shape != key_bthd.shape or query_bthd.ndim != 4:
         raise ValueError("paired ComfyUI reblock requires equal BTHD Q/K")

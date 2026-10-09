@@ -580,7 +580,7 @@
         "topk_ratio",
         0.2,
         228,
-        1,
+        0,
         12288,
         true,
         "query",
@@ -595,7 +595,7 @@
         "topk_mode": "topk_ratio",
         "topk_ratio": 0.2,
         "topk_blocks": 228,
-        "dense_layers": 1,
+        "dense_layers": 0,
         "min_tokens": 12288,
         "strict": true,
         "tail_granularity": "query",
@@ -1160,10 +1160,10 @@
       "title": "Example guide · 14.4s",
       "properties": {},
       "widgets_values": [
-        "# Spark-H3 + DMAD 4-step LoRA\n\n- LoRA: `dmad_minimax_h3_4step_lora_critic_comfyui_bf16.safetensors` at strength 1.0.\n- Model sampling: MiniMax-H3 video shift 12, audio shift 2.\n- Scheduler: `simple`, 4 steps; Spark `steps=4`, `warmup_ratio=0.25` (first evaluation dense), `topk_ratio=0.2`, `dense_layers=1`.\n- Sampler: `MiniMaxH3DMADSampler`, implementing DMAD's re-noise rule.\n- Upstream DMAD sweater prompt; T2VA with synchronized audio: 124 frames (5.2 s) at 24 fps, 1344×768, seed 42.\n- Load the converted LoRA, apply the 12/2 sigma shift, then Spark; Spark output feeds both BasicGuider and BasicScheduler.\n"
+        "# Spark-H3 + DMAD 4-step LoRA\n\n- LoRA: `dmad_minimax_h3_4step_lora_critic_comfyui_bf16.safetensors` at strength 1.0.\n- Model sampling: MiniMax-H3 video shift 12, audio shift 2.\n- Scheduler: `simple`, 4 steps; Spark `steps=4`, `warmup_ratio=0.25` (first evaluation dense), `topk_ratio=0.2`, `dense_layers=0`.\n- Sampler: `MiniMaxH3DMADSampler`, implementing DMAD's re-noise rule.\n- Upstream DMAD sweater prompt; T2VA with synchronized audio: 124 frames (5.2 s) at 24 fps, 1344×768, seed 42.\n- Load the converted LoRA, apply the 12/2 sigma shift, then Spark; Spark output feeds both BasicGuider and BasicScheduler.\n"
       ],
       "widgets_values_named": {
-        "text": "# Spark-H3 + DMAD 4-step LoRA\n\n- LoRA: `dmad_minimax_h3_4step_lora_critic_comfyui_bf16.safetensors` at strength 1.0.\n- Model sampling: MiniMax-H3 video shift 12, audio shift 2.\n- Scheduler: `simple`, 4 steps; Spark `steps=4`, `warmup_ratio=0.25` (first evaluation dense), `topk_ratio=0.2`, `dense_layers=1`.\n- Sampler: `MiniMaxH3DMADSampler`, implementing DMAD's re-noise rule.\n- Upstream DMAD sweater prompt; T2VA with synchronized audio: 124 frames (5.2 s) at 24 fps, 1344×768, seed 42.\n- Load the converted LoRA, apply the 12/2 sigma shift, then Spark; Spark output feeds both BasicGuider and BasicScheduler.\n"
+        "text": "# Spark-H3 + DMAD 4-step LoRA\n\n- LoRA: `dmad_minimax_h3_4step_lora_critic_comfyui_bf16.safetensors` at strength 1.0.\n- Model sampling: MiniMax-H3 video shift 12, audio shift 2.\n- Scheduler: `simple`, 4 steps; Spark `steps=4`, `warmup_ratio=0.25` (first evaluation dense), `topk_ratio=0.2`, `dense_layers=0`.\n- Sampler: `MiniMaxH3DMADSampler`, implementing DMAD's re-noise rule.\n- Upstream DMAD sweater prompt; T2VA with synchronized audio: 124 frames (5.2 s) at 24 fps, 1344×768, seed 42.\n- Load the converted LoRA, apply the 12/2 sigma shift, then Spark; Spark output feeds both BasicGuider and BasicScheduler.\n"
       },
       "color": "#222",
       "bgcolor": "#000"

@@ -14,6 +14,7 @@ if str(COMFY) not in sys.path:
 from comfyui_nodes import (
     LoadMiniMaxH3AVLatentCache,
     MiniMaxH3SolAttentionSM120,
+    MiniMaxH3SparkAttentionSM89,
     MiniMaxH3SparkAttentionSM120,
     SaveMiniMaxH3AVLatentCache,
     _RunState,
@@ -89,10 +90,13 @@ def test_spark_warmup_steps_mode_and_limits():
         fixed.begin_evaluation({"sigmas": torch.tensor([1.0 - index * 0.1])})
         assert fixed.is_warmup == (index < 4)
     inputs = MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]
+    assert MiniMaxH3SparkAttentionSM89.TARGET_CAPABILITY == (8, 9)
+    assert MiniMaxH3SparkAttentionSM120.TARGET_CAPABILITY == (12, 0)
     assert inputs["warmup_mode"][0] == ["warmup_ratio", "warmup_steps"]
     assert inputs["warmup_ratio"][1]["default"] == 0.2
     assert list(inputs).index("warmup_mode") < list(inputs).index("warmup_ratio") < list(inputs).index("warmup_steps")
     assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["topk_ratio"][1]["default"] == 0.2
+    assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["dense_layers"][1]["default"] == 0
     assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["min_tokens"][1]["default"] == 12288
     assert "warmup_mode" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["required"]
     with pytest.raises(ValueError, match="warmup_mode"):
@@ -263,7 +267,7 @@ def test_comfy_q_reuse_k_aliases_independent_key_layout_bitwise(
     ]
     assert plans
     assert all(not plan.graph_active for plan in plans)
-    if tuple(torch.cuda.get_device_capability()) != (12, 0):
+    if tuple(torch.cuda.get_device_capability()) not in ((8, 9), (12, 0)):
         return
 
     expected_layout = (independent[2], None, independent[2], None)
@@ -285,6 +289,10 @@ def test_comfy_q_reuse_k_aliases_independent_key_layout_bitwise(
         shared_controller, query, key, value, layout, layer=1
     )
     assert torch.equal(actual, expected)
+    assert independent_controller.backend == "comfy-kitchen-spark-global"
+    assert shared_controller.backend == "comfy-kitchen-spark-global"
+    assert independent_controller.counts["comfy_kitchen_calls"] == 1
+    assert shared_controller.counts["comfy_kitchen_calls"] == 1
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
@@ -506,8 +514,9 @@ def test_comfyui_pipeline_does_not_import_diffusers_pipeline():
 
 
 @pytest.mark.skipif(
-    not torch.cuda.is_available() or torch.cuda.get_device_capability() != (12, 0),
-    reason="SM120 CUDA device required",
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() not in ((8, 9), (12, 0)),
+    reason="SM89 or SM120 CUDA device required",
 )
 def test_comfy_native_chunked_qkv_matches_monolithic_projection():
     import comfy.model_management

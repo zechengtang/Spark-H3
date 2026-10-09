@@ -1,6 +1,6 @@
 # ComfyUI Spark 节点参数
 
-节点名称：`MiniMax H3 Spark Attention (SM120)`。把它接在 MiniMax H3 模型加载节点与采样器之间。界面中的每个输入也有中文悬浮说明。
+节点名称：RTX 4090 使用 `MiniMax H3 Spark Attention (SM89)`，RTX 50 系使用 `MiniMax H3 Spark Attention (SM120)`。把对应节点接在 MiniMax H3 模型加载节点与采样器之间。两个节点的参数接口相同，界面中的每个输入也有中文悬浮说明。
 
 `warmup_mode` 显示在预热参数上方，`topk_mode` 显示在 Top-K 参数上方。每组只显示当前模式使用的数值框；切换模式不会清除另一模式原来填写的值。如果把模式接成外部输入，界面会显示该组的两个数值框，因为实际模式要到运行时才能确定。旧工作流中的 `warmup_percent=20/25` 会在前端加载时迁移为 `warmup_ratio=0.2/0.25`。
 
@@ -19,7 +19,7 @@
 | `steps` | 一次采样的模型调用次数，用于按步数计算预热。通常与采样器的 `steps` 相同；应按实际模型调用次数设置。 |
 | `warmup_ratio` | 开始时保持 dense 的采样调用比例；建议 **0.2–0.25**。例如 20 步采样填 `0.2`，前 4 次调用为 dense。仅在 `warmup_mode=warmup_ratio` 时生效。 |
 | `topk_ratio` | 精确计算的候选视频块比例：`0.1≈10%` 速度最快，`0.3≈30%` 保真度最好，建议 `0.15` 或 `0.2` 取得均衡。仅在 `topk_mode=topk_ratio` 时生效。 |
-| `dense_layers` | 前多少个 Transformer 层始终使用 dense attention。默认 `1` 表示第 0 层；`0` 表示没有固定 dense 层。 |
+| `dense_layers` | 前多少个 Transformer 层始终使用 dense attention。默认 `0`，表示没有固定 dense 层。 |
 | `min_tokens` | 序列 token 数低于此阈值时保持 dense。默认 `12288`，避免短序列走稀疏路径的固定开销；它不是 Top-K 的块数。 |
 | `strict` | 开启时，遇到 Spark 不支持的输入直接报错；关闭时回退到原 attention 并在日志中记录原因。建议调试时开启，以免误把回退结果当作 Spark。 |
 | `topk_mode` | Top-K 预算方式：默认 `topk_ratio`，用随视频长度变化的比例；`topk_blocks` 用固定块数。 |

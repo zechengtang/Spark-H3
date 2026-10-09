@@ -35,7 +35,6 @@ except ImportError:  # standalone source-tree tests
 
 
 log = logging.getLogger(__name__)
-_SM120 = (12, 0)
 _PRODUCER_CHUNK = int(os.environ.get("H3_SPARK_PRODUCER_CHUNK", "16384"))
 if _PRODUCER_CHUNK <= 0:
     raise ValueError("H3_SPARK_PRODUCER_CHUNK must be positive")
@@ -98,6 +97,7 @@ class _RunState:
     steps: int
     warmup_ratio: float
     controller: ComfySparkController
+    target_capability: tuple[int, int] = (12, 0)
     warmup_mode: str = "warmup_ratio"
     warmup_steps: int = 4
     previous_sigma: float | None = None
@@ -119,6 +119,7 @@ class _RunState:
         warmup_mode: str = "warmup_ratio",
         warmup_steps: int = 4,
         reblock_layout: str = "q_reuse_k",
+        target_capability: tuple[int, int] = (12, 0),
     ):
         if warmup_mode not in ("warmup_ratio", "warmup_steps"):
             raise ValueError("warmup_mode must be 'warmup_ratio' or 'warmup_steps'")
@@ -165,6 +166,7 @@ class _RunState:
             )
         state = cls(
             steps, warmup_ratio, ComfySparkController(config),
+            target_capability=target_capability,
             warmup_mode=warmup_mode, warmup_steps=warmup_steps,
         )
         state.controller.topk_only = ablation_mode == "topk_only"
@@ -217,10 +219,12 @@ class _ActivationLog:
         self.active = False
         self.fallbacks: set[str] = set()
 
-    def hit(self, tokens: int, video_tokens: int) -> None:
+    def hit(self, tokens: int, video_tokens: int, capability: tuple[int, int]) -> None:
         if not self.active:
             log.info(
-                "[Spark-H3] active on SM120 (%d packed tokens, %d target-video tokens)",
+                "[Spark-H3] active on SM%d%d (%d packed tokens, %d target-video tokens)",
+                capability[0],
+                capability[1],
                 tokens,
                 video_tokens,
             )
@@ -258,12 +262,15 @@ def _native_spark_eligible(attn, x, rope_freqs, transformer_options, layer, poli
             raise _Incompatible(reason)
         return reason, True
     if x.dtype != torch.bfloat16 or x.device.type != "cuda":
-        reason = "Spark SM120 requires CUDA bfloat16 activations"
+        reason = "Spark-H3 requires CUDA bfloat16 activations"
     elif int(attn.head_dim) != 128:
         reason = f"head_dim {attn.head_dim} != 128"
-    elif torch.cuda.get_device_capability(x.device) != _SM120:
+    elif tuple(torch.cuda.get_device_capability(x.device)) != state.target_capability:
         capability = torch.cuda.get_device_capability(x.device)
-        reason = f"this node targets SM120, found SM{capability[0]}{capability[1]}"
+        reason = (
+            f"this node targets SM{state.target_capability[0]}"
+            f"{state.target_capability[1]}, found SM{capability[0]}{capability[1]}"
+        )
     elif transformer_options.get("minimax_h3_layout") is None:
         reason = "ComfyUI did not publish minimax_h3_layout"
     else:
@@ -468,7 +475,11 @@ def _native_spark_attention(attn, x, rope_freqs, transformer_options, layer, sta
     if not state.controller.output_in_original_layout:
         output = output.index_select(1, layout.inverse_permutation)
     state.controller.counts["sparse:spark_comfy_native"] += 1
-    activation_log.hit(x.shape[0], layout.video_tokens)
+    activation_log.hit(
+        x.shape[0],
+        layout.video_tokens,
+        tuple(torch.cuda.get_device_capability(x.device)),
+    )
     output = attn.out_proj(
         output.reshape(x.shape[0], int(attn.heads) * int(attn.head_dim))
     )
@@ -517,6 +528,8 @@ def _make_native_spark_block_patch(block, layer, policy, state, activation_log, 
 class MiniMaxH3SparkAttentionSM120:
     """Run Spark through ComfyUI's native MiniMax-H3 block-patch architecture."""
 
+    TARGET_CAPABILITY = (12, 0)
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -556,8 +569,8 @@ class MiniMaxH3SparkAttentionSM120:
                 ),
                 "dense_layers": (
                     "INT",
-                    {"default": 1, "min": 0, "max": 50, "step": 1,
-                     "tooltip": "始终使用 dense attention 的前 N 个 Transformer 层；1 表示第 0 层保持 dense，0 表示不固定任何层。"},
+                    {"default": 0, "min": 0, "max": 50, "step": 1,
+                     "tooltip": "始终使用 dense attention 的前 N 个 Transformer 层；默认 0 表示不固定任何层。"},
                 ),
                 "min_tokens": (
                     "INT",
@@ -632,6 +645,7 @@ class MiniMaxH3SparkAttentionSM120:
             warmup_mode=str(warmup_mode),
             warmup_steps=int(warmup_steps),
             reblock_layout=str(reblock_layout),
+            target_capability=self.TARGET_CAPABILITY,
         )
         model_sampling = model.get_model_object("model_sampling")
         policy = SparseAttnPatch(
@@ -765,6 +779,18 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
             int(dense_layers),
         )
         return (patched,)
+
+
+class MiniMaxH3SparkAttentionSM89(MiniMaxH3SparkAttentionSM120):
+    """Run the native comfy-kitchen Spark kernel compiled for Ada SM89."""
+
+    TARGET_CAPABILITY = (8, 9)
+
+    DESCRIPTION = (
+        "Patch ComfyUI's native MiniMax H3 DiT with the comfy-kitchen "
+        "Spark-H3 CUDA kernel compiled for RTX 4090 (SM89). Connect it after "
+        "UNETLoader and set steps to the sampler's model-evaluation count."
+    )
 
 
 class MiniMaxH3BSAAllExactScheduled:
@@ -970,6 +996,7 @@ class SaveVideoLosslessUltrafast:
 
 NODE_CLASS_MAPPINGS = {
     "MiniMaxH3SparkAttentionSM120": MiniMaxH3SparkAttentionSM120,
+    "MiniMaxH3SparkAttentionSM89": MiniMaxH3SparkAttentionSM89,
     "MiniMaxH3SolAttentionSM120": MiniMaxH3SolAttentionSM120,
     "MiniMaxH3BSAAllExactScheduled": MiniMaxH3BSAAllExactScheduled,
     "SaveMiniMaxH3AVLatentCache": SaveMiniMaxH3AVLatentCache,
@@ -979,6 +1006,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3SparkAttentionSM120": "MiniMax H3 Spark Attention (SM120)",
+    "MiniMaxH3SparkAttentionSM89": "MiniMax H3 Spark Attention (SM89)",
     "MiniMaxH3SolAttentionSM120": "MiniMax H3 Sol Attention (Official Compatibility)",
     "MiniMaxH3BSAAllExactScheduled": "MiniMax H3 BSA All-Exact (Scheduled Dense Control)",
     "SaveMiniMaxH3AVLatentCache": "Save MiniMax H3 AV Latent Cache",

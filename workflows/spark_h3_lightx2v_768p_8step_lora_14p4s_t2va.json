@@ -569,7 +569,7 @@
       "properties": {
         "Node name for S&R": "MiniMaxH3SparkAttentionSM120",
         "cnr_id": "comfyui-spark-h3",
-        "ver": "0.1.0"
+        "ver": "0.1.1"
       },
       "widgets_values": [
         true,
@@ -580,7 +580,7 @@
         "topk_ratio",
         0.2,
         228,
-        1,
+        0,
         12288,
         true,
         "query",
@@ -595,13 +595,13 @@
         "topk_mode": "topk_ratio",
         "topk_ratio": 0.2,
         "topk_blocks": 228,
-        "dense_layers": 1,
+        "dense_layers": 0,
         "min_tokens": 12288,
         "strict": true,
         "tail_granularity": "query",
         "reblock_layout": "q_reuse_k"
       },
-      "title": "Spark-H3 · TopK 228 blocks"
+      "title": "Spark-H3 · TopK 20% ratio"
     },
     {
       "id": 126,
@@ -1178,10 +1178,10 @@
       "title": "Example guide · 14.4s",
       "properties": {},
       "widgets_values": [
-        "# Spark-H3 + lightx2v_768p 8-step LoRA\n\n- LoRA: `minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_ratio=0.25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=1`.\n- Sampler: `KSamplerSelect`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n"
+        "# Spark-H3 + lightx2v_768p 8-step LoRA\n\n- LoRA: `minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_ratio=0.25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=0`.\n- Sampler: `KSamplerSelect`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n"
       ],
       "widgets_values_named": {
-        "text": "# Spark-H3 + lightx2v_768p 8-step LoRA\n\n- LoRA: `minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_ratio=0.25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=1`.\n- Sampler: `KSamplerSelect`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n"
+        "text": "# Spark-H3 + lightx2v_768p 8-step LoRA\n\n- LoRA: `minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_ratio=0.25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=0`.\n- Sampler: `KSamplerSelect`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n"
       },
       "color": "#222",
       "bgcolor": "#000"

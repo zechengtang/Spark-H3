@@ -1,11 +1,11 @@
-# ComfyUI plugin (SM120)
+# ComfyUI plugin (SM89 and SM120)
 
 This repository is also a ComfyUI custom node for the native MiniMax-H3 model.
 Its current implementation and cross-pipeline differences are described in the
 [ComfyUI guide](comfyui/README.md#实现说明).
-The node uses the bundled Spark-H3 kernels on NVIDIA SM120 GPUs (for example,
-GeForce RTX 50-series) and keeps all packed text, image/video reference, and
-audio conditioning exact.
+The node uses architecture-specific comfy-kitchen Spark-H3 CUDA kernels on
+NVIDIA SM89 (RTX 4090) and SM120 (RTX 50-series) GPUs and keeps all packed
+text, image/video reference, and audio conditioning exact.
 
 The integration is built on ComfyUI's official MiniMax-H3 sparse-attention
 architecture and the comfy-kitchen v0.2.36 Sol kernel stack. It installs
@@ -20,15 +20,25 @@ dense. It does not replace each attention module's `forward` method.
 
 ## Install
 
-The recommended release artifact is the standalone
-`ComfyUI-Spark-H3-<version>.zip`. It contains only the custom node, its reblock
-runtime, workflows, and compatible backend wheels—not this repository's model
-or research assets. Extract it below `custom_nodes` and run its installer with
-the same Python interpreter that starts ComfyUI:
+This release provides three architecture-specific archives:
+
+| GPU | CUDA toolkit | Release archive |
+| --- | --- | --- |
+| SM120 (RTX 50 series) | 12.8 | `ComfyUI-Spark-H3-<version>-cu128.zip` |
+| SM120 (RTX 50 series) | 13.0 | `ComfyUI-Spark-H3-<version>-cu130.zip` |
+| SM89 (RTX 4090) | 13.0 | `ComfyUI-Spark-H3-<version>-sm89-cu130.zip` |
+
+Select the archive matching both the GPU architecture and
+`torch.version.cuda`. An SM89 CUDA 12.8 archive is not part of this release;
+use `install.py --source` with a matching local CUDA toolkit for that
+configuration. Each archive contains only the custom node, its reblock runtime,
+workflows, and compatible backend wheels—not this repository's model or research
+assets. Extract it below `custom_nodes` and run its installer with the same
+Python interpreter that starts ComfyUI:
 
 ```bash
 cd /path/to/ComfyUI/custom_nodes
-unzip /path/to/ComfyUI-Spark-H3-<version>.zip
+unzip /path/to/ComfyUI-Spark-H3-<version>-cu130.zip  # SM120 example
 /path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
 ```
 
@@ -42,15 +52,17 @@ then selects a bundled or pinned-release wheel. It falls back to building the
 pinned, patched `comfy-kitchen` source only when no wheel matches. Source builds
 require Git, CMake, Ninja, a C++ compiler, and CUDA `nvcc`.
 
-The current prebuilt wheels target Linux x86_64, Python 3.12+, CUDA 13.0, and
-SM120. CUDA 12.8/12.9 users must run `install.py --source` with the matching
-local CUDA toolkit. Python 3.10/3.11 also requires its own wheel or source
-compilation. Windows packaging is prepared, but the Windows wheel and SM120
-runtime have not yet been validated. This release does not support non-SM120
-GPUs.
+The backend wheels are architecture-specific: SM89 is compiled with CUDA
+architecture `89`, while SM120 is compiled with `120f`. The prebuilt matrix is
+exactly the three combinations listed above. CUDA 12.9 and SM89 CUDA 12.8 users
+must run `install.py --source` with the matching local CUDA toolkit. Python
+3.10/3.11 also requires its own wheel or source compilation. Windows packaging
+is prepared, but the Windows runtime has not yet been validated. Other GPU
+architectures are unsupported.
 
-Restart ComfyUI afterward; the node appears as **MiniMax H3 Spark Attention
-(SM120)** in `model_patches/attention`. See the dedicated
+Restart ComfyUI afterward; select **MiniMax H3 Spark Attention (SM89)** on an
+RTX 4090 or **MiniMax H3 Spark Attention (SM120)** on an RTX 50-series GPU.
+Both appear in `model_patches/attention`. See the dedicated
 [ComfyUI installation and workflow guide](comfyui/README.md) for model files and
 examples.
 
@@ -59,14 +71,15 @@ examples.
 Insert the node after `UNETLoader` and before `BasicGuider`:
 
 ```text
-UNETLoader -> MiniMax H3 Spark Attention (SM120) -> BasicGuider
+UNETLoader -> MiniMax H3 Spark Attention (SM89 or SM120) -> BasicGuider
 ```
 
 The [14.4 s native model example](workflows/spark_h3_vdn8_14p4s_t2va.json)
 uses the complete three-shot VDN prompt 8, 345 frames at 1344×768, and a
 20-step sampler. It has one Spark patch in the model path, without a Turbo
-LoRA or a second sparse-attention patch. Bundled workflows default to the
-official `minimax_h3_video_vae_fp16.safetensors`.
+LoRA or a second sparse-attention patch. It uses the same 20% Top-K ratio as
+the LoRA examples, with four dense warmup evaluations. Bundled workflows
+default to the official `minimax_h3_video_vae_fp16.safetensors`.
 
 Two matching 14.4-second, 8-step LoRA examples use the same full prompt,
 seed, resolution, Spark 20% Top-K ratio, and two dense warmup evaluations. The
@@ -76,14 +89,29 @@ respective students:
 | Workflow | LoRA loader | Sampler |
 | --- | --- | --- |
 | [LightX2V 768p 8-step LoRA](workflows/spark_h3_lightx2v_768p_8step_lora_14p4s_t2va.json) | `LoraLoaderModelOnly` | `res_multistep` |
-| [Larryvrh v4 8-step LoRA](workflows/spark_h3_larryvrh_8step_lora_14p4s_t2va.json) | `MiniMaxH3TurboLoRA` | `MiniMaxH3TurboSampler` |
+| [Larryvrh v4 8-step LoRA](workflows/spark_h3_larryvrh_8step_lora_14p4s_t2va.json) | `LoraLoaderModelOnly` (converted weight) | `euler` |
 | [DMAD 4-step LoRA](workflows/spark_h3_dmad_4step_lora_5p2s_t2va.json) | `LoraLoaderModelOnly` | `MiniMaxH3DMADSampler` |
+| [Official LBH two-pass + LightX2V 4-step](workflows/spark_h3_lbh_official_lightx2v_4step_5p2s_i2va.json) | `LoraLoaderModelOnly` | two `SamplerCustomAdvanced` passes |
 | [Alibaba-PAI PDD Acc FL2VA 8-step LoRA](workflows/spark_h3_alibaba_pai_acc_fl2va_8step_lora_5p2s_t2va.json) | `MiniMaxH3PDDAccApply` | `euler` + node-provided sigmas |
 
-Larryvrh's LoRA requires its custom loader; the stock LoRA loader cannot
-apply that file to the local pruned base. The workflows use filenames from the
-local ComfyUI LoRA model path. Both the LightX2V and Larryvrh examples remain
-in the standalone ZIP as explicitly labelled optional integrations.
+Larryvrh's original LoRA names its tensors differently and targets the full
+2688-wide AdaLN time embedding, while the pruned ComfyUI model stores an
+8-dimensional time-curve basis. Convert it once with
+`tools/convert_larryvrh_lora_comfyui.py`; the result preserves the 208 backbone
+updates and projects all 51 AdaLN updates into that curve basis. The bundled
+workflow then follows the same low-overhead path as LightX2V: stock
+`LoraLoaderModelOnly` plus a stock sampler, with no runtime-LoRA matmuls or
+Larryvrh custom node. The measured projection error before the AdaLN output
+matrix is about 0.10% mean and 0.22% worst-case for the published v4 weight.
+
+```bash
+python tools/convert_larryvrh_lora_comfyui.py \
+  --input /path/to/minimax_h3_turbo_v4_step600_ema.safetensors \
+  --output /path/to/ComfyUI/models/loras/minimax_h3_turbo_v4_step600_ema_comfyui_curve_bf16.safetensors
+```
+
+Both the LightX2V and Larryvrh examples remain in the standalone ZIP as
+explicitly labelled optional integrations.
 
 DMAD publishes a Diffusers-format rank-128 LoRA. Convert it before selecting it
 in `LoraLoaderModelOnly`:
@@ -100,6 +128,17 @@ applies `MiniMaxH3SigmaShift` with video shift 12 and audio shift 2 before
 Spark. Use the bundled `MiniMaxH3DMADSampler`; a regular Euler or
 `res_multistep` sampler does not implement the re-noise rule used to train the
 released student.
+
+The LBH example follows the repository's `h3_lbh` implementation and LBH's
+published ComfyUI graph. It requires
+`LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler` and
+`minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors` under
+`ComfyUI/models/latent_upscale_models/`. The first pass consumes four
+evaluations from an eight-point `simple` schedule at 0.2 MP. Its clean
+`denoised_output` is separated into video and audio; only the video latent is
+lifted. The second pass re-noises at 0.98 MP and runs three evaluations at
+video sigmas `0.9035, 0.6316, 0.3158, 0.0`. Spark applies only to this
+high-resolution pass, with no warmup and the Diffusers-side 10% Top-K setting.
 
 Alibaba-PAI's MiniMax-H3-Acc checkpoints are also Diffusers-side weights, but
 they are not ordinary PEFT LoRAs. Each file contains a rank-64 trunk LoRA and
@@ -152,7 +191,7 @@ dtype, GPU, or kernel error instead of silently switching to dense attention.
 Requirements:
 
 - ComfyUI 0.38.x or 0.39.x with native MiniMax-H3 support.
-- CUDA BF16 execution on a compute-capability 12.0 GPU.
+- CUDA BF16 execution on a compute-capability 8.9 or 12.0 GPU.
 - The ComfyUI-supported PyTorch/CUDA stack and a comfy-kitchen build containing
   the Spark Top-K, reblock, and global-reweight extension.
 

@@ -71,7 +71,7 @@
     },
     {
       "id": 142,
-      "type": "MiniMaxH3TurboLoRA",
+      "type": "LoraLoaderModelOnly",
       "pos": [
         -1300,
         -40
@@ -98,18 +98,10 @@
           "link": null
         },
         {
-          "name": "strength",
+          "name": "strength_model",
           "type": "FLOAT",
           "widget": {
-            "name": "strength"
-          },
-          "link": null
-        },
-        {
-          "name": "low_vram",
-          "type": "BOOLEAN",
-          "widget": {
-            "name": "low_vram"
+            "name": "strength_model"
           },
           "link": null
         }
@@ -124,17 +116,17 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3TurboLoRA"
+        "Node name for S&R": "LoraLoaderModelOnly",
+        "cnr_id": "comfy-core",
+        "ver": "0.33.0"
       },
       "widgets_values": [
-        "minimax_h3_turbo_v4_step600_ema.safetensors",
-        1.0,
-        false
+        "minimax_h3_turbo_v4_step600_ema_comfyui_curve_bf16.safetensors",
+        1.0
       ],
       "widgets_values_named": {
-        "lora_name": "minimax_h3_turbo_v4_step600_ema.safetensors",
-        "strength": 1.0,
-        "low_vram": false
+        "lora_name": "minimax_h3_turbo_v4_step600_ema_comfyui_curve_bf16.safetensors",
+        "strength_model": 1.0
       }
     },
     {
@@ -579,7 +571,7 @@
       "properties": {
         "Node name for S&R": "MiniMaxH3SparkAttentionSM120",
         "cnr_id": "comfyui-spark-h3",
-        "ver": "0.1.0"
+        "ver": "0.1.1"
       },
       "widgets_values": [
         true,
@@ -590,7 +582,7 @@
         "topk_ratio",
         0.2,
         228,
-        1,
+        0,
         12288,
         true,
         "query",
@@ -605,13 +597,13 @@
         "topk_mode": "topk_ratio",
         "topk_ratio": 0.2,
         "topk_blocks": 228,
-        "dense_layers": 1,
+        "dense_layers": 0,
         "min_tokens": 12288,
         "strict": true,
         "tail_granularity": "query",
         "reblock_layout": "q_reuse_k"
       },
-      "title": "Spark-H3 · TopK 228 blocks"
+      "title": "Spark-H3 · TopK 20% ratio"
     },
     {
       "id": 126,
@@ -708,7 +700,7 @@
     },
     {
       "id": 123,
-      "type": "MiniMaxH3TurboSampler",
+      "type": "KSamplerSelect",
       "pos": [
         -350,
         100
@@ -720,7 +712,17 @@
       "flags": {},
       "order": 8,
       "mode": 0,
-      "inputs": [],
+      "inputs": [
+        {
+          "localized_name": "采样器名称",
+          "name": "sampler_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "sampler_name"
+          },
+          "link": null
+        }
+      ],
       "outputs": [
         {
           "localized_name": "采样器",
@@ -732,7 +734,15 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3TurboSampler"
+        "Node name for S&R": "KSamplerSelect",
+        "cnr_id": "comfy-core",
+        "ver": "0.33.0"
+      },
+      "widgets_values": [
+        "euler"
+      ],
+      "widgets_values_named": {
+        "sampler_name": "euler"
       }
     },
     {
@@ -1170,10 +1180,10 @@
       "title": "Example guide · 14.4s",
       "properties": {},
       "widgets_values": [
-        "# Spark-H3 + larryvrh 8-step LoRA\n\n- LoRA: `minimax_h3_turbo_v4_step600_ema.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_ratio=0.25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=1`.\n- Sampler: `MiniMaxH3TurboSampler`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n- Larryvrh uses its dedicated Turbo LoRA node with `low_vram=false`; do not use the stock LoRA loader for this weight.\n"
+        "# Spark-H3 + larryvrh 8-step LoRA\n\n- Converted LoRA: `minimax_h3_turbo_v4_step600_ema_comfyui_curve_bf16.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_ratio=0.25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=0`.\n- Sampler: stock `euler`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n- Convert the upstream Larryvrh weight once with `convert_larryvrh_lora_comfyui.py`. The converted file uses the same stock `LoraLoaderModelOnly` path as LightX2V and does not require the Larryvrh custom node.\n"
       ],
       "widgets_values_named": {
-        "text": "# Spark-H3 + larryvrh 8-step LoRA\n\n- LoRA: `minimax_h3_turbo_v4_step600_ema.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_ratio=0.25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=1`.\n- Sampler: `MiniMaxH3TurboSampler`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n- Larryvrh uses its dedicated Turbo LoRA node with `low_vram=false`; do not use the stock LoRA loader for this weight.\n"
+        "text": "# Spark-H3 + larryvrh 8-step LoRA\n\n- Converted LoRA: `minimax_h3_turbo_v4_step600_ema_comfyui_curve_bf16.safetensors` at strength 1.0.\n- Scheduler: `simple`, 8 steps; Spark `steps=8`, `warmup_ratio=0.25` (first 2 evaluations dense), `topk_ratio=0.2`, `dense_layers=0`.\n- Sampler: stock `euler`.\n- Original three-shot VDN prompt 8; text-to-video with synchronized audio: 345 frames (14.4 s) at 24 fps, 1344×768, seed 42. First/last frame inputs are empty.\n- Load the LoRA before Spark; Spark output feeds both BasicGuider and BasicScheduler.\n- Model files are searched through the local ComfyUI extra model paths.\n- Convert the upstream Larryvrh weight once with `convert_larryvrh_lora_comfyui.py`. The converted file uses the same stock `LoraLoaderModelOnly` path as LightX2V and does not require the Larryvrh custom node.\n"
       },
       "color": "#222",
       "bgcolor": "#000"

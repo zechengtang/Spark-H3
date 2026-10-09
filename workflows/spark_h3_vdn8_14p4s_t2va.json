@@ -511,7 +511,7 @@
       "properties": {
         "Node name for S&R": "MiniMaxH3SparkAttentionSM120",
         "cnr_id": "comfyui-spark-h3",
-        "ver": "0.1.0"
+        "ver": "0.1.1"
       },
       "widgets_values": [
         true,
@@ -519,10 +519,10 @@
         "warmup_ratio",
         0.2,
         4,
-        "topk_blocks",
+        "topk_ratio",
         0.2,
         228,
-        1,
+        0,
         12288,
         true,
         "query",
@@ -534,16 +534,16 @@
         "warmup_mode": "warmup_ratio",
         "warmup_ratio": 0.2,
         "warmup_steps": 4,
-        "topk_mode": "topk_blocks",
+        "topk_mode": "topk_ratio",
         "topk_ratio": 0.2,
         "topk_blocks": 228,
-        "dense_layers": 1,
+        "dense_layers": 0,
         "min_tokens": 12288,
         "strict": true,
         "tail_granularity": "query",
         "reblock_layout": "q_reuse_k"
       },
-      "title": "Spark-H3 · TopK 228 blocks"
+      "title": "Spark-H3 · TopK 20% ratio"
     },
     {
       "id": 126,
@@ -1120,10 +1120,10 @@
       "title": "Example guide · 14.4s",
       "properties": {},
       "widgets_values": [
-        "# Spark-H3 T2VA example · 14.4s\n\nOriginal VDN prompt 8, with all three shots and original shot timing.\n\n- H3 frame count: **345** at 24 fps (14.375 seconds).\n- Canvas: 1344×768. Seed: 42. BasicScheduler and Spark both use 20 steps.\n- Spark uses TopK 228 video blocks, 20% warmup, and its first transformer block dense.\n- Text to video: MiniMaxH3ImageToVideo has no first or last frame connected.\n- Install Spark-H3 as a ComfyUI custom node on an SM120 GPU. Model files and setup: [COMFYUI.md](https://github.com/zechengtang/Spark-H3/blob/main/COMFYUI.md).\n- The 5s and 10s prompts are adaptations, while 14.4s retains the exact VDN prompt."
+        "# Spark-H3 T2VA example · 14.4s\n\nOriginal VDN prompt 8, with all three shots and original shot timing.\n\n- H3 frame count: **345** at 24 fps (14.375 seconds).\n- Canvas: 1344×768. Seed: 42. BasicScheduler and Spark both use 20 steps.\n- Spark uses a 20% Top-K ratio, 20% warmup, and its first transformer block dense.\n- Text to video: MiniMaxH3ImageToVideo has no first or last frame connected.\n- Install Spark-H3 as a ComfyUI custom node on an SM120 GPU. Model files and setup: [COMFYUI.md](https://github.com/zechengtang/Spark-H3/blob/main/COMFYUI.md).\n- The 5s and 10s prompts are adaptations, while 14.4s retains the exact VDN prompt."
       ],
       "widgets_values_named": {
-        "text": "# Spark-H3 T2VA example · 14.4s\n\nOriginal VDN prompt 8, with all three shots and original shot timing.\n\n- H3 frame count: **345** at 24 fps (14.375 seconds).\n- Canvas: 1344×768. Seed: 42. BasicScheduler and Spark both use 20 steps.\n- Spark uses TopK 228 video blocks, 20% warmup, and its first transformer block dense.\n- Text to video: MiniMaxH3ImageToVideo has no first or last frame connected.\n- Install Spark-H3 as a ComfyUI custom node on an SM120 GPU. Model files and setup: [COMFYUI.md](https://github.com/zechengtang/Spark-H3/blob/main/COMFYUI.md).\n- The 5s and 10s prompts are adaptations, while 14.4s retains the exact VDN prompt."
+        "text": "# Spark-H3 T2VA example · 14.4s\n\nOriginal VDN prompt 8, with all three shots and original shot timing.\n\n- H3 frame count: **345** at 24 fps (14.375 seconds).\n- Canvas: 1344×768. Seed: 42. BasicScheduler and Spark both use 20 steps.\n- Spark uses a 20% Top-K ratio, 20% warmup, and its first transformer block dense.\n- Text to video: MiniMaxH3ImageToVideo has no first or last frame connected.\n- Install Spark-H3 as a ComfyUI custom node on an SM120 GPU. Model files and setup: [COMFYUI.md](https://github.com/zechengtang/Spark-H3/blob/main/COMFYUI.md).\n- The 5s and 10s prompts are adaptations, while 14.4s retains the exact VDN prompt."
       },
       "color": "#222",
       "bgcolor": "#000"

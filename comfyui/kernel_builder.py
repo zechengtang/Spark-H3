@@ -25,8 +25,14 @@ KITCHEN_TARGETS = {
     },
 }
 DEFAULT_KITCHEN_BASE = "0.2.37"
-SPARK_LOCAL_VERSION = "spark.h3.1"
-CUDA_ARCHS = "120f"
+DEFAULT_ARCHITECTURE = "sm120"
+ARCHITECTURES = {
+    "sm89": {"capability": (8, 9), "cuda_archs": "89", "local": "spark.h3.sm89.1"},
+    "sm120": {"capability": (12, 0), "cuda_archs": "120f", "local": "spark.h3.1"},
+}
+# Retain the public constant for existing SM120 release automation.
+SPARK_LOCAL_VERSION = ARCHITECTURES[DEFAULT_ARCHITECTURE]["local"]
+CUDA_ARCHS = ARCHITECTURES[DEFAULT_ARCHITECTURE]["cuda_archs"]
 
 
 def _run(command: list[str], *, cwd: Path | None = None, env=None) -> None:
@@ -46,20 +52,46 @@ def _patch_path(node_root: Path) -> Path:
     raise FileNotFoundError("the comfy-kitchen Spark patch is missing from this package")
 
 
-def _spark_version(kitchen_base: str) -> str:
+def _architecture(name: str) -> dict:
+    try:
+        return ARCHITECTURES[name]
+    except KeyError as error:
+        raise ValueError(
+            f"unsupported Spark architecture {name!r}; expected one of "
+            f"{', '.join(ARCHITECTURES)}"
+        ) from error
+
+
+def architecture_for_capability(capability: tuple[int, int]) -> str:
+    for name, target in ARCHITECTURES.items():
+        if tuple(target["capability"]) == tuple(capability):
+            return name
+    raise ValueError(
+        f"unsupported Spark GPU architecture SM{capability[0]}{capability[1]}"
+    )
+
+
+def _spark_version(
+    kitchen_base: str,
+    architecture: str = DEFAULT_ARCHITECTURE,
+) -> str:
     if kitchen_base not in KITCHEN_TARGETS:
         raise ValueError(
             f"unsupported comfy-kitchen base {kitchen_base!r}; expected one of "
             f"{', '.join(KITCHEN_TARGETS)}"
         )
-    return f"{kitchen_base}+{SPARK_LOCAL_VERSION}"
+    return f"{kitchen_base}+{_architecture(architecture)['local']}"
 
 
-def _set_local_version(source: Path, kitchen_base: str) -> None:
+def _set_local_version(
+    source: Path,
+    kitchen_base: str,
+    architecture: str = DEFAULT_ARCHITECTURE,
+) -> None:
     pyproject = source / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
     old = f'version = "{kitchen_base}"'
-    new = f'version = "{_spark_version(kitchen_base)}"'
+    new = f'version = "{_spark_version(kitchen_base, architecture)}"'
     if old not in text:
         raise RuntimeError(f"cannot find {old!r} in the pinned comfy-kitchen source")
     pyproject.write_text(text.replace(old, new, 1), encoding="utf-8")
@@ -71,6 +103,7 @@ def prepare_source(
     *,
     source_url: str,
     kitchen_base: str = DEFAULT_KITCHEN_BASE,
+    architecture: str = DEFAULT_ARCHITECTURE,
 ) -> Path:
     """Clone, pin, patch, and version the backend in ``destination``."""
 
@@ -78,7 +111,7 @@ def prepare_source(
         raise FileExistsError(f"build destination already exists: {destination}")
     target = KITCHEN_TARGETS.get(kitchen_base)
     if target is None:
-        _spark_version(kitchen_base)
+        _spark_version(kitchen_base, architecture)
     _run([
         "git", "clone", "--quiet", "--depth", "1", "--branch", target["tag"],
         "--recursive", source_url, str(destination),
@@ -91,7 +124,7 @@ def prepare_source(
     patch = _patch_path(node_root.resolve())
     _run(["git", "apply", "--check", str(patch)], cwd=destination)
     _run(["git", "apply", str(patch)], cwd=destination)
-    _set_local_version(destination, kitchen_base)
+    _set_local_version(destination, kitchen_base, architecture)
     return destination
 
 
@@ -102,8 +135,9 @@ def build_wheel(
     python: str = sys.executable,
     source_url: str = KITCHEN_SOURCE,
     kitchen_base: str = DEFAULT_KITCHEN_BASE,
+    architecture: str = DEFAULT_ARCHITECTURE,
 ) -> list[Path]:
-    """Build an SM120 wheel and return the newly-created wheel paths."""
+    """Build one architecture-specific wheel and return the created paths."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="spark-comfy-kitchen-") as temporary:
@@ -112,16 +146,19 @@ def build_wheel(
             Path(temporary) / "comfy-kitchen",
             source_url=source_url,
             kitchen_base=kitchen_base,
+            architecture=architecture,
         )
         env = os.environ.copy()
-        env.setdefault("COMFY_CUDA_ARCHS", CUDA_ARCHS)
+        env["COMFY_CUDA_ARCHS"] = str(_architecture(architecture)["cuda_archs"])
         _run(
             [python, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(output_dir), "."],
             cwd=source,
             env=env,
         )
     wheels = sorted(
-        output_dir.glob(f"comfy_kitchen-{_spark_version(kitchen_base)}-*.whl")
+        output_dir.glob(
+            f"comfy_kitchen-{_spark_version(kitchen_base, architecture)}-*.whl"
+        )
     )
     if not wheels:
         raise RuntimeError("comfy-kitchen build completed without producing a wheel")
@@ -134,6 +171,7 @@ def install_from_source(
     python: str = sys.executable,
     source_url: str = KITCHEN_SOURCE,
     kitchen_base: str = DEFAULT_KITCHEN_BASE,
+    architecture: str = DEFAULT_ARCHITECTURE,
 ) -> None:
     """Compile and install the pinned backend into ``python``."""
 
@@ -143,9 +181,10 @@ def install_from_source(
             Path(temporary) / "comfy-kitchen",
             source_url=source_url,
             kitchen_base=kitchen_base,
+            architecture=architecture,
         )
         env = os.environ.copy()
-        env.setdefault("COMFY_CUDA_ARCHS", CUDA_ARCHS)
+        env["COMFY_CUDA_ARCHS"] = str(_architecture(architecture)["cuda_archs"])
         _run(
             [python, "-m", "pip", "install", "--force-reinstall", "--no-deps", str(source)],
             env=env,
@@ -166,6 +205,12 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_KITCHEN_BASE,
         help="upstream comfy-kitchen version required by the target ComfyUI release",
     )
+    parser.add_argument(
+        "--architecture",
+        choices=tuple(ARCHITECTURES),
+        default=DEFAULT_ARCHITECTURE,
+        help="GPU architecture encoded into the comfy-kitchen Spark wheel",
+    )
     parser.add_argument("--install", action="store_true", help="install instead of building a wheel")
     args = parser.parse_args(argv)
     node_root = Path(__file__).resolve().parent
@@ -179,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             python=args.python,
             source_url=args.source_url,
             kitchen_base=args.kitchen_base,
+            architecture=args.architecture,
         )
     else:
         for wheel in build_wheel(
@@ -187,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
             python=args.python,
             source_url=args.source_url,
             kitchen_base=args.kitchen_base,
+            architecture=args.architecture,
         ):
             print(wheel)
     return 0
