@@ -226,8 +226,7 @@ def make_zip(
         )
     suffix = "-experimental" if experimental else ""
     suffix += f"-{platform_tag}"
-    if architecture != "sm120":
-        suffix += f"-{architecture}"
+    suffix += f"-{architecture}"
     if cuda_tag is not None:
         suffix += f"-{cuda_tag}"
     archive = output_dir / f"{PACKAGE_NAME}-{version}{suffix}.zip"

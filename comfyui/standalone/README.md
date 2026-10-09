@@ -21,7 +21,7 @@ This release provides the following Linux x86_64 architecture-specific archives:
 
 | GPU | CUDA toolkit | Release archive |
 | --- | --- | --- |
-| SM120 (RTX 50 series) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-cu130.zip` |
+| SM120 (RTX 50 series) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm120-cu130.zip` |
 | SM89 (RTX 4090) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm89-cu130.zip` |
 
 Select by both GPU architecture and `torch.version.cuda`. CUDA 12.8 has been
@@ -63,7 +63,7 @@ that starts ComfyUI:
 
 ```bash
 cd /path/to/ComfyUI/custom_nodes
-unzip /path/to/ComfyUI-Spark-H3-<version>-linux-x86_64-cu130.zip  # SM120 example
+unzip /path/to/ComfyUI-Spark-H3-<version>-linux-x86_64-sm120-cu130.zip  # SM120 example
 /path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
 ```
 

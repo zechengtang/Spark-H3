@@ -14,7 +14,7 @@
 
 | GPU | CUDA 工具链 | 安装包 |
 | --- | --- | --- |
-| SM120（RTX 50 系） | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-cu130.zip` |
+| SM120（RTX 50 系） | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm120-cu130.zip` |
 | SM89（RTX 4090） | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm89-cu130.zip` |
 
 请同时根据 GPU 架构和 `torch.version.cuda` 选择安装包。CUDA 12.8
@@ -66,7 +66,7 @@ wheel；安装器也会在安装 backend 前检查当前操作系统。Windows �
 
 ```bash
 cd /path/to/ComfyUI/custom_nodes
-unzip /path/to/ComfyUI-Spark-H3-<version>-linux-x86_64-cu130.zip  # SM120 示例
+unzip /path/to/ComfyUI-Spark-H3-<version>-linux-x86_64-sm120-cu130.zip  # SM120 示例
 /path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
 ```
 

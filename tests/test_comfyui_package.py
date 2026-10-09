@@ -239,7 +239,7 @@ def test_standalone_zip_has_one_installable_root(tmp_path):
         version="0.1.0",
         platform_tag="linux-x86_64",
     )
-    assert archive.name == "ComfyUI-Spark-H3-0.1.0-linux-x86_64.zip"
+    assert archive.name == "ComfyUI-Spark-H3-0.1.0-linux-x86_64-sm120.zip"
     with zipfile.ZipFile(archive) as bundle:
         names = bundle.namelist()
     assert names
@@ -360,7 +360,7 @@ def test_release_package_isolates_linux_and_windows_wheels(tmp_path):
         platform_tag="windows-x86_64",
     )
     assert windows_archive.name == (
-        "ComfyUI-Spark-H3-0.1.7-windows-x86_64-cu130.zip"
+        "ComfyUI-Spark-H3-0.1.7-windows-x86_64-sm120-cu130.zip"
     )
     with pytest.raises(ValueError, match="package platform 'windows-x86_64'"):
         builder.make_zip(
