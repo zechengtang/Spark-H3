@@ -1,4 +1,4 @@
-# Music candidates
+# Music source record
 
 Downloaded from the [Mixkit music collection](https://mixkit.co/free-stock-music/)
 under the [Mixkit Stock Music Free License](https://mixkit.co/license/#musicFree) on
@@ -23,5 +23,6 @@ under the [Mixkit Stock Music Free License](https://mixkit.co/license/#musicFree
 | `18-sun-kissed-skin-arulo.mp3` | Sun-Kissed Skin | Arulo | https://assets.mixkit.co/music/434/434.mp3 | Relaxed, positive contemporary R&B with acoustic guitar |
 | `19-look-at-the-bright-side-michael-ramir-c.mp3` | Look At The Bright Side | Michael Ramir C. | https://assets.mixkit.co/music/964/964.mp3 | Carefree, relaxed easy listening; gentle alternative |
 
-Keep this source record with any selected track. Check the linked license again before
-redistribution because external license terms can change.
+The audio files are intentionally not stored in Git. Download a selected track from its
+source only after checking the current license, then pass it to `build_demo.py --music`.
+Keep this source record with any published demo that uses one of the tracks.

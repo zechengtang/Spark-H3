@@ -1,0 +1,37 @@
+{
+  "source": "MiniMax-H3-Benchmark:official_refv2a_prompts",
+  "case": {
+    "name": "Official Ref2VA case",
+    "prompt": "Preserve the young man in a bright pink suit holding a black lamb in a sunlit pasture, animate his face to speak ‘Follow the wind, live free. Leave worries behind, enjoy the moment.’, retain the source background music, and synthesize the dialogue using the supplied male voice-timbre reference.",
+    "resolution": "1344x768",
+    "frames": 120,
+    "fps": 24,
+    "seed": 42,
+    "denoiser_steps": 19,
+    "sigma_points": 20,
+    "condition_video": "768p · 24 fps (480p · 12 fps when compressed)"
+  },
+  "variants": [
+    {
+      "variant": "dense",
+      "title": "Dense",
+      "detail": "19 steps · dense",
+      "denoise_seconds": 708.5329358614981,
+      "preview": "/ref2va/media/dense.mp4"
+    },
+    {
+      "variant": "spark_ref_target",
+      "title": "Spark-H3, 10%",
+      "detail": "19 steps · 90% sparsity",
+      "denoise_seconds": 455.04901690781116,
+      "preview": "/ref2va/media/spark_ref_target.mp4"
+    },
+    {
+      "variant": "spark_ref_target_condition_compression",
+      "title": "Spark-H3, 10% + Compact Cond",
+      "detail": "19 steps · 90% sparsity",
+      "denoise_seconds": 202.64314380660653,
+      "preview": "/ref2va/media/spark_ref_target_condition_compression.mp4"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+ "name": "SelfLift two-stage sampling based on LBH upsampler",
+ "protocol": {
+  "frames": 240,
+  "fps": 24,
+  "target_resolution": [1344, 768],
+  "low_resolution": [608, 352],
+  "low_nfe": 4,
+  "high_nfe": 3,
+  "seed": 42,
+  "torch_compile": true,
+  "transformer_placement": "resident",
+  "spark_scope": "high_resolution_only",
+  "spark_density": 0.1
+ },
+ "variants": [
+  {
+   "variant": "0753_dense",
+   "status": "complete",
+   "denoise_seconds": 108.51375488936901,
+   "preview": "/selflift/media/0753_dense.mp4",
+   "archive": "${H3_OUTPUTS_ROOT}/lbh_blog2_2variant_compile_resident_20261008/0753_dense.mp4"
+  },
+  {
+   "variant": "0753_spark",
+   "status": "complete",
+   "denoise_seconds": 59.8145266585052,
+   "preview": "/selflift/media/0753_spark.mp4",
+   "archive": "${H3_OUTPUTS_ROOT}/lbh_blog2_2variant_compile_resident_20261008/0753_spark.mp4"
+  },
+  {
+   "variant": "0685_dense",
+   "status": "complete",
+   "denoise_seconds": 108.85739209875464,
+   "preview": "/selflift/media/0685_dense.mp4",
+   "archive": "${H3_OUTPUTS_ROOT}/lbh_blog2_2variant_compile_resident_20261008/0685_dense.mp4"
+  },
+  {
+   "variant": "0685_spark",
+   "status": "complete",
+   "denoise_seconds": 59.518013559281826,
+   "preview": "/selflift/media/0685_spark.mp4",
+   "archive": "${H3_OUTPUTS_ROOT}/lbh_blog2_2variant_compile_resident_20261008/0685_spark.mp4"
+  }
+ ]
+}

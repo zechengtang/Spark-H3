@@ -9,15 +9,20 @@ CRF 18 + AAC 192k for the browser; FFV1 archives remain the source of truth.
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
 
 HERE = Path(__file__).resolve().parent
 OUTPUT = HERE / '.preview' / 'gallery'
-DENSE = Path('/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/generation_manifest.json')
-OURS_EXP = Path('/autodl-fs/data/h3_experiments/topk_reblock_reweight_50prompt_20260920')
-OURS_VIDEOS = Path('/autodl-fs/data/h3_outputs/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight')
+OUTPUTS_ROOT = Path(os.environ.get('H3_OUTPUTS_ROOT', HERE / '.artifacts' / 'outputs')).expanduser()
+EXPERIMENTS_ROOT = Path(
+    os.environ.get('H3_EXPERIMENTS_ROOT', HERE / '.artifacts' / 'experiments')
+).expanduser()
+DENSE = OUTPUTS_ROOT / 'vbench20pct_768p10s_seed42_20260913/dense/generation_manifest.json'
+OURS_EXP = EXPERIMENTS_ROOT / 'topk_reblock_reweight_50prompt_20260920'
+OURS_VIDEOS = OUTPUTS_ROOT / 'topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight'
 CASES = [28, 23, 20, 40, 48, 44, 46, 32]
 
 
@@ -26,9 +31,16 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def artifact_path(value):
+    return Path(
+        value.replace('${H3_OUTPUTS_ROOT}', str(OUTPUTS_ROOT))
+        .replace('${H3_EXPERIMENTS_ROOT}', str(EXPERIMENTS_ROOT))
+    )
+
+
 def encode(item):
     started = time.monotonic()
-    source = Path(item['archive_path'])
+    source = artifact_path(item['archive_path'])
     assert digest(source) == item['archive_sha256'], source
     target = OUTPUT / item['file']
     poster = OUTPUT / item['poster']

@@ -12,15 +12,15 @@
   },
   "sources": [
     {
-      "path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/generation_manifest.json",
+      "path": "${H3_OUTPUTS_ROOT}/vbench20pct_768p10s_seed42_20260913/dense/generation_manifest.json",
       "sha256": "448c34053a9d0dc5b4449b9bcd88b90ad2064de1eeae4490195e2791c17e96ce"
     },
     {
-      "path": "/autodl-fs/data/h3_experiments/topk_reblock_reweight_50prompt_20260920/results.json",
+      "path": "${H3_EXPERIMENTS_ROOT}/topk_reblock_reweight_50prompt_20260920/results.json",
       "sha256": "4d6ddac4a0ce899c9e2fbcce1e05221d69848ba3b956186089a4fe46554de244"
     },
     {
-      "path": "/autodl-fs/data/h3_experiments/topk_reblock_reweight_50prompt_20260920/timing_35case.json",
+      "path": "${H3_EXPERIMENTS_ROOT}/topk_reblock_reweight_50prompt_20260920/timing_35case.json",
       "sha256": "ee35ca287418c8eb2ead1cfa9cbbf316fb445800f730455cd13857df7901bb7b"
     }
   ],
@@ -32,7 +32,7 @@
       "prompt_sha256": "e1601517246f5a20eb150b8b841f580f25a59754a4ea867943c4989ef4814596",
       "speedup": 1.7105402547995692,
       "dense": {
-        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/28_vbench_all_0844.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/vbench20pct_768p10s_seed42_20260913/dense/videos/28_vbench_all_0844.mkv",
         "archive_sha256": "b30f8f6e61fcc4b8703701b68a8390e4f71305a491e6d7d9e28d91fac58cad94",
         "denoise_seconds": 588.0757639035583,
         "file": "vbench_all_0844_dense.mp4",
@@ -41,7 +41,7 @@
         "bytes": 1959343
       },
       "ours": {
-        "archive_path": "/autodl-fs/data/h3_outputs/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/28.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/28.mkv",
         "archive_sha256": "33364bb23fb5c4c6469131c40b364bbf03fc5b9903bba21dd23a6739eef1651b",
         "denoise_seconds": 343.7953373230994,
         "file": "vbench_all_0844_spark_h3_10pct.mp4",
@@ -65,7 +65,7 @@
       "prompt_sha256": "aae5d2f615f9746df2d0f9dd56aef3ee8a401ad0ee44c44d4452e545ccc8a168",
       "speedup": 1.7190660664592339,
       "dense": {
-        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/23_vbench_all_0819.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/vbench20pct_768p10s_seed42_20260913/dense/videos/23_vbench_all_0819.mkv",
         "archive_sha256": "2b1bef3295e340a401013ce982426f7d0afd6367c24a234c6b60ea6f5b2d994d",
         "denoise_seconds": 586.0371521448251,
         "file": "vbench_all_0819_dense.mp4",
@@ -82,7 +82,7 @@
         "verified_audio": true
       },
       "ours": {
-        "archive_path": "/autodl-fs/data/h3_outputs/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/23.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/23.mkv",
         "archive_sha256": "ce7376229554882af626ac846f7419de2c262c96196755042a7d04ce310a7293",
         "denoise_seconds": 340.90438033710234,
         "file": "vbench_all_0819_spark_h3_10pct.mp4",
@@ -106,7 +106,7 @@
       "prompt_sha256": "ee7c8a4277afc46c140a2d3c1f64be5ec4403cd0a81320be2778696a6e26602c",
       "speedup": 1.6890243717213242,
       "dense": {
-        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/20_vbench_all_0803.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/vbench20pct_768p10s_seed42_20260913/dense/videos/20_vbench_all_0803.mkv",
         "archive_sha256": "3cafe40e2d2c200d60bb1790768a6cb41c590928acca708c9b439c58107ef0d5",
         "denoise_seconds": 579.9037931114435,
         "file": "vbench_all_0803_dense.mp4",
@@ -115,7 +115,7 @@
         "bytes": 8207631
       },
       "ours": {
-        "archive_path": "/autodl-fs/data/h3_outputs/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/20.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/20.mkv",
         "archive_sha256": "c6e449f4f2933230299d8ced82d46498ba31884fe01893e043a4a693b35f8473",
         "denoise_seconds": 343.3365455351304,
         "file": "vbench_all_0803_spark_h3_10pct.mp4",
@@ -139,7 +139,7 @@
       "prompt_sha256": "de99d7bc5727143c6172cf6d7838669378bf1de8fc0e0d1f3fa3410f9f6a268f",
       "speedup": 1.7040673742239982,
       "dense": {
-        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/40_vbench_all_0724.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/vbench20pct_768p10s_seed42_20260913/dense/videos/40_vbench_all_0724.mkv",
         "archive_sha256": "ea6ba52546db3cf01aff3e373ff26b3d41ebe8dcb3c3b5840e686b1785381e91",
         "denoise_seconds": 588.2883118540049,
         "file": "vbench_all_0724_dense.mp4",
@@ -148,7 +148,7 @@
         "bytes": 5163616
       },
       "ours": {
-        "archive_path": "/autodl-fs/data/h3_outputs/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/40.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/40.mkv",
         "archive_sha256": "7a426dc03097ba2eb169391e7692e60bf36482d50fade095c3e5bfb0e8e2a937",
         "denoise_seconds": 345.22596979001537,
         "file": "vbench_all_0724_spark_h3_10pct.mp4",
@@ -172,7 +172,7 @@
       "prompt_sha256": "7cfca00057b3f216593501f27325b327bcd952d4c9d4f78a6ced9e5f98fa84b1",
       "speedup": 1.701204009859902,
       "dense": {
-        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/48_vbench_all_0763.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/vbench20pct_768p10s_seed42_20260913/dense/videos/48_vbench_all_0763.mkv",
         "archive_sha256": "bb33955d041a091960a8d53bf598832e6012b1afaf19f912b7cd5dc88ede880f",
         "denoise_seconds": 586.8336704149842,
         "file": "vbench_all_0763_dense.mp4",
@@ -181,7 +181,7 @@
         "bytes": 3787547
       },
       "ours": {
-        "archive_path": "/autodl-fs/data/h3_outputs/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/48.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/48.mkv",
         "archive_sha256": "2963d5fed74b645773a1ba937531aac6b8fb6b5131dfa2e16f73372d8a25548e",
         "denoise_seconds": 344.9519675557967,
         "file": "vbench_all_0763_spark_h3_10pct.mp4",
@@ -205,7 +205,7 @@
       "prompt_sha256": "945a2d10e176b7e77728e7a461c4c5ee52d4cbbdcfc993e7127234595ed5b992",
       "speedup": 1.6864462816263628,
       "dense": {
-        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/44_vbench_all_0744.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/vbench20pct_768p10s_seed42_20260913/dense/videos/44_vbench_all_0744.mkv",
         "archive_sha256": "062dab1643b8b15e17fcc9d6fd53dea107f0495566f393b9e79c4aaab6dfa192",
         "denoise_seconds": 581.9704484567046,
         "file": "vbench_all_0744_dense.mp4",
@@ -214,7 +214,7 @@
         "bytes": 3727790
       },
       "ours": {
-        "archive_path": "/autodl-fs/data/h3_outputs/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/44.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/44.mkv",
         "archive_sha256": "d68062f2b1068879ba083c44c64586b5a196d16b5c1f5cc0cb11b237afa71e10",
         "denoise_seconds": 345.0868579670787,
         "file": "vbench_all_0744_spark_h3_10pct.mp4",
@@ -238,7 +238,7 @@
       "prompt_sha256": "9a40c99077fdfd99ef7c2ae7fb5074eebb9808ebf89a46851acd57f6cd037ecf",
       "speedup": 1.7232839248595015,
       "dense": {
-        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/46_vbench_all_0753.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/vbench20pct_768p10s_seed42_20260913/dense/videos/46_vbench_all_0753.mkv",
         "archive_sha256": "87a716dbba8ee7b7d8274105669dcc74bd7caee539ae43ea1cc8fbc9091f8df7",
         "denoise_seconds": 591.0699918046594,
         "file": "vbench_all_0753_dense.mp4",
@@ -247,7 +247,7 @@
         "bytes": 7316200
       },
       "ours": {
-        "archive_path": "/autodl-fs/data/h3_outputs/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/46.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/46.mkv",
         "archive_sha256": "61805b6dcbee202c8d8f3301328a8d9f72ec14f3cbe263e4031c39ab7bedb2c1",
         "denoise_seconds": 342.99048652290367,
         "file": "vbench_all_0753_spark_h3_10pct.mp4",
@@ -271,7 +271,7 @@
       "prompt_sha256": "05928a18b850609245bd5306aaaac28c4ca47b91cf152572c2902b9f2aeaa88c",
       "speedup": 1.6852290147679863,
       "dense": {
-        "archive_path": "/autodl-fs/data/h3_outputs/vbench20pct_768p10s_seed42_20260913/dense/videos/32_vbench_all_0685.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/vbench20pct_768p10s_seed42_20260913/dense/videos/32_vbench_all_0685.mkv",
         "archive_sha256": "7cc3a03d21449523fc361092e56da22c0b577d8b24ecaa544869ff3dc43d4472",
         "denoise_seconds": 580.029531750828,
         "file": "vbench_all_0685_dense.mp4",
@@ -280,7 +280,7 @@
         "bytes": 7926588
       },
       "ours": {
-        "archive_path": "/autodl-fs/data/h3_outputs/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/32.mkv",
+        "archive_path": "${H3_OUTPUTS_ROOT}/topk_reblock_reweight_50prompt_20260920/videos/topk10_reblock_global_reweight/32.mkv",
         "archive_sha256": "878be0f892cbe648d401860f2894d7f9ca032cab07d3d714cac9457a1a1228e7",
         "denoise_seconds": 344.1843967009336,
         "file": "vbench_all_0685_spark_h3_10pct.mp4",

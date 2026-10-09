@@ -1,9 +1,9 @@
 {
  "family": "vdn10",
- "title": "VDN-H3 hero prompts x LightX2V Turbo + Spark-H3-10pct",
+ "title": "VDN-H3 hero prompts x LightX2V Turbo + Spark-H3, 10%",
  "model": "LightX2V MiniMax-H3 Turbo LoRA",
- "method": "Spark-H3-10pct",
- "config": "8 denoising evaluations \u00b7 first 2 evaluations + first layer dense \u00b7 ratio 0.1 \u00b7 fanout 16/16/8",
+ "method": "Spark-H3, 10%",
+ "config": "8 denoising steps \u00b7 first 2 steps + first layer dense \u00b7 ratio 0.1 \u00b7 fanout 16/16/8",
  "shape": "14.375 s 768p (1344x768, 345 frames @ 24 fps), single GPU",
  "layout": "hero strip after https://openvdn.github.io/ (01 / 10 carousel)",
  "cases": [

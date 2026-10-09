@@ -7,7 +7,7 @@
    "generation_seconds": 148.26247813599184,
    "denoise_seconds": 120.72124135587364,
    "preview": "/fasth3-0753/media/v1_dense.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/fasth3_compile5_blog2_20260921/v1_dense/videos/02_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/fasth3_compile5_blog2_20260921/v1_dense/videos/02_vbench_all_0753.mkv"
   },
   {
    "variant": "v1_dense_spark10_nowarm",
@@ -15,7 +15,7 @@
    "generation_seconds": 87.8670192740392,
    "denoise_seconds": 58.151697610039264,
    "preview": "/fasth3-0753/media/v1_dense_spark10_nowarm.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/fasth3_compile5_blog2_20260921/v1_dense_spark10_nowarm/videos/02_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/fasth3_compile5_blog2_20260921/v1_dense_spark10_nowarm/videos/02_vbench_all_0753.mkv"
   },
   {
    "variant": "v1_dense_spark10_warm",
@@ -23,7 +23,7 @@
    "generation_seconds": 103.22152128908783,
    "denoise_seconds": 74.89943145611323,
    "preview": "/fasth3-0753/media/v1_dense_spark10_warm.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/fasth3_compile5_blog2_20260921/v1_dense_spark10_warm/videos/02_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/fasth3_compile5_blog2_20260921/v1_dense_spark10_warm/videos/02_vbench_all_0753.mkv"
   },
   {
    "variant": "v1_vsa",
@@ -31,7 +31,7 @@
    "generation_seconds": 104.80344103788957,
    "denoise_seconds": 66.3463819399476,
    "preview": "/fasth3-0753/media/v1_vsa.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/fasth3_compile5_blog2_20260921/v1_vsa/videos/02_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/fasth3_compile5_blog2_20260921/v1_vsa/videos/02_vbench_all_0753.mkv"
   },
   {
    "variant": "v2_vsa",
@@ -39,7 +39,7 @@
    "generation_seconds": 182.01301301503554,
    "denoise_seconds": 153.74499603291042,
    "preview": "/fasth3-0753/media/v2_vsa.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/fasth3_compile5_blog2_20260921/v2_vsa/videos/02_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/fasth3_compile5_blog2_20260921/v2_vsa/videos/02_vbench_all_0753.mkv"
   },
   {
    "variant": "0685_v1_dense",
@@ -47,7 +47,7 @@
    "generation_seconds": 148.6691373079084,
    "denoise_seconds": 120.65359424916096,
    "preview": "/fasth3-0753/media/0685_v1_dense.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/fasth3_retime_0685_20260922/v1_dense/videos/02_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/fasth3_retime_0685_20260922/v1_dense/videos/02_vbench_all_0685.mkv"
   },
   {
    "variant": "0685_v1_dense_spark10_nowarm",
@@ -55,7 +55,7 @@
    "generation_seconds": 87.49036171799526,
    "denoise_seconds": 58.47132304892875,
    "preview": "/fasth3-0753/media/0685_v1_dense_spark10_nowarm.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/fasth3_retime_0685_20260922/v1_dense_spark10_nowarm/videos/02_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/fasth3_retime_0685_20260922/v1_dense_spark10_nowarm/videos/02_vbench_all_0685.mkv"
   },
   {
    "variant": "0685_v1_dense_spark10_warm",
@@ -63,7 +63,7 @@
    "generation_seconds": 103.1328828218393,
    "denoise_seconds": 74.93138222303241,
    "preview": "/fasth3-0753/media/0685_v1_dense_spark10_warm.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/fasth3_retime_0685_20260922/v1_dense_spark10_warm/videos/02_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/fasth3_retime_0685_20260922/v1_dense_spark10_warm/videos/02_vbench_all_0685.mkv"
   },
   {
    "variant": "0685_v1_vsa",
@@ -71,7 +71,7 @@
    "generation_seconds": 92.20715448213741,
    "denoise_seconds": 65.38910546689294,
    "preview": "/fasth3-0753/media/0685_v1_vsa.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/fasth3_retime_0685_20260922/v1_vsa/videos/02_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/fasth3_retime_0685_20260922/v1_vsa/videos/02_vbench_all_0685.mkv"
   },
   {
    "variant": "0685_v2_vsa",
@@ -79,7 +79,7 @@
    "generation_seconds": 181.33866839599796,
    "denoise_seconds": 153.41226438689046,
    "preview": "/fasth3-0753/media/0685_v2_vsa.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/fasth3_retime_0685_20260922/v2_vsa/videos/02_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/fasth3_retime_0685_20260922/v2_vsa/videos/02_vbench_all_0685.mkv"
   }
  ],
  "preview_encoding": {

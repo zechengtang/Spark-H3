@@ -2,12 +2,12 @@
 
 The exported site is static HTML, CSS, JavaScript, fonts, animations, images and 32 browser-preview videos. It needs no Python server or build tools at runtime. All site assets use relative URLs, including when hosted under `/Spark-H3/`.
 
-The current export is recorded in `github_pages_export.json`. Its ZIP contains `index.html` at the root. Large media and generated bundles stay outside Git; deployment reads the bundle from a GitHub Release asset.
+The exporter writes an `export.json` manifest next to the generated site and ZIP. The ZIP contains `index.html` at the root. Large media, generated bundles, and export manifests stay outside Git; deployment reads the bundle from a GitHub Release asset.
 
 ## Deploy the prepared export
 
 1. Commit `.github/workflows/deploy-blog.yml` to `zechengtang/Spark-H3`.
-2. Create a release and attach the prepared `spark-h3-site.zip` from the path in `github_pages_export.json`.
+2. Create a release and attach the generated `spark-h3-site.zip`.
 3. In the repository's **Settings → Pages**, select **GitHub Actions** as the publishing source.
 4. Run **Actions → Deploy Spark-H3 blog → Run workflow**, entering that release's tag.
 

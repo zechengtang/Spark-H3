@@ -103,6 +103,66 @@
   "file": "integration/turbo-lora/media/0753_lightx2v_spark10_densefirst.mp4",
   "sha256": "955125e2e27a4fb64bcd915471c945e9fd02e40d97b1fa9f66de4f47139df117"
  },
+ "/few-step/media/0685_dmad_dense.mp4": {
+  "file": "integration/few-step/media/0685_dmad_dense.mp4",
+  "bytes": 11217937,
+  "sha256": "592b33ccca1a4d4f73d66c7ce4c91e6347370500a6d43f07c526794f3e447986"
+ },
+ "/few-step/media/0685_dmad_spark10_nowarm.mp4": {
+  "file": "integration/few-step/media/0685_dmad_spark10_nowarm.mp4",
+  "bytes": 11891617,
+  "sha256": "9d1b07f22f23f3fd2515dc52d37845e8e603d4959755cc72e9f6e4c23ac66da5"
+ },
+ "/few-step/media/0685_dmad_spark10_warm.mp4": {
+  "file": "integration/few-step/media/0685_dmad_spark10_warm.mp4",
+  "bytes": 11439394,
+  "sha256": "bfcab1c22c7b7d08220d335b993705472f1dec7d256f0c62c5fc69fc6a442e72"
+ },
+ "/few-step/media/0685_pdd_dense.mp4": {
+  "file": "integration/few-step/media/0685_pdd_dense.mp4",
+  "bytes": 9169633,
+  "sha256": "53b89ae127af34f3e01b292c65d0d29b72eac42cd1db4b3a848be6f6a128e911"
+ },
+ "/few-step/media/0685_pdd_spark10_nowarm.mp4": {
+  "file": "integration/few-step/media/0685_pdd_spark10_nowarm.mp4",
+  "bytes": 8332479,
+  "sha256": "1f2644edf93913d86e617c3d694819a0b21abe3d2fa774a09cd57d17dbea85c2"
+ },
+ "/few-step/media/0685_pdd_spark10_warm.mp4": {
+  "file": "integration/few-step/media/0685_pdd_spark10_warm.mp4",
+  "bytes": 9494129,
+  "sha256": "323ab675c6c8ef8c3d5ada8b5e8f648ece07ae9f138073147ff537d1e27d78af"
+ },
+ "/few-step/media/0753_dmad_dense.mp4": {
+  "file": "integration/few-step/media/0753_dmad_dense.mp4",
+  "bytes": 6502070,
+  "sha256": "3a61a0cbde57d081426fe29c092b667974341e54c1a4bd5ce7f100fdd1e8ed7c"
+ },
+ "/few-step/media/0753_dmad_spark10_nowarm.mp4": {
+  "file": "integration/few-step/media/0753_dmad_spark10_nowarm.mp4",
+  "bytes": 5955546,
+  "sha256": "02766a8c1cd1d2ad78c2d78340c5af8c327a8dc93fe95fe44b4d6a9c1ad9de4e"
+ },
+ "/few-step/media/0753_dmad_spark10_warm.mp4": {
+  "file": "integration/few-step/media/0753_dmad_spark10_warm.mp4",
+  "bytes": 6179896,
+  "sha256": "db58f75d1da5b634fd52a7f7f4497f3ef1c5c815cca05272a8ae5e1715f83853"
+ },
+ "/few-step/media/0753_pdd_dense.mp4": {
+  "file": "integration/few-step/media/0753_pdd_dense.mp4",
+  "bytes": 7546387,
+  "sha256": "11849552192bdff5ffd163c54737b6a1aeade8c64e7ff33a1551d9f05eefdab0"
+ },
+ "/few-step/media/0753_pdd_spark10_nowarm.mp4": {
+  "file": "integration/few-step/media/0753_pdd_spark10_nowarm.mp4",
+  "bytes": 8043567,
+  "sha256": "e003e700e96637afe7ac3984f5f0b7f4fa55bc61cdb3b4e7dc5e22a93d8557b4"
+ },
+ "/few-step/media/0753_pdd_spark10_warm.mp4": {
+  "file": "integration/few-step/media/0753_pdd_spark10_warm.mp4",
+  "bytes": 8222427,
+  "sha256": "990892d3066e49350850d492139a581445fe5300aa52c6b19e5579b43d9db504"
+ },
  "/vdn10/media/vdn_0001_japanese_woman_city_closeup.mp4": {
   "file": "integration/vdn10/media/vdn_0001_japanese_woman_city_closeup.mp4",
   "sha256": "c9933ff81f446cbf4f56ec46f277cd1e3a5acf1f447e3c4d1bb6f45b4d8a2ed4"
@@ -142,5 +202,40 @@
  "/vdn10/media/vdn_0010_2d_anime_eye_pullout.mp4": {
   "file": "integration/vdn10/media/vdn_0010_2d_anime_eye_pullout.mp4",
   "sha256": "bd1532068b869440a33280a28feae7b38b77ff8583411a9d185d3020bc0a62c3"
+ },
+ "/ref2va/media/dense.mp4": {
+  "file": "integration/ref2va/media/dense.mp4",
+  "bytes": 1162796,
+  "sha256": "5dcc6c10c064157f655cf28e8826196ff71f095d8461f51a3decd3a838b4c871"
+ },
+ "/ref2va/media/spark_ref_target.mp4": {
+  "file": "integration/ref2va/media/spark_ref_target.mp4",
+  "bytes": 1194453,
+  "sha256": "676ae11b74cff15fb549a065fbcb591e37264b05fe268c944fea8160cf3b5448"
+ },
+ "/ref2va/media/spark_ref_target_condition_compression.mp4": {
+  "file": "integration/ref2va/media/spark_ref_target_condition_compression.mp4",
+  "bytes": 1336879,
+  "sha256": "75d875685259907dddd1cad27e337993a9d33801a88830fedb9ad883e02cce49"
+ },
+ "/selflift/media/0685_dense.mp4": {
+  "file": "integration/selflift/media/0685_dense.mp4",
+  "bytes": 3626124,
+  "sha256": "009bbfc6d2ff0f34e1fce7e75a2d5675dcc367393b3238355df5d2f656ba5fb9"
+ },
+ "/selflift/media/0685_spark.mp4": {
+  "file": "integration/selflift/media/0685_spark.mp4",
+  "bytes": 3257223,
+  "sha256": "361e63e5f633a728d10d780bab46b4d280149cf36ba7e954844091db10e9c843"
+ },
+ "/selflift/media/0753_dense.mp4": {
+  "file": "integration/selflift/media/0753_dense.mp4",
+  "bytes": 3134162,
+  "sha256": "97af3d3787423837ac3802e251782bf94ae0e55a2569d85f3326157e8e141a27"
+ },
+ "/selflift/media/0753_spark.mp4": {
+  "file": "integration/selflift/media/0753_spark.mp4",
+  "bytes": 3134160,
+  "sha256": "51013f3efbbd88f8509cdb05f6d2c75fbbe67a6dbb800647ede2bfe6f448b17e"
  }
 }

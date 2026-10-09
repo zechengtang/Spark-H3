@@ -1,0 +1,74 @@
+{
+  "source": "${H3_EXPERIMENTS_ROOT}/blog2_dmad_pdd_spark_matrix_20261003/results.json",
+  "protocol": {
+    "resolution": "1344x768",
+    "frames": 240,
+    "fps": 24,
+    "seed": 42,
+    "pdd_steps": 8,
+    "dmad_steps": 4,
+    "density": 0.1
+  },
+  "variants": [
+    {
+      "variant": "0753_pdd_dense",
+      "denoise_seconds": 247.13428390957415,
+      "preview": "/few-step/media/0753_pdd_dense.mp4"
+    },
+    {
+      "variant": "0753_pdd_spark10_warm",
+      "denoise_seconds": 147.78436277620494,
+      "preview": "/few-step/media/0753_pdd_spark10_warm.mp4"
+    },
+    {
+      "variant": "0753_pdd_spark10_nowarm",
+      "denoise_seconds": 112.28107701800764,
+      "preview": "/few-step/media/0753_pdd_spark10_nowarm.mp4"
+    },
+    {
+      "variant": "0685_pdd_dense",
+      "denoise_seconds": 242.89096369221807,
+      "preview": "/few-step/media/0685_pdd_dense.mp4"
+    },
+    {
+      "variant": "0685_pdd_spark10_warm",
+      "denoise_seconds": 145.81166130304337,
+      "preview": "/few-step/media/0685_pdd_spark10_warm.mp4"
+    },
+    {
+      "variant": "0685_pdd_spark10_nowarm",
+      "denoise_seconds": 111.11726497672498,
+      "preview": "/few-step/media/0685_pdd_spark10_nowarm.mp4"
+    },
+    {
+      "variant": "0753_dmad_dense",
+      "denoise_seconds": 120.88828697241843,
+      "preview": "/few-step/media/0753_dmad_dense.mp4"
+    },
+    {
+      "variant": "0753_dmad_spark10_warm",
+      "denoise_seconds": 72.6761942896992,
+      "preview": "/few-step/media/0753_dmad_spark10_warm.mp4"
+    },
+    {
+      "variant": "0753_dmad_spark10_nowarm",
+      "denoise_seconds": 55.10355995409191,
+      "preview": "/few-step/media/0753_dmad_spark10_nowarm.mp4"
+    },
+    {
+      "variant": "0685_dmad_dense",
+      "denoise_seconds": 122.79327917098999,
+      "preview": "/few-step/media/0685_dmad_dense.mp4"
+    },
+    {
+      "variant": "0685_dmad_spark10_warm",
+      "denoise_seconds": 73.68692620657384,
+      "preview": "/few-step/media/0685_dmad_spark10_warm.mp4"
+    },
+    {
+      "variant": "0685_dmad_spark10_nowarm",
+      "denoise_seconds": 56.04399852082133,
+      "preview": "/few-step/media/0685_dmad_spark10_nowarm.mp4"
+    }
+  ]
+}

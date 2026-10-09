@@ -174,14 +174,15 @@ def article_layout(content):
             '<div class="component-links">' + ''.join(links) + '</div></div></section>')
     overview = ('<section class="overview" id="overview" aria-labelledby="overview-title">'
                 '<div class="section-heading"><p class="eyebrow">Overview</p>'
-                '<h2 id="overview-title">Better BSA</h2></div>'
+                '<h2 id="overview-title">Adaptive BSA</h2></div>'
                 '<div class="overview-copy">' + intro + '</div></section>')
     chapters = []
     chapter_kinds = {
         'spark-reblock': 'METHOD',
         'spark-reweight': 'METHOD',
         'benchmark-results': 'EVALUATION',
-        'spark-integration': 'APPLICATIONS',
+        'spark-integration': 'COMMUNITY',
+        'spark-ref2va-preview': 'PREVIEW',
         'visual-comparisons': 'SHOWCASE',
         'related-works': 'REFERENCES',
         'update-history': 'CHANGELOG',
@@ -209,20 +210,46 @@ def article_layout(content):
             table_index += 1
             table = match.group(1)
             columns = len(re.findall(r'<th\b', table))
+            has_intermediate_results = table_index in (3, 4)
             def highlight_method(row_match):
                 row = row_match.group(0)
                 first_cell = re.search(r'<td>(.*?)</td>', row, re.S)
+                classes = []
                 if first_cell and re.search(r'(?:Spark|Reblock|Reweight)', first_cell.group(1)):
-                    return row.replace('<tr>', '<tr class="is-highlight">', 1)
+                    classes.append('is-highlight')
+                cells = re.findall(r'<td(?:\s[^>]*)?>(.*?)</td>', row, re.S)
+                cell_text = [html.unescape(re.sub(r'<[^>]+>', '', cell)).strip() for cell in cells]
+                if (has_intermediate_results
+                        and any(re.search(r'(?:^|,\s)(?:15|20)%', value)
+                                for value in cell_text)):
+                    classes.append('is-intermediate-result')
+                if classes:
+                    attributes = f' class="{" ".join(classes)}"'
+                    return row.replace('<tr>', f'<tr{attributes}>', 1)
                 return row
             table = re.sub(r'<tr>.*?</tr>', highlight_method, table, flags=re.S)
-            return (
-                f'<div class="table-wrap" role="region" tabindex="0" '
-                f'aria-label="{label}" data-columns="{columns}">'
+            scroll_hint = ('' if table_index in (3, 4) else
+                           '<span class="table-scroll-hint">Scroll to compare <i>→</i></span>')
+            toolbar = (
                 '<div class="table-toolbar" aria-hidden="true">'
                 f'<span><b>Table</b> / {table_index:02d}</span>'
-                '<span class="table-scroll-hint">Scroll to compare <i>→</i></span>'
-                '</div>' + table + '</div>')
+                + scroll_hint + '</div>')
+            rendered_table = (
+                f'<div class="table-wrap" role="region" tabindex="0" '
+                f'aria-label="{label}" data-columns="{columns}" '
+                f'data-table-index="{table_index}">'
+                + toolbar + table + '</div>')
+            if not has_intermediate_results:
+                return rendered_table
+            return (
+                '<div class="table-results-group" data-intermediate-results>'
+                + rendered_table
+                + '<details class="table-results-details"><summary>'
+                '<span class="prompt-heading"><span class="prompt-label">Additional densities</span>'
+                '<span class="prompt-toggle"><span class="prompt-expand">Show 15% &amp; 20%</span>'
+                '<span class="prompt-collapse">Collapse 15% &amp; 20%</span>'
+                '<span class="prompt-chevron" aria-hidden="true">↗</span></span></span>'
+                '</summary></details></div>')
         body = re.sub(r'(<table>.*?</table>)', data_table, body, flags=re.S)
         chapters.append(f'<section class="chapter" id="{section.group(1)}" '
                         f'aria-labelledby="{section.group(1)}-title">'
@@ -250,13 +277,17 @@ def gallery_html():
         for method, label in [('dense', 'Dense'), ('ours', 'Spark-H3')]:
             item = case[method]
             speedup = case['dense']['denoise_seconds'] / item['denoise_seconds']
+            primary_metric = (
+                '<span class="timing-speedup is-baseline">Baseline</span>'
+                if method == 'dense' else
+                f'<span class="timing-speedup">{speedup:.2f}×</span>')
             videos.append(
                 f'<figure class="comparison-video {method}"><figcaption>'
                 f'<strong class="comparison-method"><i aria-hidden="true"></i>{label}</strong>'
-                '<span class="comparison-timing"><span class="timing-label">DiT latency</span>'
-                f'<span class="timing-value">{item["denoise_seconds"]:.2f}<small> s</small></span>'
-                f'<span class="timing-speedup">{speedup:.2f}×</span>'
-                '</span></figcaption>'
+                '<span class="comparison-timing">' + primary_metric
+                + '<span class="timing-latency"><span class="timing-label">DiT latency</span>'
+                f'<span class="timing-value">{item["denoise_seconds"]:.2f}<small>s</small></span>'
+                '</span></span></figcaption>'
                 f'<video muted playsinline preload="none" disablepictureinpicture disableremoteplayback '
                 f'aria-label="{label}: {sid}" poster="/gallery/{item["poster"]}" '
                 f'data-src="/gallery/{item["file"]}"></video></figure>')
@@ -281,11 +312,11 @@ def gallery_html():
 
 def integration_data():
     return {name: json.loads((HERE / 'integration' / f'{name}.json').read_text())
-            for name in ('turbo-lora', 'fasth3-0753', 'vdn10')}
+            for name in ('turbo-lora', 'few-step', 'fasth3-0753', 'selflift', 'vdn10', 'ref2va')}
 
 
 def resolve_integration_file(route):
-    for name in ('turbo-lora', 'fasth3-0753', 'vdn10'):
+    for name in ('turbo-lora', 'few-step', 'fasth3-0753', 'selflift', 'vdn10', 'ref2va'):
         if route == f'/{name}/manifest.json':
             return HERE / 'integration' / f'{name}.json'
     record = json.loads((HERE / 'integration/media.json').read_text()).get(route)
@@ -300,37 +331,70 @@ def integration_html(data, family, only_model=None):
     records = {r['variant']: r for r in manifest['variants']}
     groups = []
     for prompt_index, prompt in enumerate(('0753', '0685'), 1):
-        if family == 'turbo-lora':
-            mode_specs = [('dense', '', '8 steps · dense'),
-                          ('spark10', ' + Spark-H3-10pct', '8 steps · 90% sparsity · w/ warmup'),
-                          ('spark10_nowarm', ' + Spark-H3-10pct', '8 steps · 90% sparsity · w/o warmup')]
-            model_names = (only_model,) if only_model else ('lightx2v', 'larry')
-            models = [(f'{prompt}_{model}_{mode}',
-                       ('LightX2V' if model == 'lightx2v'
-                        else 'Larryvrh') + suffix,
-                       detail)
-                      for model in model_names for mode, suffix, detail in mode_specs]
-            prompt_text = manifest['cases'][prompt]['generation_prompt']
+        if family == 'selflift':
+            dense_variant = f'{prompt}_dense'
+            models = [
+                (dense_variant, 'Dense', '4 low-res + 3 high-res steps · dense', dense_variant),
+                (f'{prompt}_spark', 'Spark-H3, 10%',
+                 '4 low-res dense + 3 high-res sparse steps', dense_variant),
+            ]
+            prompt_text = data['fasth3-0753']['prompt' if prompt == '0753' else 'prompt0685']
+        elif family in {'turbo-lora', 'few-step'}:
+            model_meta = {
+                'lightx2v': ('LightX2V', 8),
+                'larry': ('Larryvrh', 8),
+                'pdd': ('Alibaba-PAI Acc', 8),
+                'dmad': ('ByteDance DMAD', 4),
+            }
+            if family == 'turbo-lora':
+                mode_names = ('dense', 'spark10', 'spark10_nowarm')
+                default_models = ('lightx2v', 'larry')
+                prompt_text = manifest['cases'][prompt]['generation_prompt']
+            else:
+                mode_names = ('dense', 'spark10_warm', 'spark10_nowarm')
+                default_models = ('pdd', 'dmad')
+                prompt_text = data['turbo-lora']['cases'][prompt]['generation_prompt']
+            model_names = (only_model,) if only_model else default_models
+            models = []
+            for model in model_names:
+                label, steps = model_meta[model]
+                details = {
+                    'dense': f'{steps} steps · dense',
+                    'spark10': f'{steps} steps · 90% sparsity · w/ warmup',
+                    'spark10_warm': f'{steps} steps · 90% sparsity · w/ warmup',
+                    'spark10_nowarm': f'{steps} steps · 90% sparsity · w/o warmup',
+                }
+                for mode in mode_names:
+                    suffix = '' if mode == 'dense' else ' + Spark-H3, 10%'
+                    models.append((f'{prompt}_{model}_{mode}', label + suffix, details[mode],
+                                   f'{prompt}_{model}_dense'))
         else:
             prefix = '' if prompt == '0753' else '0685_'
-            models = [(prefix + name, title, detail) for name, title, detail in (
+            dense_variant = prefix + 'v1_dense'
+            models = [(prefix + name, title, detail, dense_variant) for name, title, detail in (
                 ('v1_dense', 'FastH3 v1 Dense', '4 steps · dense'),
-                ('v1_dense_spark10_warm', 'FastH3 v1 Dense + Spark-H3-10pct',
+                ('v1_dense_spark10_warm', 'FastH3 v1 Dense + Spark-H3, 10%',
                  '4 steps · 90% sparsity · w/ warmup'),
-                ('v1_dense_spark10_nowarm', 'FastH3 v1 Dense + Spark-H3-10pct',
+                ('v1_dense_spark10_nowarm', 'FastH3 v1 Dense + Spark-H3, 10%',
                  '4 steps · 90% sparsity · w/o warmup'),
                 ('v1_vsa', 'FastH3 v1 VSA', '4 steps · 90% sparsity'),
                 ('v2_vsa', 'FastH3 v2 VSA', '8 steps · 80% sparsity'))]
             prompt_text = manifest['prompt' if prompt == '0753' else 'prompt0685']
         cards = []
-        for variant, title, detail in models:
+        for variant, title, detail, dense_variant in models:
             record = records[variant]
+            speedup = records[dense_variant]['denoise_seconds'] / record['denoise_seconds']
+            speedup_badge = (
+                '<span class="speedup-badge is-baseline" title="Baseline">Baseline</span>'
+                if abs(speedup - 1.0) < 1e-9 else
+                f'<span class="speedup-badge" title="Relative to Dense">{speedup:.2f}×</span>')
             video = ('<video muted playsinline preload="none" disablepictureinpicture disableremoteplayback '
                      f'aria-label="{html.escape(title)}: {prompt_index:02d}" '
                      f'data-src="{html.escape(record["preview"], quote=True)}"></video>')
             cards.append(
                 '<figure class="integration-video"><figcaption>'
                 f'<strong>{html.escape(title)}</strong><span>{html.escape(detail)}</span>'
+                f'{speedup_badge}'
                 '</figcaption>' + video + '<div class="integration-video-footer">'
                 f'<span>DiT latency <strong>{record["denoise_seconds"]:.1f} s</strong></span>'
                 '</div></figure>')
@@ -348,6 +412,57 @@ def integration_html(data, family, only_model=None):
             '<span class="prompt-excerpt">' + html.escape(excerpt) + '</span></summary>'
             f'<div class="prompt-full">{html.escape(prompt_text)}</div></details></div>')
     return '<div class="integration-gallery">' + ''.join(groups) + '</div>'
+
+
+def integration_results_html(content, open_by_default=False):
+    open_attribute = ' open' if open_by_default else ''
+    return (
+        f'<details class="integration-results-details"{open_attribute}><summary>'
+        '<span class="prompt-heading"><span class="prompt-label">Video comparisons</span>'
+        '<span class="prompt-toggle"><span class="prompt-expand">Show results</span>'
+        '<span class="prompt-collapse">Hide results</span>'
+        '<span class="prompt-chevron" aria-hidden="true">↗</span></span></span>'
+        '</summary>'
+        + content
+        + '</details>')
+
+
+def collapsible_integration_html(data, family, only_model, open_by_default=False):
+    return integration_results_html(
+        integration_html(data, family, only_model), open_by_default)
+
+
+def ref2va_integration_html(manifest):
+    case = manifest['case']
+    records = {record['variant']: record for record in manifest['variants']}
+    dense_seconds = records['dense']['denoise_seconds']
+    cards = []
+    for record in manifest['variants']:
+        title = html.escape(record['title'])
+        speedup = dense_seconds / record['denoise_seconds']
+        speedup_badge = (
+            '<span class="speedup-badge is-baseline" title="Baseline">Baseline</span>'
+            if abs(speedup - 1.0) < 1e-9 else
+            f'<span class="speedup-badge" title="Relative to Dense">{speedup:.2f}×</span>')
+        cards.append(
+            '<figure class="integration-video"><figcaption>'
+            f'<strong>{title}</strong><span>{html.escape(record["detail"])}</span>'
+            f'{speedup_badge}'
+            '</figcaption><video muted playsinline preload="none" disablepictureinpicture '
+            f'disableremoteplayback aria-label="{title}" '
+            f'data-src="{html.escape(record["preview"], quote=True)}"></video>'
+            '<div class="integration-video-footer">'
+            f'<span>DiT latency <strong>{record["denoise_seconds"]:.1f} s</strong></span>'
+            '</div></figure>')
+    prompt = case['prompt']
+    return (
+        '<div class="integration-gallery"><div class="integration-group">'
+        f'<h4>01 · {html.escape(case["name"])}<button class="video-reset" type="button" '
+        'title="Restart all videos from the beginning">Restart</button></h4>'
+        '<div class="integration-video-grid">' + ''.join(cards) + '</div>'
+        '<div class="comparison-prompt static-prompt">'
+        '<div class="prompt-heading"><span class="prompt-label">Case prompt</span></div>'
+        f'<div class="prompt-full">{html.escape(prompt)}</div></div></div></div>')
 
 
 def vdn10_showcase_html(manifest):
@@ -390,7 +505,7 @@ def vdn10_showcase_html(manifest):
             '</div></div>'
             '<div class="vdn-result-showcase" data-vdn-result-showcase>'
             '<div class="vdn-result-strip" data-vdn-result-strip role="list" tabindex="0" '
-            'aria-label="LightX2V Spark-H3-10pct video results">'
+            'aria-label="LightX2V Spark-H3, 10% video results">'
             + ''.join(cards) + '</div></div></div></section>')
 
 
@@ -657,10 +772,24 @@ def render():
         content = converter.convert(protected).replace('<!-- VIDEO_GALLERY -->', gallery_html())
         content = content.replace('<!-- TURBO_INTEGRATION -->', integration_html(integrations, 'turbo-lora'))
         content = content.replace('<!-- LIGHTX2V_INTEGRATION -->',
-                                  integration_html(integrations, 'turbo-lora', 'lightx2v'))
+                                  collapsible_integration_html(
+                                      integrations, 'turbo-lora', 'lightx2v', True))
         content = content.replace('<!-- LARRY_INTEGRATION -->',
-                                  integration_html(integrations, 'turbo-lora', 'larry'))
-        content = content.replace('<!-- FASTH3_INTEGRATION -->', integration_html(integrations, 'fasth3-0753'))
+                                  collapsible_integration_html(
+                                      integrations, 'turbo-lora', 'larry', True))
+        content = content.replace('<!-- PDD_INTEGRATION -->',
+                                  collapsible_integration_html(integrations, 'few-step', 'pdd'))
+        content = content.replace('<!-- DMAD_INTEGRATION -->',
+                                  collapsible_integration_html(integrations, 'few-step', 'dmad'))
+        content = content.replace('<!-- FASTH3_INTEGRATION -->',
+                                  collapsible_integration_html(
+                                      integrations, 'fasth3-0753', None, True))
+        content = content.replace('<!-- SELFLIFT_INTEGRATION -->',
+                                  collapsible_integration_html(
+                                      integrations, 'selflift', None, True))
+        content = content.replace('<!-- REF2VA_INTEGRATION -->',
+                                  integration_results_html(
+                                      ref2va_integration_html(integrations['ref2va']), True))
         content = article_layout(content)
         if '<!-- VDN10_SHOWCASE -->' in source:
             content = content.replace('<section class="overview"',
@@ -811,10 +940,80 @@ def check():
     assert len(re.findall(r'class="article-figure"', text)) == 2
     assert len(re.findall(r'class="table-wrap"', text)) == 5
     assert len(re.findall(r'class="table-toolbar"', text)) == 5
-    assert len(re.findall(r'<tr class="is-highlight">', text)) == 12
+    assert len(re.findall(
+        r'<div class="table-wrap"[^>]* data-table-index="\d+"', text)) == 5
+    benchmark_tables = re.findall(
+        r'<div class="table-results-group".*?</details></div>', text, re.S)
+    assert len(benchmark_tables) == 2
+    assert all('Scroll to compare' not in table for table in benchmark_tables)
+    assert len(re.findall(r'<tr class="is-highlight(?: |")', text)) == 21
+    assert text.count('data-intermediate-results') == 2
+    assert len(re.findall(r'class="is-highlight is-intermediate-result"', text)) == 7
+    assert len(re.findall(r'class="table-results-details"', text)) == 2
+    assert text.count('Show 15% &amp; 20%') == 2
+    assert text.count('Collapse 15% &amp; 20%') == 2
+    assert 'aria-label="Benchmark Results results" data-columns="8"' in text
+    assert text.count('class="density-profile">Speed</span>') == 4
+    assert text.count('class="density-profile">Fidelity</span>') == 4
+    assert text.count('class="density-profile">Balanced</span>') == 7
+    assert '<th>Method</th>' in text and 'DiT<br>latency (s) ↓' in text
+    benchmark_table = re.search(
+        r'aria-label="Benchmark Results results".*?</table>', text, re.S).group(0)
+    headers = re.findall(r'<th(?: [^>]*)?>(.*?)</th>', benchmark_table, re.S)
+    assert headers == [
+        'Method', 'density ↓', 'DiT<br>latency (s) ↓', 'DiT<br>speedup ↑',
+        'PSNR ↑', 'SSIM ↑', 'LPIPS ↓', 'ATTN<br>speedup ↑']
+    assert text.count('Spark-H3-Lite') >= 8
     assert '<span class="chapter-number">03 / EVALUATION</span>' in text
-    assert '<span class="chapter-number">06 / REFERENCES</span>' in text
-    assert '<span class="chapter-number">07 / CHANGELOG</span>' in text
+    assert '<span class="chapter-number">05 / PREVIEW</span>' in text
+    assert '<span class="chapter-number">07 / REFERENCES</span>' in text
+    assert '<span class="chapter-number">08 / CHANGELOG</span>' in text
+    assert '<a class="component-link" href="#spark-ref2va-preview">' in text
+    assert '<a class="component-link" href="#visual-comparisons">' in text
+    assert text.count('class="component-link"') == 6
+    assert '<a href="#spark-ref2va-preview">Ref2VA</a>' not in text
+    assert 'Alibaba-PAI Acc 8-step LoRA' in text
+    assert 'ByteDance DMAD 4-step LoRA' in text
+    assert 'Fast-H3' not in text and 'FastH3: an alternative for fixed block partitioning' in text
+    assert 'SelfLift two-stage sampling based on LBH upsampler' in text
+    integration_order = [
+        'FastH3: an alternative for fixed block partitioning',
+        'LightX2V 8-step LoRA',
+        'Larryvrh 8-step LoRA',
+        'Alibaba-PAI Acc 8-step LoRA',
+        'ByteDance DMAD 4-step LoRA',
+        'SelfLift two-stage sampling based on LBH upsampler',
+        'Video DeltaNet',
+    ]
+    assert [text.index(title) for title in integration_order] == sorted(
+        text.index(title) for title in integration_order)
+    assert text.count('class="integration-results-details"') == 7
+    assert text.count('<details class="integration-results-details" open>') == 5
+    assert text.count('<details class="integration-results-details"><summary>') == 2
+    assert len(re.findall(r'class="speedup-badge(?: is-baseline)?"', text)) == 41
+    assert text.count('class="speedup-badge is-baseline"') == 13
+    assert '<span class="speedup-badge" title="Relative to Dense">1.56×</span>' in text
+    assert '<span class="speedup-badge" title="Relative to Dense">3.50×</span>' in text
+    for record in integration_data()['few-step']['variants']:
+        assert f'data-src="{record["preview"]}"' in text
+    for record in integration_data()['selflift']['variants']:
+        assert f'data-src="{record["preview"]}"' in text
+        route_record = json.loads((HERE / 'integration/media.json').read_text())[record['preview']]
+        payload = resolve_integration_file(record['preview']).read_bytes()
+        assert len(payload) == route_record['bytes']
+        assert hashlib.sha256(payload).hexdigest() == route_record['sha256']
+    ref2va = integration_data()['ref2va']
+    assert 'Spark-Ref2VA Preview' in text
+    assert ('<a href="https://github.com/MiniMax-AI/MiniMax-H3#case-ref2va">'
+            'official 5-second Ref2VA case</a>') in text
+    assert text.count('01 · Official Ref2VA case') == 1
+    assert 'class="comparison-prompt static-prompt"' in text
+    for record in ref2va['variants']:
+        assert f'data-src="{record["preview"]}"' in text
+        route_record = json.loads((HERE / 'integration/media.json').read_text())[record['preview']]
+        payload = resolve_integration_file(record['preview']).read_bytes()
+        assert len(payload) == route_record['bytes']
+        assert hashlib.sha256(payload).hexdigest() == route_record['sha256']
     assert '<tr class="is-highlight">\n<td>BSA + Reblock</td>' in text
     assert '<tr class="is-highlight">\n<td>BSA</td>' not in text
     assert '<tr class="is-highlight">\n<td>Dense</td>' not in text

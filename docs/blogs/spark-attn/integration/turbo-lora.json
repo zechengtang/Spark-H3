@@ -52,7 +52,7 @@
     30.534709868952632
    ],
    "preview": "/turbo-lora/media/0753_lightx2v_dense.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_compile3_blog2_20260921/lightx2v_dense/0753_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_compile3_blog2_20260921/lightx2v_dense/0753_vbench_all_0753.mkv"
   },
   {
    "variant": "0753_lightx2v_spark10",
@@ -72,7 +72,7 @@
     14.568506365874782
    ],
    "preview": "/turbo-lora/media/0753_lightx2v_spark10.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_compile3_blog2_20260921/lightx2v_spark10/0753_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_compile3_blog2_20260921/lightx2v_spark10/0753_vbench_all_0753.mkv"
   },
   {
    "variant": "0753_lightx2v_spark10_densefirst",
@@ -92,7 +92,7 @@
     14.554057011846453
    ],
    "preview": "/turbo-lora/media/0753_lightx2v_spark10_densefirst.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_spark10_densefirst/0753_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/lightx2v_spark10_densefirst/0753_vbench_all_0753.mkv"
   },
   {
    "variant": "0753_larry_dense",
@@ -112,7 +112,7 @@
     30.77625854499638
    ],
    "preview": "/turbo-lora/media/0753_larry_dense.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_compile3_blog2_20260921/larry_dense/0753_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_compile3_blog2_20260921/larry_dense/0753_vbench_all_0753.mkv"
   },
   {
    "variant": "0753_larry_spark10",
@@ -132,7 +132,7 @@
     14.424077195115387
    ],
    "preview": "/turbo-lora/media/0753_larry_spark10.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_compile3_blog2_20260921/larry_spark10/0753_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_compile3_blog2_20260921/larry_spark10/0753_vbench_all_0753.mkv"
   },
   {
    "variant": "0753_larry_spark10_densefirst",
@@ -152,7 +152,7 @@
     14.400366521906108
    ],
    "preview": "/turbo-lora/media/0753_larry_spark10_densefirst.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_spark10_densefirst/0753_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/larry_spark10_densefirst/0753_vbench_all_0753.mkv"
   },
   {
    "variant": "0685_lightx2v_dense",
@@ -172,7 +172,7 @@
     30.674340514931828
    ],
    "preview": "/turbo-lora/media/0685_lightx2v_dense.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_dense/0685_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/lightx2v_dense/0685_vbench_all_0685.mkv"
   },
   {
    "variant": "0685_lightx2v_spark10",
@@ -192,7 +192,7 @@
     14.422080998076126
    ],
    "preview": "/turbo-lora/media/0685_lightx2v_spark10.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_spark10/0685_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/lightx2v_spark10/0685_vbench_all_0685.mkv"
   },
   {
    "variant": "0685_lightx2v_spark10_densefirst",
@@ -212,7 +212,7 @@
     14.561561160953715
    ],
    "preview": "/turbo-lora/media/0685_lightx2v_spark10_densefirst.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_spark10_densefirst/0685_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/lightx2v_spark10_densefirst/0685_vbench_all_0685.mkv"
   },
   {
    "variant": "0685_larry_dense",
@@ -232,7 +232,7 @@
     30.803008244838566
    ],
    "preview": "/turbo-lora/media/0685_larry_dense.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_dense/0685_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/larry_dense/0685_vbench_all_0685.mkv"
   },
   {
    "variant": "0685_larry_spark10",
@@ -252,7 +252,7 @@
     14.561047826195136
    ],
    "preview": "/turbo-lora/media/0685_larry_spark10.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_spark10/0685_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/larry_spark10/0685_vbench_all_0685.mkv"
   },
   {
    "variant": "0685_larry_spark10_densefirst",
@@ -272,7 +272,7 @@
     14.407862504012883
    ],
    "preview": "/turbo-lora/media/0685_larry_spark10_densefirst.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_spark10_densefirst/0685_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/larry_spark10_densefirst/0685_vbench_all_0685.mkv"
   },
   {
    "variant": "0753_lightx2v_spark10_nowarm",
@@ -292,7 +292,7 @@
     14.22249085106887
    ],
    "preview": "/turbo-lora/media/0753_lightx2v_nowarm.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_spark10_nowarm/0753_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/lightx2v_spark10_nowarm/0753_vbench_all_0753.mkv"
   },
   {
    "variant": "0685_lightx2v_spark10_nowarm",
@@ -312,7 +312,7 @@
     14.238396663917229
    ],
    "preview": "/turbo-lora/media/0685_lightx2v_nowarm.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/lightx2v_spark10_nowarm/0685_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/lightx2v_spark10_nowarm/0685_vbench_all_0685.mkv"
   },
   {
    "variant": "0753_larry_spark10_nowarm",
@@ -332,7 +332,7 @@
     14.086545480880886
    ],
    "preview": "/turbo-lora/media/0753_larry_nowarm.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_spark10_nowarm/0753_vbench_all_0753.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/larry_spark10_nowarm/0753_vbench_all_0753.mkv"
   },
   {
    "variant": "0685_larry_spark10_nowarm",
@@ -352,7 +352,7 @@
     14.07477845903486
    ],
    "preview": "/turbo-lora/media/0685_larry_nowarm.mp4",
-   "archive": "/autodl-fs/data/h3_outputs/turbo_lora_retime_20260922/larry_spark10_nowarm/0685_vbench_all_0685.mkv"
+   "archive": "${H3_OUTPUTS_ROOT}/turbo_lora_retime_20260922/larry_spark10_nowarm/0685_vbench_all_0685.mkv"
   }
  ]
 }
