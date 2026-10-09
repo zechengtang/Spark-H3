@@ -465,7 +465,7 @@ def _native_spark_attention(attn, x, rope_freqs, transformer_options, layer, sta
         unpack_end = torch.cuda.Event(enable_timing=True)
         unpack_start.record()
         unpack_profile = ("output_unpack_and_projection", unpack_start, unpack_end)
-    if not state.controller.direct_output:
+    if not state.controller.output_in_original_layout:
         output = output.index_select(1, layout.inverse_permutation)
     state.controller.counts["sparse:spark_comfy_native"] += 1
     activation_log.hit(x.shape[0], layout.video_tokens)

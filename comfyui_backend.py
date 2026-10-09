@@ -99,6 +99,17 @@ class ComfySparkController:
         self.landmark_reblock_hierarchy = None
         self.last_reblock = None
         self.reblock_profile = []
+        self.output_in_original_layout = False
+
+
+def _topk_ratio(controller: ComfySparkController, layout: ComfyPackedLayout) -> float:
+    candidate_blocks = layout.video_tokens // BLOCK_SIZE
+    if controller.config.topk_mode == "topk_blocks":
+        return (
+            min(controller.config.topk_blocks, candidate_blocks) / candidate_blocks
+            if candidate_blocks else 1.0
+        )
+    return controller.config.topk_ratio
 
 
 def _profile_begin(controller: ComfySparkController, name: str):
@@ -203,15 +214,7 @@ def comfy_kitchen_spark_attention(
     # The video tail and all conditioning rows are exact query blocks inside
     # the same Spark kernel. No redundant external dense-SDPA overwrite.
     sample = _profile_begin(controller, "sparse_attention")
-    candidate_blocks = layout.video_tokens // BLOCK_SIZE
-    topk_ratio = controller.config.topk_ratio
-    if controller.config.topk_mode == "topk_blocks":
-        # The kernel accepts a ratio and rounds ratio * candidate_blocks to
-        # the selected block count. Sink blocks are excluded from this budget.
-        topk_ratio = (
-            min(controller.config.topk_blocks, candidate_blocks) / candidate_blocks
-            if candidate_blocks else 1.0
-        )
+    topk_ratio = _topk_ratio(controller, layout)
     output = spark_attn(
         q,
         k,
@@ -236,5 +239,6 @@ def comfy_kitchen_spark_attention(
     )
     _profile_end(controller, sample)
     controller.backend = "comfy-kitchen-spark-global"
+    controller.output_in_original_layout = controller.direct_output
     controller.counts["comfy_kitchen_calls"] += 1
     return output

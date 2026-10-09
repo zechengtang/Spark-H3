@@ -407,6 +407,14 @@
           }
         },
         {
+          "name": "warmup_mode",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "warmup_mode"
+          }
+        },
+        {
           "name": "warmup_ratio",
           "type": "FLOAT",
           "link": null,
@@ -415,11 +423,35 @@
           }
         },
         {
+          "name": "warmup_steps",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "warmup_steps"
+          }
+        },
+        {
+          "name": "topk_mode",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "topk_mode"
+          }
+        },
+        {
           "name": "topk_ratio",
           "type": "FLOAT",
           "link": null,
           "widget": {
             "name": "topk_ratio"
+          }
+        },
+        {
+          "name": "topk_blocks",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "topk_blocks"
           }
         },
         {
@@ -447,43 +479,21 @@
           }
         },
         {
-          "name": "topk_mode",
-          "type": "COMBO",
-          "link": null,
-          "widget": {
-            "name": "topk_mode"
-          }
-        },
-        {
-          "name": "topk_blocks",
-          "type": "INT",
-          "link": null,
-          "widget": {
-            "name": "topk_blocks"
-          }
-        },
-        {
-          "name": "warmup_mode",
-          "type": "COMBO",
-          "link": null,
-          "widget": {
-            "name": "warmup_mode"
-          }
-        },
-        {
-          "name": "warmup_steps",
-          "type": "INT",
-          "link": null,
-          "widget": {
-            "name": "warmup_steps"
-          }
-        },
-        {
           "name": "tail_granularity",
           "type": "COMBO",
+          "shape": 7,
           "link": null,
           "widget": {
             "name": "tail_granularity"
+          }
+        },
+        {
+          "name": "reblock_layout",
+          "type": "COMBO",
+          "shape": 7,
+          "link": null,
+          "widget": {
+            "name": "reblock_layout"
           }
         }
       ],
@@ -499,35 +509,39 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3SparkAttentionSM120"
+        "Node name for S&R": "MiniMaxH3SparkAttentionSM120",
+        "cnr_id": "comfyui-spark-h3",
+        "ver": "0.1.0"
       },
       "widgets_values": [
         true,
         20,
+        "warmup_ratio",
         0.2,
+        4,
+        "topk_blocks",
         0.2,
+        228,
         1,
         12288,
         true,
-        "topk_blocks",
-        228,
-        "warmup_ratio",
-        4,
-        "query"
+        "query",
+        "q_reuse_k"
       ],
       "widgets_values_named": {
         "enabled": true,
         "steps": 20,
+        "warmup_mode": "warmup_ratio",
         "warmup_ratio": 0.2,
+        "warmup_steps": 4,
+        "topk_mode": "topk_blocks",
         "topk_ratio": 0.2,
+        "topk_blocks": 228,
         "dense_layers": 1,
         "min_tokens": 12288,
         "strict": true,
-        "topk_mode": "topk_blocks",
-        "topk_blocks": 228,
-        "warmup_mode": "warmup_ratio",
-        "warmup_steps": 4,
-        "tail_granularity": "query"
+        "tail_granularity": "query",
+        "reblock_layout": "q_reuse_k"
       },
       "title": "Spark-H3 · TopK 228 blocks"
     },

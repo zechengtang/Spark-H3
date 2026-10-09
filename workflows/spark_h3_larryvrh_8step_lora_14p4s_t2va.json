@@ -554,6 +554,15 @@
             "name": "tail_granularity"
           },
           "link": null
+        },
+        {
+          "name": "reblock_layout",
+          "type": "COMBO",
+          "shape": 7,
+          "widget": {
+            "name": "reblock_layout"
+          },
+          "link": null
         }
       ],
       "outputs": [
@@ -568,7 +577,9 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3SparkAttentionSM120"
+        "Node name for S&R": "MiniMaxH3SparkAttentionSM120",
+        "cnr_id": "comfyui-spark-h3",
+        "ver": "0.1.0"
       },
       "widgets_values": [
         true,
@@ -582,7 +593,8 @@
         1,
         12288,
         true,
-        "query"
+        "query",
+        "q_reuse_k"
       ],
       "widgets_values_named": {
         "enabled": true,
@@ -596,7 +608,8 @@
         "dense_layers": 1,
         "min_tokens": 12288,
         "strict": true,
-        "tail_granularity": "query"
+        "tail_granularity": "query",
+        "reblock_layout": "q_reuse_k"
       },
       "title": "Spark-H3 · TopK 228 blocks"
     },

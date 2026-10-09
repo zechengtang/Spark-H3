@@ -14,10 +14,18 @@ import tempfile
 from pathlib import Path
 
 KITCHEN_SOURCE = "https://github.com/Comfy-Org/comfy-kitchen.git"
-KITCHEN_TAG = "v0.2.36"
-KITCHEN_REVISION = "888b13e2c0e721f6576fe351a2ad79894b1c451f"
-KITCHEN_BASE_VERSION = "0.2.36"
-KITCHEN_SPARK_VERSION = "0.2.36+spark.h3.1"
+KITCHEN_TARGETS = {
+    "0.2.36": {
+        "tag": "v0.2.36",
+        "revision": "888b13e2c0e721f6576fe351a2ad79894b1c451f",
+    },
+    "0.2.37": {
+        "tag": "v0.2.37",
+        "revision": "be003b7c23c5b01328657955b8bc5d3f073d868e",
+    },
+}
+DEFAULT_KITCHEN_BASE = "0.2.37"
+SPARK_LOCAL_VERSION = "spark.h3.1"
 CUDA_ARCHS = "120f"
 
 
@@ -38,26 +46,44 @@ def _patch_path(node_root: Path) -> Path:
     raise FileNotFoundError("the comfy-kitchen Spark patch is missing from this package")
 
 
-def _set_local_version(source: Path) -> None:
+def _spark_version(kitchen_base: str) -> str:
+    if kitchen_base not in KITCHEN_TARGETS:
+        raise ValueError(
+            f"unsupported comfy-kitchen base {kitchen_base!r}; expected one of "
+            f"{', '.join(KITCHEN_TARGETS)}"
+        )
+    return f"{kitchen_base}+{SPARK_LOCAL_VERSION}"
+
+
+def _set_local_version(source: Path, kitchen_base: str) -> None:
     pyproject = source / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
-    old = f'version = "{KITCHEN_BASE_VERSION}"'
-    new = f'version = "{KITCHEN_SPARK_VERSION}"'
+    old = f'version = "{kitchen_base}"'
+    new = f'version = "{_spark_version(kitchen_base)}"'
     if old not in text:
         raise RuntimeError(f"cannot find {old!r} in the pinned comfy-kitchen source")
     pyproject.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
-def prepare_source(node_root: Path, destination: Path, *, source_url: str) -> Path:
+def prepare_source(
+    node_root: Path,
+    destination: Path,
+    *,
+    source_url: str,
+    kitchen_base: str = DEFAULT_KITCHEN_BASE,
+) -> Path:
     """Clone, pin, patch, and version the backend in ``destination``."""
 
     if destination.exists():
         raise FileExistsError(f"build destination already exists: {destination}")
+    target = KITCHEN_TARGETS.get(kitchen_base)
+    if target is None:
+        _spark_version(kitchen_base)
     _run([
-        "git", "clone", "--quiet", "--depth", "1", "--branch", KITCHEN_TAG,
+        "git", "clone", "--quiet", "--depth", "1", "--branch", target["tag"],
         "--recursive", source_url, str(destination),
     ])
-    _run(["git", "checkout", "--quiet", KITCHEN_REVISION], cwd=destination)
+    _run(["git", "checkout", "--quiet", target["revision"]], cwd=destination)
     _run(
         ["git", "submodule", "update", "--init", "--recursive", "--quiet"],
         cwd=destination,
@@ -65,7 +91,7 @@ def prepare_source(node_root: Path, destination: Path, *, source_url: str) -> Pa
     patch = _patch_path(node_root.resolve())
     _run(["git", "apply", "--check", str(patch)], cwd=destination)
     _run(["git", "apply", str(patch)], cwd=destination)
-    _set_local_version(destination)
+    _set_local_version(destination, kitchen_base)
     return destination
 
 
@@ -75,12 +101,18 @@ def build_wheel(
     *,
     python: str = sys.executable,
     source_url: str = KITCHEN_SOURCE,
+    kitchen_base: str = DEFAULT_KITCHEN_BASE,
 ) -> list[Path]:
     """Build an SM120 wheel and return the newly-created wheel paths."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="spark-comfy-kitchen-") as temporary:
-        source = prepare_source(node_root, Path(temporary) / "comfy-kitchen", source_url=source_url)
+        source = prepare_source(
+            node_root,
+            Path(temporary) / "comfy-kitchen",
+            source_url=source_url,
+            kitchen_base=kitchen_base,
+        )
         env = os.environ.copy()
         env.setdefault("COMFY_CUDA_ARCHS", CUDA_ARCHS)
         _run(
@@ -89,7 +121,7 @@ def build_wheel(
             env=env,
         )
     wheels = sorted(
-        output_dir.glob(f"comfy_kitchen-{KITCHEN_SPARK_VERSION}-*.whl")
+        output_dir.glob(f"comfy_kitchen-{_spark_version(kitchen_base)}-*.whl")
     )
     if not wheels:
         raise RuntimeError("comfy-kitchen build completed without producing a wheel")
@@ -101,11 +133,17 @@ def install_from_source(
     *,
     python: str = sys.executable,
     source_url: str = KITCHEN_SOURCE,
+    kitchen_base: str = DEFAULT_KITCHEN_BASE,
 ) -> None:
     """Compile and install the pinned backend into ``python``."""
 
     with tempfile.TemporaryDirectory(prefix="spark-comfy-kitchen-") as temporary:
-        source = prepare_source(node_root, Path(temporary) / "comfy-kitchen", source_url=source_url)
+        source = prepare_source(
+            node_root,
+            Path(temporary) / "comfy-kitchen",
+            source_url=source_url,
+            kitchen_base=kitchen_base,
+        )
         env = os.environ.copy()
         env.setdefault("COMFY_CUDA_ARCHS", CUDA_ARCHS)
         _run(
@@ -122,6 +160,12 @@ def main(argv: list[str] | None = None) -> int:
         "--source-url",
         default=os.environ.get("SPARK_COMFY_KITCHEN_SOURCE", KITCHEN_SOURCE),
     )
+    parser.add_argument(
+        "--kitchen-base",
+        choices=tuple(KITCHEN_TARGETS),
+        default=DEFAULT_KITCHEN_BASE,
+        help="upstream comfy-kitchen version required by the target ComfyUI release",
+    )
     parser.add_argument("--install", action="store_true", help="install instead of building a wheel")
     args = parser.parse_args(argv)
     node_root = Path(__file__).resolve().parent
@@ -130,10 +174,19 @@ def main(argv: list[str] | None = None) -> int:
     else:
         node_root = node_root.parent
     if args.install:
-        install_from_source(node_root, python=args.python, source_url=args.source_url)
+        install_from_source(
+            node_root,
+            python=args.python,
+            source_url=args.source_url,
+            kitchen_base=args.kitchen_base,
+        )
     else:
         for wheel in build_wheel(
-            node_root, args.output_dir.resolve(), python=args.python, source_url=args.source_url
+            node_root,
+            args.output_dir.resolve(),
+            python=args.python,
+            source_url=args.source_url,
+            kitchen_base=args.kitchen_base,
         ):
             print(wheel)
     return 0

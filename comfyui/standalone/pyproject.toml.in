@@ -21,4 +21,4 @@ dependencies = {file = ["requirements.txt"]}
 [tool.comfy]
 PublisherId = "@PUBLISHER_ID@"
 DisplayName = "ComfyUI Spark-H3"
-requires-comfyui = ">=0.30.0"
+requires-comfyui = ">=0.38.0,<0.40.0"

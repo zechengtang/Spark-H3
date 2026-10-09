@@ -81,51 +81,17 @@ with install_h3_spark_attn(
 
 <a id="comfyui-installation"></a>
 
-### ComfyUI standalone installation
+## 🧩 ComfyUI Installation
 
-The ComfyUI integration can be distributed as a small standalone custom-node
-ZIP instead of cloning this complete research repository. A release bundle
-contains the node, its reblock runtime, example workflows, and—when available—a
-matching Spark-enabled `comfy-kitchen` wheel. It does not contain model weights.
+The current ComfyUI package targets Linux, CUDA BF16, and NVIDIA SM120 GPUs
+(RTX 50 series). It supports ComfyUI 0.38.x and 0.39.x and does not include
+ComfyUI or model weights. Prebuilt wheels target CUDA 13.0; CUDA 12.8/12.9
+users must compile locally with `install.py --source`.
 
-For tagged releases that include the artifact, download
-`ComfyUI-Spark-H3-<version>.zip` from the release assets, then extract it
-directly under `ComfyUI/custom_nodes`:
+For package selection, installation commands, and troubleshooting, see the
+**[ComfyUI 中文安装指南](comfyui/INSTALL.zh-CN.md)**.
 
-```bash
-cd /path/to/ComfyUI/custom_nodes
-unzip /path/to/ComfyUI-Spark-H3-<version>.zip
-
-# Always use the same Python interpreter that starts ComfyUI.
-/path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
-```
-
-The installer checks for an existing compatible backend, then tries a bundled
-wheel and the pinned release wheel. Only when none matches does it clone the
-pinned `comfy-kitchen` source, apply the bundled Spark patch, and compile it.
-Source fallback requires Git, CMake, Ninja, a C++ compiler, and CUDA `nvcc`.
-
-The currently validated prebuilt configuration is Linux x86_64, Python 3.12+
-and an NVIDIA SM120 GPU. Python 3.10/3.11 needs a matching wheel or the source
-fallback. Windows packaging is prepared but a Windows wheel and SM120 runtime
-still require separate validation. The Spark node itself executes only on
-SM120; `strict=false` on another GPU tests dense fallback, not Spark.
-
-After restarting ComfyUI, add **MiniMax H3 Spark Attention (SM120)** between the
-native MiniMax-H3 model loader and `BasicGuider`. See the
-[ComfyUI guide](comfyui/README.md) for model placement, workflows, and node
-parameters.
-
-Maintainers can assemble the standalone directory and deterministic ZIP from a
-source checkout:
-
-```bash
-python tools/build_comfyui_package.py \
-  --publisher-id YOUR_COMFY_REGISTRY_PUBLISHER_ID \
-  --kernel-wheel /path/to/comfy_kitchen-0.2.36+spark.h3.1-*.whl
-```
-
-### Step-count convention
+## Step-count convention
 
 `MiniMaxH3Scheduler` includes the final `σ=0` endpoint in
 `num_inference_steps`, so the default `num_inference_steps=50` runs 49 denoising steps. See the

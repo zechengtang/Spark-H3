@@ -1,4 +1,6 @@
+import os
 from pathlib import Path
+import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -238,7 +240,8 @@ def test_comfy_q_reuse_k_aliases_independent_key_layout_bitwise(
         landmark_tree_v2_layout_reuse="q_from_k",
         landmark_tree_v2_group_size=group_size,
     ))
-    # Three calls cover initial graph capture and subsequent graph replay.
+    # ComfyUI keeps its default cudaMallocAsync allocator, so its reblock
+    # planner must remain eager even across repeated calls.
     for _ in range(3):
         independent = build_comfy_reblock_permutations(
             independent_controller, query, key, layout
@@ -251,6 +254,17 @@ def test_comfy_q_reuse_k_aliases_independent_key_layout_bitwise(
         assert torch.equal(shared[2], independent[2])
         assert shared[0].data_ptr() == shared[2].data_ptr()
         assert shared[1] is None
+
+    plans = [
+        value
+        for controller in (independent_controller, shared_controller)
+        for value in controller.rope_sol_key_clustering_static.values()
+        if hasattr(value, "graph_active")
+    ]
+    assert plans
+    assert all(not plan.graph_active for plan in plans)
+    if tuple(torch.cuda.get_device_capability()) != (12, 0):
+        return
 
     expected_layout = (independent[2], None, independent[2], None)
     monkeypatch.setattr(
@@ -271,6 +285,58 @@ def test_comfy_q_reuse_k_aliases_independent_key_layout_bitwise(
         shared_controller, query, key, value, layout, layer=1
     )
     assert torch.equal(actual, expected)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_comfy_reblock_is_safe_with_cuda_malloc_async():
+    """Exercise the allocator in a fresh process, where its backend is fixed."""
+
+    probe = r"""
+import torch
+from comfyui_backend import ComfyPackedLayout, ComfySparkConfig, ComfySparkController
+from comfyui_reblock_plan import build_comfy_reblock_permutations
+
+device = torch.device("cuda")
+tokens = 2048
+heads = 2
+ids = torch.arange(tokens, device=device)
+layout = ComfyPackedLayout(
+    permutation=ids,
+    inverse_permutation=ids.clone(),
+    grid=(1, 32, 64),
+    video_tokens=tokens,
+    sequence_length=tokens,
+    video_positions=torch.zeros(tokens, 3, device=device),
+)
+generator = torch.Generator(device=device).manual_seed(20261009)
+query = torch.randn(
+    1, tokens, heads, 128,
+    generator=generator, device=device, dtype=torch.bfloat16,
+)
+key = torch.randn_like(query)
+controller = ComfySparkController(ComfySparkConfig(
+    landmark_tree_v2_layout_reuse="q_from_k",
+    landmark_tree_v2_group_size=1,
+))
+for _ in range(3):
+    result = build_comfy_reblock_permutations(controller, query, key, layout)
+    torch.cuda.synchronize()
+    assert result[0].data_ptr() == result[2].data_ptr()
+plans = [
+    value for value in controller.rope_sol_key_clustering_static.values()
+    if hasattr(value, "graph_active")
+]
+assert plans and all(not plan.graph_active for plan in plans)
+"""
+    env = os.environ.copy()
+    env["PYTORCH_CUDA_ALLOC_CONF"] = "backend:cudaMallocAsync"
+    subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        check=True,
+        timeout=120,
+    )
 
 
 @pytest.mark.parametrize("video_tokens,total_tokens,topk_mode,topk_blocks,expected_ratio", [

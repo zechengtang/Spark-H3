@@ -301,38 +301,30 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
 
         if shared_layout:
             project_key()
-            if key_plan.graph_active:
-                key_permutation, key_inverse = key_plan.replay()
-            else:
-                key_permutation, key_inverse = key_plan.run(
-                    key_transformed, root_scores=key_root_scores
-                )
+            # ComfyUI 0.38/0.39 defaults to cudaMallocAsync. Capturing this
+            # allocation-heavy planner in a private torch CUDA graph can free
+            # captured temporaries through the async allocator and abort the
+            # process. Keep ComfyUI's allocator and execute only the planner
+            # eagerly; the Spark attention kernel itself remains unchanged.
+            key_permutation, key_inverse = key_plan.run(
+                key_transformed,
+                root_scores=key_root_scores,
+                allow_cuda_graph=False,
+            )
             query_permutation = key_permutation
             query_inverse = key_inverse
-        elif key_plan.graph_active and query_plan.graph_active:
-            stream_key = (
-                "fused_root_stream", query.device.type, query.device.index
-            )
-            auxiliary = controller.rope_sol_key_clustering_static.get(stream_key)
-            if auxiliary is None:
-                auxiliary = torch.cuda.Stream(device=query.device)
-                controller.rope_sol_key_clustering_static[stream_key] = auxiliary
-            current = torch.cuda.current_stream(query.device)
-            auxiliary.wait_stream(current)
-            with torch.cuda.stream(auxiliary):
-                project_key()
-                key_permutation, key_inverse = key_plan.replay()
-            project_query()
-            query_permutation, query_inverse = query_plan.replay()
-            current.wait_stream(auxiliary)
         else:
             project_key()
             project_query()
             key_permutation, key_inverse = key_plan.run(
-                key_transformed, root_scores=key_root_scores
+                key_transformed,
+                root_scores=key_root_scores,
+                allow_cuda_graph=False,
             )
             query_permutation, query_inverse = query_plan.run(
-                query_transformed, root_scores=query_root_scores
+                query_transformed,
+                root_scores=query_root_scores,
+                allow_cuda_graph=False,
             )
     else:
         torch.bmm(
@@ -369,12 +361,11 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
             )
 
     if not fused_root_scores:
-        if plan.graph_active:
-            combined_permutation, combined_inverse = plan.replay()
-        else:
-            combined_permutation, combined_inverse = plan.run(
-                transformed, inverse_norms=inverse_norms
-            )
+        combined_permutation, combined_inverse = plan.run(
+            transformed,
+            inverse_norms=inverse_norms,
+            allow_cuda_graph=False,
+        )
         key_permutation = combined_permutation[:flat_batch]
         key_inverse = (
             combined_inverse[:flat_batch] if combined_inverse is not None else None

@@ -32,15 +32,22 @@ unzip /path/to/ComfyUI-Spark-H3-<version>.zip
 /path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
 ```
 
+After registry publication, ComfyUI Manager is the recommended discovery and
+installation UI, but it remains optional: Spark-H3 neither bundles nor installs
+Manager. The manual ZIP path is intentionally kept as an independently testable
+baseline.
+
 The cross-platform installer first accepts an existing compatible backend,
 then selects a bundled or pinned-release wheel. It falls back to building the
 pinned, patched `comfy-kitchen` source only when no wheel matches. Source builds
 require Git, CMake, Ninja, a C++ compiler, and CUDA `nvcc`.
 
-The currently validated prebuilt wheel is Linux x86_64 with Python 3.12+ and
-SM120. Python 3.10/3.11 requires its own wheel or source compilation. Windows
-packaging is prepared, but the Windows wheel and SM120 runtime have not yet been
-validated. Non-SM120 GPUs can test node loading and dense fallback only.
+The current prebuilt wheels target Linux x86_64, Python 3.12+, CUDA 13.0, and
+SM120. CUDA 12.8/12.9 users must run `install.py --source` with the matching
+local CUDA toolkit. Python 3.10/3.11 also requires its own wheel or source
+compilation. Windows packaging is prepared, but the Windows wheel and SM120
+runtime have not yet been validated. This release does not support non-SM120
+GPUs.
 
 Restart ComfyUI afterward; the node appears as **MiniMax H3 Spark Attention
 (SM120)** in `model_patches/attention`. See the dedicated
@@ -58,16 +65,16 @@ UNETLoader -> MiniMax H3 Spark Attention (SM120) -> BasicGuider
 The [14.4 s native model example](workflows/spark_h3_vdn8_14p4s_t2va.json)
 uses the complete three-shot VDN prompt 8, 345 frames at 1344×768, and a
 20-step sampler. It has one Spark patch in the model path, without a Turbo
-LoRA or a second sparse-attention patch.
+LoRA or a second sparse-attention patch. Bundled workflows default to the
+official `minimax_h3_video_vae_fp16.safetensors`.
 
-Three matching 14.4-second, 8-step LoRA examples use the same full prompt,
+Two matching 14.4-second, 8-step LoRA examples use the same full prompt,
 seed, resolution, Spark 20% Top-K ratio, and two dense warmup evaluations. The
 DMAD and Alibaba-PAI examples retain the sampling protocol required by their
 respective students:
 
 | Workflow | LoRA loader | Sampler |
 | --- | --- | --- |
-| [MiniMax-H3 / ComfyUI 8-step LoRA](workflows/spark_h3_minimax_h3_comfyui_8step_lora_14p4s_t2va.json) | `LoraLoaderModelOnly` | `res_multistep` |
 | [LightX2V 768p 8-step LoRA](workflows/spark_h3_lightx2v_768p_8step_lora_14p4s_t2va.json) | `LoraLoaderModelOnly` | `res_multistep` |
 | [Larryvrh v4 8-step LoRA](workflows/spark_h3_larryvrh_8step_lora_14p4s_t2va.json) | `MiniMaxH3TurboLoRA` | `MiniMaxH3TurboSampler` |
 | [DMAD 4-step LoRA](workflows/spark_h3_dmad_4step_lora_5p2s_t2va.json) | `LoraLoaderModelOnly` | `MiniMaxH3DMADSampler` |
@@ -75,7 +82,8 @@ respective students:
 
 Larryvrh's LoRA requires its custom loader; the stock LoRA loader cannot
 apply that file to the local pruned base. The workflows use filenames from the
-local ComfyUI LoRA model path.
+local ComfyUI LoRA model path. Both the LightX2V and Larryvrh examples remain
+in the standalone ZIP as explicitly labelled optional integrations.
 
 DMAD publishes a Diffusers-format rank-128 LoRA. Convert it before selecting it
 in `LoraLoaderModelOnly`:
@@ -143,7 +151,7 @@ dtype, GPU, or kernel error instead of silently switching to dense attention.
 
 Requirements:
 
-- ComfyUI 0.30.0 or newer with native MiniMax-H3 support.
+- ComfyUI 0.38.x or 0.39.x with native MiniMax-H3 support.
 - CUDA BF16 execution on a compute-capability 12.0 GPU.
 - The ComfyUI-supported PyTorch/CUDA stack and a comfy-kitchen build containing
   the Spark Top-K, reblock, and global-reweight extension.

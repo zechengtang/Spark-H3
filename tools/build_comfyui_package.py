@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import stat
 import zipfile
@@ -10,6 +11,8 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_NAME = "ComfyUI-Spark-H3"
 DEFAULT_VERSION = "0.1.0"
+PACKAGE_CNR_ID = "comfyui-spark-h3"
+PACKAGE_SPARK_NODE = "MiniMaxH3SparkAttentionSM120"
 
 ROOT_FILES = (
     "__init__.py",
@@ -24,11 +27,11 @@ WORKFLOWS = (
     "spark_h3_vdn8_14p4s_t2va.json",
     "spark_h3_lightx2v_768p_8step_lora_14p4s_t2va.json",
     "spark_h3_larryvrh_8step_lora_14p4s_t2va.json",
-    "spark_h3_minimax_h3_comfyui_8step_lora_14p4s_t2va.json",
 )
 GENERATED_FILES = {
     "comfyui/install.py": "install.py",
     "comfyui/kernel_builder.py": "kernel_builder.py",
+    "comfyui/INSTALL.zh-CN.md": "INSTALL.zh-CN.md",
     "comfyui/standalone/requirements.txt": "requirements.txt",
     "comfyui/standalone/README.md": "README.md",
     "comfyui/patches/comfy-kitchen-spark-v0.2.36.patch": (
@@ -43,6 +46,7 @@ def _ignore(_directory: str, names: list[str]) -> set[str]:
         for name in names
         if name == "__pycache__"
         or name.startswith(".")
+        or "sm89" in name.lower()
         or name.endswith((".pyc", ".pyo", ".so"))
     }
 
@@ -75,7 +79,19 @@ def assemble(
     workflows = target / "workflows"
     workflows.mkdir()
     for name in WORKFLOWS:
-        shutil.copy2(REPOSITORY_ROOT / "workflows" / name, workflows / name)
+        source = REPOSITORY_ROOT / "workflows" / name
+        workflow = json.loads(source.read_text(encoding="utf-8"))
+        for node in workflow.get("nodes", ()):
+            if node.get("type") != "MiniMaxH3SparkAttentionSM120":
+                continue
+            node["type"] = PACKAGE_SPARK_NODE
+            properties = node.setdefault("properties", {})
+            properties["cnr_id"] = PACKAGE_CNR_ID
+            properties["ver"] = version
+        (workflows / name).write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     if kernel_wheels:
         wheelhouse = target / "wheelhouse"
         wheelhouse.mkdir()
