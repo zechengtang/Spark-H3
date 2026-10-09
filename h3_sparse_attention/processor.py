@@ -17,15 +17,43 @@ import torch
 import torch.nn.functional as F
 
 
+def _resolve_denoise_steps(
+    num_inference_steps: int | None,
+    num_denoise_steps: int | None,
+    *,
+    default: int,
+) -> int:
+    """Resolve the legacy sigma-grid count to actual denoising evaluations."""
+    if num_inference_steps is not None and num_denoise_steps is not None:
+        raise ValueError(
+            "set either num_denoise_steps or num_inference_steps, not both"
+        )
+    if num_denoise_steps is not None:
+        if type(num_denoise_steps) is not int or num_denoise_steps < 1:
+            raise ValueError("num_denoise_steps must be a positive integer")
+        return num_denoise_steps
+    if num_inference_steps is None:
+        return default
+    if type(num_inference_steps) is not int or num_inference_steps < 2:
+        raise ValueError("num_inference_steps must be an integer of at least 2")
+    return num_inference_steps - 1
+
+
 @dataclass(frozen=True)
 class H3SparseAttentionConfig:
     method: str = "sol"
-    total_evaluations: int = 49
-    warmup_percent: float = 20.0
+    total_evaluations: int = 19
+    warmup_mode: Literal["warmup_ratio", "warmup_steps"] = "warmup_ratio"
+    warmup_ratio: float = 0.2
+    warmup_steps: int = 4
+    # Backward-compatible alias. New callers should use warmup_mode with
+    # warmup_ratio or warmup_steps, matching the ComfyUI interface.
+    warmup_percent: float | None = None
     sol_tau: float = 1.0
     sol_thresh_type: str = "diag"
     sol_kv_splits: int = 1
     sol_dense_layers: int = 1
+    sol_min_tokens: int = 0
     sol_extra_dense_evaluations: tuple[int, ...] = ()
     sol_extra_dense_layers: tuple[int, ...] = ()
     sol_force_local_blocks: bool | None = None
@@ -114,8 +142,23 @@ class H3SparseAttentionConfig:
             raise ValueError("this package supports method='sol' only")
         if type(self.total_evaluations) is not int or self.total_evaluations < 1:
             raise ValueError("total_evaluations must be a positive integer")
-        if not 0 <= self.warmup_percent <= 100:
-            raise ValueError("warmup_percent must lie in [0, 100]")
+        if self.warmup_mode not in ("warmup_ratio", "warmup_steps"):
+            raise ValueError("warmup_mode must be 'warmup_ratio' or 'warmup_steps'")
+        if not math.isfinite(self.warmup_ratio) or not 0 <= self.warmup_ratio <= 1:
+            raise ValueError("warmup_ratio must be finite and lie in [0, 1]")
+        if type(self.warmup_steps) is not int or self.warmup_steps < 0:
+            raise ValueError("warmup_steps must be a nonnegative integer")
+        if self.warmup_percent is not None:
+            if not math.isfinite(self.warmup_percent) or not 0 <= self.warmup_percent <= 100:
+                raise ValueError("warmup_percent must be finite and lie in [0, 100]")
+            if (self.warmup_mode != "warmup_ratio"
+                    or self.warmup_ratio != 0.2
+                    or self.warmup_steps != 4):
+                raise ValueError(
+                    "warmup_percent cannot be combined with warmup_mode, "
+                    "warmup_ratio, or warmup_steps"
+                )
+            object.__setattr__(self, "warmup_ratio", self.warmup_percent / 100)
         if not math.isfinite(self.sol_tau) or self.sol_tau < 0:
             raise ValueError("sol_tau must be finite and nonnegative")
         if self.sol_thresh_type not in ("diag", "exact"):
@@ -124,6 +167,8 @@ class H3SparseAttentionConfig:
             raise ValueError("sol_kv_splits must be a positive integer")
         if type(self.sol_dense_layers) is not int or self.sol_dense_layers < 0:
             raise ValueError("sol_dense_layers must be a nonnegative integer")
+        if type(self.sol_min_tokens) is not int or self.sol_min_tokens < 0:
+            raise ValueError("sol_min_tokens must be a nonnegative integer")
         if type(self.sol_extra_dense_evaluations) is not tuple or not all(
                 type(e) is int and 0 <= e < self.total_evaluations
                 for e in self.sol_extra_dense_evaluations):
@@ -342,21 +387,42 @@ class H3SparseAttentionConfig:
         return self.sol_local_blocks_enabled
 
     @classmethod
-    def sol(cls, num_inference_steps: int = 50, **overrides):
-        if type(num_inference_steps) is not int or num_inference_steps < 2:
-            raise ValueError("num_inference_steps must be an integer of at least 2")
-        return cls(total_evaluations=num_inference_steps - 1, **overrides)
+    def sol(
+        cls,
+        num_inference_steps: int | None = None,
+        *,
+        num_denoise_steps: int | None = None,
+        **overrides,
+    ):
+        cls._validate_warmup_overrides(overrides)
+        total_evaluations = _resolve_denoise_steps(
+            num_inference_steps, num_denoise_steps, default=19
+        )
+        return cls(total_evaluations=total_evaluations, **overrides)
 
     @classmethod
-    def spark(cls, num_inference_steps: int = 20, **overrides) -> "H3SparseAttentionConfig":
+    def spark(
+        cls,
+        num_inference_steps: int | None = None,
+        *,
+        num_denoise_steps: int | None = None,
+        **overrides,
+    ) -> "H3SparseAttentionConfig":
         """Sol TopK10 + ungrouped fanout-16 LMv2 + global reweighting."""
+        cls._validate_warmup_overrides(overrides)
         defaults = dict(
+            # Spark applies sparse attention to every eligible transformer
+            # layer by default. Callers can opt leading layers back into dense.
+            sol_dense_layers=0,
             sol_route_topk_ratio=0.1,
             sol_route_topk_cutoff_mode="gemm_radix",
             # Export the packed route once and let the attention kernel consume
             # it without recomputing route QK. The threshold path remains an
             # explicit compatibility option.
             sol_route_topk_execution="packed_external_no_route_qk",
+            # Short sequences cannot amortize the fused sparse path. Match the
+            # kernel crossover directly and keep them on original dense attention.
+            sol_min_tokens=8192,
             sol_global_anchor_dtype="bfloat16",
             sol_landmark_preprocess=True,
             sol_landmark_preprocess_version="v2",
@@ -381,12 +447,32 @@ class H3SparseAttentionConfig:
         if overrides.get("landmark_tree_v2_fanout") is not None and "landmark_tree_v2_children" not in overrides:
             defaults.pop("landmark_tree_v2_children", None)
         defaults.update(overrides)
-        return cls.sol(num_inference_steps, **defaults)
+        total_evaluations = _resolve_denoise_steps(
+            num_inference_steps, num_denoise_steps, default=19
+        )
+        return cls(total_evaluations=total_evaluations, **defaults)
 
     @property
     def dense_evaluations(self):
-        return min(self.total_evaluations,
-                   math.ceil((self.total_evaluations + 1) * self.warmup_percent / 100))
+        if self.warmup_mode == "warmup_steps":
+            return min(self.total_evaluations, self.warmup_steps)
+        # Match ComfyUI's model-evaluation convention: ratio is applied to
+        # actual denoising calls, not the sigma grid including terminal 0.
+        return min(
+            self.total_evaluations,
+            math.ceil(self.total_evaluations * self.warmup_ratio),
+        )
+
+    @staticmethod
+    def _validate_warmup_overrides(overrides):
+        if "warmup_percent" in overrides and any(
+            name in overrides
+            for name in ("warmup_mode", "warmup_ratio", "warmup_steps")
+        ):
+            raise ValueError(
+                "warmup_percent cannot be combined with warmup_mode, "
+                "warmup_ratio, or warmup_steps"
+            )
 
 
 @dataclass
@@ -605,6 +691,10 @@ class _Controller:
         return dict(method="sol", sol_backend=self.sol_backend,
                     completed_evaluations=self.evaluation_index + 1,
                     total_evaluations=self.config.total_evaluations,
+                    warmup_mode=self.config.warmup_mode,
+                    warmup_ratio=self.config.warmup_ratio,
+                    warmup_steps=self.config.warmup_steps,
+                    min_tokens=self.config.sol_min_tokens,
                     dense_evaluations=self.config.dense_evaluations,
                     sol_extra_dense_evaluations=self.config.sol_extra_dense_evaluations,
                     sol_extra_dense_layers=self.config.sol_extra_dense_layers,
@@ -723,6 +813,14 @@ class _H3SparseProcessor:
                 rotary_emb,
                 attention_mask,
                 "extra_dense_layer",
+            )
+        if hidden_states.shape[1] < controller.config.sol_min_tokens:
+            return self._dense(
+                attn,
+                hidden_states,
+                rotary_emb,
+                attention_mask,
+                "short_sequence",
             )
         if layout is None:
             raise RuntimeError("sparse H3 processor did not receive packed-layout metadata")
@@ -888,21 +986,96 @@ def install_h3_sparse_attention(
 
 
 def install_h3_sol_attn(
-    transformer, num_inference_steps: int = 50, **config_overrides
+    transformer,
+    num_inference_steps: int | None = None,
+    *,
+    num_denoise_steps: int | None = None,
+    warmup_mode: Literal["warmup_ratio", "warmup_steps"] | None = None,
+    warmup_ratio: float | None = None,
+    warmup_steps: int | None = None,
+    dense_layers: int | None = None,
+    min_tokens: int | None = None,
+    **config_overrides,
 ) -> H3SparseAttentionPlugin:
     """Return the official-policy Sol-Attn plugin for MiniMax-H3."""
 
+    if dense_layers is not None:
+        if "sol_dense_layers" in config_overrides:
+            raise ValueError(
+                "dense_layers cannot be combined with legacy sol_dense_layers"
+            )
+        if type(dense_layers) is not int or dense_layers < 0:
+            raise ValueError("dense_layers must be a nonnegative integer")
+        config_overrides["sol_dense_layers"] = dense_layers
+    if min_tokens is not None:
+        if "sol_min_tokens" in config_overrides:
+            raise ValueError("min_tokens cannot be combined with legacy sol_min_tokens")
+        if type(min_tokens) is not int or min_tokens < 0:
+            raise ValueError("min_tokens must be a nonnegative integer")
+        config_overrides["sol_min_tokens"] = min_tokens
+    for name, value in (
+        ("warmup_mode", warmup_mode),
+        ("warmup_ratio", warmup_ratio),
+        ("warmup_steps", warmup_steps),
+    ):
+        if value is not None:
+            config_overrides[name] = value
     return install_h3_sparse_attention(
         transformer,
-        H3SparseAttentionConfig.sol(num_inference_steps, **config_overrides),
+        H3SparseAttentionConfig.sol(
+            num_inference_steps,
+            num_denoise_steps=num_denoise_steps,
+            **config_overrides,
+        ),
     )
 
 
 def install_h3_spark_attn(
-    transformer, num_inference_steps: int = 20, **config_overrides
+    transformer,
+    num_inference_steps: int | None = None,
+    *,
+    num_denoise_steps: int | None = None,
+    warmup_mode: Literal["warmup_ratio", "warmup_steps"] | None = None,
+    warmup_ratio: float | None = None,
+    warmup_steps: int | None = None,
+    dense_layers: int | None = None,
+    min_tokens: int | None = None,
+    topk_ratio: float | None = None,
+    **config_overrides,
 ) -> H3SparseAttentionPlugin:
     """Return the Spark plugin: Sol TopK10, ungrouped LMv2, global reweight."""
+    if dense_layers is not None:
+        if "sol_dense_layers" in config_overrides:
+            raise ValueError(
+                "dense_layers cannot be combined with legacy sol_dense_layers"
+            )
+        if type(dense_layers) is not int or dense_layers < 0:
+            raise ValueError("dense_layers must be a nonnegative integer")
+        config_overrides["sol_dense_layers"] = dense_layers
+    if min_tokens is not None:
+        if "sol_min_tokens" in config_overrides:
+            raise ValueError("min_tokens cannot be combined with legacy sol_min_tokens")
+        if type(min_tokens) is not int or min_tokens < 0:
+            raise ValueError("min_tokens must be a nonnegative integer")
+        config_overrides["sol_min_tokens"] = min_tokens
+    if topk_ratio is not None:
+        if "sol_route_topk_ratio" in config_overrides:
+            raise ValueError(
+                "topk_ratio cannot be combined with legacy sol_route_topk_ratio"
+            )
+        config_overrides["sol_route_topk_ratio"] = topk_ratio
+    for name, value in (
+        ("warmup_mode", warmup_mode),
+        ("warmup_ratio", warmup_ratio),
+        ("warmup_steps", warmup_steps),
+    ):
+        if value is not None:
+            config_overrides[name] = value
     return install_h3_sparse_attention(
         transformer,
-        H3SparseAttentionConfig.spark(num_inference_steps, **config_overrides),
+        H3SparseAttentionConfig.spark(
+            num_inference_steps,
+            num_denoise_steps=num_denoise_steps,
+            **config_overrides,
+        ),
     )

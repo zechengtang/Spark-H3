@@ -108,7 +108,7 @@ def exact_attention(q,k,v,kc,vs,threshold=None,route=None,scale=None,sink_start=
     gap=torch.empty_like(lse)
     # Ampere has enough register file capacity for two 64-column value tiles.
     # This halves repeated Q/K score work versus the portable 32-column path.
-    value_tile=64 if capability==(8,0) else 32
+    value_tile=64 if capability in ((8,0), (8,9)) else 32
     grid=(d//value_tile,query_blocks,b*h)
     if not external:
         if hybrid:raise ValueError('hybrid threshold route requires an SM90/SM100/SM120 BF16 CuTe backend')

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-FUSED_CAPS = ((8, 0), (9, 0), (10, 0), (12, 0))
+FUSED_CAPS = ((8, 0), (8, 9), (9, 0), (10, 0), (12, 0))
 
 requires_cuda = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="CUDA required"
@@ -30,6 +30,7 @@ requires_new_fused_backend = pytest.mark.skipif(
     "cap,expected",
     [
         ((8, 0), "sm80_fused_virtual_query"),
+        ((8, 9), "sm89_fused_virtual_query"),
         ((9, 0), "sm90_fused_virtual_query"),
         ((10, 0), "sm100_fused_virtual_query"),
         ((12, 0), "sm120_fused_virtual_query"),
@@ -62,10 +63,12 @@ def test_virtual_q_backend_auto_length_gate(monkeypatch):
 
 def test_fused_kernel_modules_importable():
     import h3_sparse_attention.spark_reweight_sm80 as m80
+    import h3_sparse_attention.spark_reweight_sm89 as m89
     import h3_sparse_attention.spark_reweight_sm90 as m90
     import h3_sparse_attention.spark_reweight_sm100 as m100
 
     assert hasattr(m80, "SparkReweightForwardSm80")
+    assert hasattr(m89, "SparkReweightForwardSm89")
     assert hasattr(m90, "SparkReweightForwardSm90")
     assert hasattr(m100, "SparkReweightForwardSm100")
 

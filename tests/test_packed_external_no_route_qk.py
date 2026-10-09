@@ -29,6 +29,7 @@ def test_route_qk_free_default_falls_back_outside_supported_gpus():
     requested = "packed_external_no_route_qk"
     assert _effective_topk_execution(requested, (12, 0)) == requested
     assert _effective_topk_execution(requested, (8, 0)) == requested
+    assert _effective_topk_execution(requested, (8, 9)) == requested
     assert _effective_topk_execution(requested, (9, 0)) == "threshold"
     assert _effective_topk_execution("threshold", (12, 0)) == "threshold"
 
@@ -77,8 +78,8 @@ def test_sm80_route_qk_free_kernel_is_packed_external_only():
 
 @pytest.mark.skipif(
     not torch.cuda.is_available()
-    or tuple(torch.cuda.get_device_capability(0)) != (8, 0),
-    reason="SM80 packed external route requires Ampere SM80",
+    or tuple(torch.cuda.get_device_capability(0)) not in ((8, 0), (8, 9)),
+    reason="packed external route requires SM80 or SM89",
 )
 def test_sm80_route_qk_free_matches_fused_topk(monkeypatch):
     from sol_attn.preprocess import _reduce_kv
@@ -130,6 +131,41 @@ def test_sm80_route_qk_free_matches_fused_topk(monkeypatch):
         atol=0.002,
         rtol=0.01,
     )
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or tuple(torch.cuda.get_device_capability(0)) != (8, 9),
+    reason="SM89 CUDA device required",
+)
+def test_sm89_default_packed_route_runs_fused_at_production_length():
+    from h3_sparse_attention.processor import _Controller
+    from h3_sparse_attention.spark_integration import _spark_topk_attention
+
+    torch.manual_seed(89)
+    tokens, video_tokens = 8256, 8192
+    q, k, v = (
+        torch.randn(1, tokens, 1, 128, device="cuda", dtype=torch.bfloat16)
+        for _ in range(3)
+    )
+    ranges = torch.tensor([[0, tokens]], device="cuda", dtype=torch.int64)
+    mapping = torch.zeros(tokens // 64, device="cuda", dtype=torch.int64)
+    layout = SimpleNamespace(video_tokens=video_tokens, sequence_length=tokens)
+    controller = _Controller(H3SparseAttentionConfig.spark(20, sol_log_density=False))
+
+    def run():
+        return _spark_topk_attention(
+            controller, q, k, v, layout,
+            virtual_query_data=(ranges, mapping, None),
+            _query_tokens=video_tokens,
+        )[:, :video_tokens].clone()
+
+    first, second = run(), run()
+    torch.cuda.synchronize()
+    assert controller.sol_backend == "sm89_fused_virtual_query"
+    assert controller.counts["sol_topk_packed_route_calls"] == 2
+    assert torch.isfinite(first).all()
+    assert torch.equal(first, second)
 
 
 @pytest.mark.skipif(

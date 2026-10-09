@@ -73,7 +73,7 @@ with install_h3_spark_attn(
     num_denoise_steps=num_denoise_steps,
     warmup_mode="warmup_steps",
     warmup_steps=4,
-    dense_layers=1,
+    dense_layers=0,
     topk_ratio=0.1,
 ):
     result = pipe(**inputs, num_inference_steps=num_inference_steps)
@@ -83,10 +83,11 @@ with install_h3_spark_attn(
 
 ## 🧩 ComfyUI Installation
 
-The current ComfyUI package targets Linux, CUDA BF16, and NVIDIA SM120 GPUs
-(RTX 50 series). It supports ComfyUI 0.38.x and 0.39.x and does not include
-ComfyUI or model weights. Prebuilt wheels target CUDA 13.0; CUDA 12.8/12.9
-users must compile locally with `install.py --source`.
+The current ComfyUI package targets Linux, CUDA BF16, and NVIDIA SM89 or SM120
+GPUs (RTX 4090 and RTX 50 series). It supports ComfyUI 0.38.x and 0.39.x and does not include
+ComfyUI or model weights. CUDA 12.8 and CUDA 13.0 prebuilt wheels are provided
+as separate release archives; CUDA 12.9 and other
+toolkit versions must compile locally with `install.py --source`.
 
 For package selection, installation commands, and troubleshooting, see the
 **[ComfyUI 中文安装指南](comfyui/INSTALL.zh-CN.md)**.
@@ -122,7 +123,7 @@ requirements, defaults, and options. -->
 
 | Status | Item | Resources |
 |---|---|---|
-| ✅ Available | Fused Spark kernels for SM80 and SM120 | [Kernel documentation](h3_sparse_attention/README.md) · [Performance matrix](docs/kernel_performance_matrix.md) |
+| ✅ Available | Fused Spark kernels for SM80, SM89, and SM120 | [Kernel documentation](h3_sparse_attention/README.md) · [Performance matrix](docs/kernel_performance_matrix.md) |
 | ✅ Available | Standalone ComfyUI node packaging with wheel-first installation and source fallback | [ComfyUI guide](comfyui/README.md) |
 | ✅ Available | Release Ref2VA inference examples | [Spark-Ref2VA Preview](docs/blogs/spark-attn/README.md#spark-ref2va-preview) |
 | 🚧 In progress | Test and validate the ComfyUI implementation on NVIDIA GeForce RTX 50 series | — |

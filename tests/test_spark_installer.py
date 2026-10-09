@@ -1,3 +1,5 @@
+import inspect
+
 import pytest
 import torch
 from h3_sparse_attention import H3SparseAttentionConfig, install_h3_spark_attn
@@ -6,11 +8,12 @@ from h3_sparse_attention.reblock_hierarchy import build_reblock_hierarchy
 
 
 def test_installer_defaults_and_global_frontier():
-    plugin=install_h3_spark_attn(object(),num_inference_steps=20)
+    plugin=install_h3_spark_attn(object(),num_denoise_steps=19)
     cfg=plugin.config
     assert cfg.method=='sol' and cfg.total_evaluations==19
     assert cfg.sol_route_topk_ratio==.1 and cfg.sol_route_topk_cutoff_mode=='gemm_radix'
-    assert cfg.sol_route_topk_execution=='threshold'
+    assert cfg.sol_route_topk_execution=='packed_external_no_route_qk'
+    assert cfg.sol_min_tokens == 8192
     assert cfg.sol_sparse_video_scope=='target'
     assert cfg.sol_global_anchor_dtype=='bfloat16'
     assert cfg.sol_force_local_blocks is None and not cfg.sol_local_blocks_enabled
@@ -27,6 +30,147 @@ def test_installer_defaults_and_global_frontier():
     assert layout['metadata']['active_size_counts']=={72576:1}
     assert layout['metadata']['active_virtual_blocks']==1
     assert layout['metadata']['global_video_representative']
+
+
+def test_denoise_step_count_api_and_legacy_grid_compatibility():
+    assert H3SparseAttentionConfig.spark(num_denoise_steps=4).total_evaluations == 4
+    assert H3SparseAttentionConfig.spark(num_denoise_steps=8).total_evaluations == 8
+    assert H3SparseAttentionConfig.spark(num_denoise_steps=19).total_evaluations == 19
+    assert H3SparseAttentionConfig.sol(num_denoise_steps=49).total_evaluations == 49
+    assert H3SparseAttentionConfig.spark(num_inference_steps=20).total_evaluations == 19
+    assert H3SparseAttentionConfig.sol(num_inference_steps=50).total_evaluations == 49
+    assert H3SparseAttentionConfig.spark().total_evaluations == 19
+    assert H3SparseAttentionConfig.sol().total_evaluations == 19
+    assert H3SparseAttentionConfig().total_evaluations == 19
+    assert H3SparseAttentionConfig.sol(
+        num_denoise_steps=5, warmup_percent=20
+    ).dense_evaluations == 1
+    with pytest.raises(ValueError, match="either num_denoise_steps or num_inference_steps"):
+        H3SparseAttentionConfig.spark(
+            num_inference_steps=20, num_denoise_steps=19
+        )
+    with pytest.raises(ValueError, match="num_denoise_steps"):
+        H3SparseAttentionConfig.spark(num_denoise_steps=0)
+
+
+def test_warmup_modes_match_comfyui_evaluation_count_semantics():
+    install_parameters = inspect.signature(install_h3_spark_attn).parameters
+    assert "warmup_mode" in install_parameters
+    assert "warmup_ratio" in install_parameters
+    assert "warmup_steps" in install_parameters
+    assert "dense_layers" in install_parameters
+    assert "min_tokens" in install_parameters
+    assert "topk_ratio" in install_parameters
+
+    default = H3SparseAttentionConfig.spark(num_denoise_steps=19)
+    assert default.warmup_mode == "warmup_ratio"
+    assert default.warmup_ratio == 0.2
+    assert default.warmup_steps == 4
+    assert default.warmup_percent is None
+    assert default.dense_evaluations == 4
+    assert default.sol_dense_layers == 0
+    assert H3SparseAttentionConfig.sol(num_denoise_steps=19).sol_dense_layers == 1
+
+    ratio = H3SparseAttentionConfig.spark(
+        num_denoise_steps=8,
+        warmup_mode="warmup_ratio",
+        warmup_ratio=0.25,
+    )
+    assert ratio.dense_evaluations == 2
+    fixed = H3SparseAttentionConfig.spark(
+        num_denoise_steps=3,
+        warmup_mode="warmup_steps",
+        warmup_steps=4,
+    )
+    assert fixed.dense_evaluations == 3
+    installed = install_h3_spark_attn(
+        object(),
+        num_denoise_steps=19,
+        warmup_mode="warmup_steps",
+        warmup_steps=4,
+    )
+    assert installed.config.dense_evaluations == 4
+    assert installed.summary()["warmup_mode"] == "warmup_steps"
+    assert installed.summary()["warmup_steps"] == 4
+    assert install_h3_spark_attn(
+        object(), num_denoise_steps=19, dense_layers=0
+    ).config.sol_dense_layers == 0
+    assert install_h3_spark_attn(
+        object(), num_denoise_steps=19, sol_dense_layers=2
+    ).config.sol_dense_layers == 2
+    with pytest.raises(ValueError, match="cannot be combined"):
+        install_h3_spark_attn(
+            object(), dense_layers=1, sol_dense_layers=1
+        )
+    with pytest.raises(ValueError, match="dense_layers"):
+        install_h3_spark_attn(object(), dense_layers=-1)
+    assert install_h3_spark_attn(
+        object(), min_tokens=0
+    ).config.sol_min_tokens == 0
+    with pytest.raises(ValueError, match="cannot be combined"):
+        install_h3_spark_attn(object(), min_tokens=8192, sol_min_tokens=8192)
+    with pytest.raises(ValueError, match="min_tokens"):
+        install_h3_spark_attn(object(), min_tokens=-1)
+    assert install_h3_spark_attn(
+        object(), topk_ratio=0.2
+    ).config.sol_route_topk_ratio == 0.2
+    with pytest.raises(ValueError, match="cannot be combined"):
+        install_h3_spark_attn(
+            object(), topk_ratio=0.1, sol_route_topk_ratio=0.1
+        )
+    with pytest.raises(ValueError, match="sol_route_topk_ratio"):
+        install_h3_spark_attn(object(), topk_ratio=0.0)
+    assert H3SparseAttentionConfig.spark(
+        num_denoise_steps=19,
+        warmup_mode="warmup_steps",
+        warmup_steps=0,
+    ).dense_evaluations == 0
+
+    legacy = H3SparseAttentionConfig.spark(
+        num_denoise_steps=5, warmup_percent=20
+    )
+    assert legacy.warmup_mode == "warmup_ratio"
+    assert legacy.warmup_ratio == 0.2
+    assert legacy.dense_evaluations == 1
+
+    with pytest.raises(ValueError, match="warmup_percent cannot be combined"):
+        H3SparseAttentionConfig.spark(
+            num_denoise_steps=19,
+            warmup_percent=20,
+            warmup_mode="warmup_steps",
+            warmup_steps=4,
+        )
+    with pytest.raises(ValueError, match="warmup_mode"):
+        H3SparseAttentionConfig.spark(warmup_mode="invalid")
+    with pytest.raises(ValueError, match="warmup_ratio"):
+        H3SparseAttentionConfig.spark(warmup_ratio=1.1)
+    with pytest.raises(ValueError, match="warmup_steps"):
+        H3SparseAttentionConfig.spark(warmup_steps=-1)
+
+
+def test_spark_short_sequence_uses_original_dense_attention():
+    from h3_sparse_attention.processor import _Controller, _H3SparseProcessor
+
+    cfg = H3SparseAttentionConfig.spark(
+        num_denoise_steps=1,
+        warmup_mode="warmup_steps",
+        warmup_steps=0,
+        sol_dense_layers=0,
+    )
+    controller = _Controller(cfg)
+    controller.evaluation_index = 0
+    marker = object()
+
+    def original(attn, hidden_states, rotary_emb, attention_mask):
+        return marker
+
+    processor = _H3SparseProcessor(0, original, controller)
+    hidden_states = torch.empty(1, 8191, 1)
+    assert processor(None, hidden_states) is marker
+    assert controller.counts["dense:short_sequence"] == 1
+    with pytest.raises(RuntimeError, match="packed-layout metadata"):
+        processor(None, torch.empty(1, 8192, 1))
+    assert controller.counts["dense:short_sequence"] == 1
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
@@ -162,7 +306,7 @@ def test_overrides_and_plain_sol_opt_in():
     assert cfg.sol_virtual_query_levels_up==2 and cfg.sol_virtual_query_target_blocks is None
     assert cfg.landmark_tree_v2_children==8
     assert H3SparseAttentionConfig.sol(20).sol_virtual_query_target_blocks is None
-    assert H3SparseAttentionConfig.sol(20).sol_route_topk_execution == 'threshold'
+    assert H3SparseAttentionConfig.sol(20).sol_route_topk_execution == 'packed_external_no_route_qk'
     assert H3SparseAttentionConfig.sol(20).sol_local_blocks_enabled
     assert H3SparseAttentionConfig.spark(20).sol_force_local_blocks is None
     assert H3SparseAttentionConfig.spark(
@@ -293,7 +437,8 @@ def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused,
     with torch.no_grad():
         expected = model(x)
         with install_h3_spark_attn(model, num_inference_steps=3, warmup_percent=0,
-                                   sol_dense_layers=0, sol_route_topk_ratio=1.0,
+                                   sol_dense_layers=0, min_tokens=0,
+                                   sol_route_topk_ratio=1.0,
                                    sol_video_tail_mode=tail_mode) as plugin:
             actual = model(x, token_tags=tags, position_ids=pos)
             torch.testing.assert_close(actual, expected, atol=.008, rtol=.025)

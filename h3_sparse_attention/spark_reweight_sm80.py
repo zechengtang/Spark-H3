@@ -1183,7 +1183,7 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
             )
         ):
             raise NotImplementedError(
-                "SM80 fused Spark implements only route-QK-free packed external routing"
+                "SM80/SM89 fused Spark implements only route-QK-free packed external routing"
             )
         self.external_route = external_route
         self.packed_external_route = packed_external_route
@@ -1233,7 +1233,7 @@ class SparkReweightForwardSm80(FlashAttentionForwardAmpere):
             or v.element_type != cutlass.BFloat16
             or o.element_type != cutlass.BFloat16
         ):
-            raise TypeError("SM80 fused Spark requires BF16 Q/K/V/O")
+            raise TypeError("SM80/SM89 fused Spark requires BF16 Q/K/V/O")
         self._dtype = q.element_type
         smem_atom = cute.make_composed_layout(
             cute.make_swizzle(3, 3, 3),

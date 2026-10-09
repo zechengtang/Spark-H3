@@ -18,7 +18,7 @@ from .device_policy import is_a800_80gb
 
 _LOG2_E = math.log2(math.e)
 _SPARK_BLOCK_SIZE = 64
-_SUPPORTED_SPARK_CAPABILITIES = frozenset({(8, 0), (9, 0), (10, 0), (12, 0)})
+_SUPPORTED_SPARK_CAPABILITIES = frozenset({(8, 0), (8, 9), (9, 0), (10, 0), (12, 0)})
 _PROFILE_REBLOCK = os.environ.get("SPARK_PROFILE_REBLOCK") == "1"
 
 
@@ -541,7 +541,7 @@ def _landmark_tree_v2_combined_permutations(
             grid_shape=layout.grid,
             initial_order=controller.config.landmark_tree_v2_initial_order,
             device=query.device,
-            compact_indices=device_capability in ((8, 0), (12, 0)),
+            compact_indices=device_capability in ((8, 0), (8, 9), (12, 0)),
         )
         controller.rope_sol_key_clustering_static[plan_key] = plan
     # This eager fallback is designed and validated for A800 80GB long-sequence
@@ -1289,6 +1289,7 @@ def _effective_topk_execution(requested, capability):
     """Resolve architecture-specific execution for the public default."""
     if requested == "packed_external_no_route_qk" and capability not in (
         (8, 0),
+        (8, 9),
         (12, 0),
     ):
         return "threshold"
@@ -1317,11 +1318,11 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         controller.counts[
             f"route_execution_fallback:{cfg.sol_route_topk_execution}->{execution}"
         ] += 1
-    if capability == (8, 0) and execution not in (
+    if capability in ((8, 0), (8, 9)) and execution not in (
         "threshold", "fused", "packed_external_no_route_qk"
     ):
         raise RuntimeError(
-            f"SM80 does not implement sol_route_topk_execution="
+            f"SM{capability[0]}{capability[1]} does not implement sol_route_topk_execution="
             f"{execution!r}; use 'threshold', 'fused', "
             "or 'packed_external_no_route_qk'"
         )
@@ -1372,7 +1373,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         and not partial_video
         and execution == "fused"
         and virtual_query_data is not None
-        and tuple(torch.cuda.get_device_capability(q.device)) in ((8, 0), (12, 0))
+        and capability in ((8, 0), (8, 9), (12, 0))
         and _query_tokens is not None
     ):
         candidate_blocks = layout.video_tokens // 64
@@ -1387,9 +1388,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
             ),
             route_topk_ratio=cfg.sol_route_topk_ratio,
             route_threshold_mode=(
-                "sm80_cta_local_exact_topk"
-                if capability == (8, 0)
-                else "sm120_cta_local_exact_topk"
+                f"sm{capability[0]}{capability[1]}_cta_local_exact_topk"
             ),
         )
         controller.counts["sol_topk_fused_route_calls"] += 1
@@ -1398,13 +1397,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         and not partial_video
         and execution == "packed_external_no_route_qk"
         and cfg.sol_route_topk_cutoff_mode == "gemm_radix"
-        and (
-            capability == (12, 0)
-            or (
-                capability == (8, 0)
-                and execution == "packed_external_no_route_qk"
-            )
-        )
+        and capability in ((8, 0), (8, 9), (12, 0))
         and _query_tokens is not None
         and virtual_query_data is not None
         and virtual_q_backend(q).endswith("fused_virtual_query")
@@ -1466,7 +1459,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     if virtual_query_data is not None:
         from .sol_numerator_virtual_q import virtual_q_attention, virtual_q_backend
         ranges, mapping, anchors = virtual_query_data
-        # The route-QK-free kernel requires an SM80/SM120 packed int32 route. Some
+        # The route-QK-free kernel requires an SM80/SM89/SM120 packed int32 route. Some
         # compatibility/ablation paths deliberately use a threshold or a bool
         # route instead; keep those paths functional by using the regular
         # external-route/threshold merge in that case.

@@ -6,8 +6,8 @@ import torch
 
 requires_sm80 = pytest.mark.skipif(
     not torch.cuda.is_available()
-    or tuple(torch.cuda.get_device_capability(0)) != (8, 0),
-    reason="SM80 fused Top-K requires Ampere SM80",
+    or tuple(torch.cuda.get_device_capability(0)) not in ((8, 0), (8, 9)),
+    reason="cp.async fused Top-K requires SM80 or SM89",
 )
 
 

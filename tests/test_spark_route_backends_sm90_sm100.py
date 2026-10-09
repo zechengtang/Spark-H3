@@ -19,8 +19,8 @@ requires_cuda = pytest.mark.skipif(
 )
 requires_route_backend = pytest.mark.skipif(
     not torch.cuda.is_available()
-    or tuple(torch.cuda.get_device_capability(0)) not in ((8, 0), (9, 0), (10, 0)),
-    reason="route backends require SM80/SM90/SM100 hardware",
+    or tuple(torch.cuda.get_device_capability(0)) not in ((8, 0), (8, 9), (9, 0), (10, 0)),
+    reason="route backends require SM80/SM89/SM90/SM100 hardware",
 )
 requires_hybrid_backend = pytest.mark.skipif(
     not torch.cuda.is_available()
@@ -30,8 +30,8 @@ requires_hybrid_backend = pytest.mark.skipif(
 requires_export_backend = requires_hybrid_backend
 requires_threshold_backend = pytest.mark.skipif(
     not torch.cuda.is_available()
-    or tuple(torch.cuda.get_device_capability(0)) not in ((8, 0), (9, 0), (10, 0), (12, 0)),
-    reason="threshold backend requires SM80/SM90/SM100/SM120 hardware",
+    or tuple(torch.cuda.get_device_capability(0)) not in ((8, 0), (8, 9), (9, 0), (10, 0), (12, 0)),
+    reason="threshold backend requires SM80/SM89/SM90/SM100/SM120 hardware",
 )
 
 
@@ -165,6 +165,7 @@ def test_threshold_backend_probe_sm90_sm100(monkeypatch):
         ((10, 0), "cute_sm100_topk_threshold"),
         ((12, 0), "cute_sm120_topk_threshold"),
         ((8, 0), "triton_sm80_topk_threshold"),
+        ((8, 9), "triton_sm89_topk_threshold"),
     ):
         monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, _c=cap, **k: _c)
         assert rope_sol_kernel.sol_topk_threshold_backend(0) == expected

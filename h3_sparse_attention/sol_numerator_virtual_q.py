@@ -512,7 +512,7 @@ def _unpack_packed_route(P,R,N:tl.constexpr,QB:tl.constexpr,H:tl.constexpr,W:tl.
 
 
 def unpack_packed_route(route, blocks):
-    """Expand an SM80/SM120 packed route for the block-tail reference path."""
+    """Expand an SM80/SM89/SM120 packed route for the block-tail reference path."""
     if route.ndim!=4 or route.dtype!=torch.int32 or route.shape[-1]!=triton.cdiv(blocks,32):
         raise ValueError('invalid packed route shape or dtype')
     b,query_blocks,h,words=route.shape
@@ -707,7 +707,7 @@ def virtual_q_backend(q):
     selection=os.environ.get('H3_SPARK_REWEIGHT_FUSED', 'auto')
     capability=tuple(torch.cuda.get_device_capability(q.device)) if q.is_cuda else None
     if (q.is_cuda and q.dtype == torch.bfloat16
-            and capability in ((8, 0), (9, 0), (10, 0), (12, 0))
+            and capability in ((8, 0), (8, 9), (9, 0), (10, 0), (12, 0))
             and selection != '0'
             and (selection == '1' or q.shape[1] > 8192)):
         return f'sm{capability[0]}{capability[1]}_fused_virtual_query'
@@ -731,6 +731,8 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     capability=tuple(torch.cuda.get_device_capability(q.device))
     if capability==(8,0):
         from .spark_reweight_sm80 import SparkReweightForwardSm80 as FusedKernel
+    elif capability==(8,9):
+        from .spark_reweight_sm89 import SparkReweightForwardSm89 as FusedKernel
     elif capability==(9,0):
         from .spark_reweight_sm90 import SparkReweightForwardSm90 as FusedKernel
     elif capability==(10,0):
@@ -739,7 +741,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         from .spark_reweight_sm120 import SparkReweightForwardSm120 as FusedKernel
     # A cache hit skips constructing the kernel object, so keep SM80's ratio
     # validation before looking up a runtime-ratio specialization.
-    if capability == (8,0) and not 0.0 <= fused_topk_ratio <= 1.0:
+    if capability in ((8,0), (8,9)) and not 0.0 <= fused_topk_ratio <= 1.0:
         raise ValueError("fused_topk_ratio must be in [0, 1]")
     b,t,h,d=q.shape;n=triton.cdiv(t,64);p=a.shape[1]
     ranges=_host_ranges(virtual_ranges)
@@ -758,14 +760,14 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     packed_external=(
         route is not None and route.dtype == torch.int32 and route.ndim == 4
     )
-    if capability == (8,0) and fused_topk_ratio and n > 2048:
-        raise ValueError("SM80 fused Top-K supports at most 2048 key blocks")
+    if capability in ((8,0), (8,9)) and fused_topk_ratio and n > 2048:
+        raise ValueError("SM80/SM89 fused Top-K supports at most 2048 key blocks")
     if skip_external_route_qk and not packed_external:
         raise ValueError('route-QK-free path requires a packed external route')
     external=threshold is None and route is not None
     hybrid=threshold is not None and route is not None
-    if packed_external and capability not in ((8,0), (12,0)):
-        raise NotImplementedError("packed external routes currently require SM80 or SM120")
+    if packed_external and capability not in ((8,0), (8,9), (12,0)):
+        raise NotImplementedError("packed external routes currently require SM80, SM89 or SM120")
     if packed_external and not skip_external_route_qk:
         raise ValueError("packed external routes require route-QK-free execution")
     if packed_external and export_route:
@@ -794,16 +796,16 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     # that head's exact K/V working set for every parent chunk, defeating L2
     # reuse in the production mainloop. Head-major streaming retains locality.
     direct_sm80_summaries = (
-        capability == (8,0)
+        capability in ((8,0), (8,9))
         and precomputed_summaries is None
         and os.environ.get('H3_SM80_DIRECT_SUMMARIES','1') != '0'
     )
     sm80_prefetch_summary = (
-        capability != (8,0)
+        capability not in ((8,0), (8,9))
         or os.environ.get('H3_SM80_PREFETCH_SUMMARY','1') != '0'
     )
     sm80_skip_final_tile_barrier = (
-        capability != (8,0)
+        capability not in ((8,0), (8,9))
         or os.environ.get('H3_SM80_SKIP_FINAL_TILE_BARRIER','1') != '0'
     )
     if precomputed_summaries is None:
@@ -831,7 +833,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     if not direct_sm80_summaries:
         akt=ak.view(b*chunk,head_chunk,n,d).permute(0,2,1,3)
         avt=av.view(b*chunk,head_chunk,n,d).permute(0,2,1,3)
-    if capability == (8,0) and not direct_sm80_summaries:
+    if capability in ((8,0), (8,9)) and not direct_sm80_summaries:
         # Ampere cp.async requires a statically provable 16-byte-aligned row.
         # The parent/head transpose is small (P=1 for the production global
         # policy) and making it compact avoids carrying an unprovable dynamic
@@ -851,7 +853,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
             compact_kc.copy_(kc)
             kc=compact_kc
     tensors=(q,k,v,out,kc,avt,threshold,route,lse,akt,lm,leaf_to_virtual)
-    if capability == (8,0):
+    if capability in ((8,0), (8,9)):
         from cutlass.cute.runtime import from_dlpack
         def sm80_tensor(x):
             value=from_dlpack(x,assumed_align=16,enable_tvm_ffi=True)
@@ -871,7 +873,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
                 args.append(sm80_tensor(x))
             except RuntimeError as error:
                 raise RuntimeError(
-                    f"failed to describe SM80 tensor shape={tuple(x.shape)} "
+                    f"failed to describe SM{capability[0]}{capability[1]} tensor shape={tuple(x.shape)} "
                     f"stride={tuple(x.stride())} order={x.dim_order()}"
                 ) from error
     else:
@@ -879,7 +881,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     stream=cuda.CUstream(torch.cuda.current_stream(q.device).cuda_stream)
     static_video_tokens = t - sink_tokens if sink_start is None else operator.index(sink_start)
     runtime_sm80_topk_ratio = (
-        capability == (8,0)
+        capability in ((8,0), (8,9))
         and os.environ.get("H3_SM80_RUNTIME_TOPK_RATIO", "1") != "0"
     )
     runtime_sm120_topk_ratio = (
@@ -914,14 +916,14 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
                                   summary_math=summary_math,logmass_key=logmass_key,
                                   reweight_components=reweight_components,
                                   output_nh=direct_sm80_summaries)
-                if capability == (8,0) and not direct_sm80_summaries:
+                if capability in ((8,0), (8,9)) and not direct_sm80_summaries:
                     compact_akt.copy_(akt_view)
                     compact_avt.copy_(avt_view)
             qb_start=ranges[p_start][0]//64
             qb_end=triton.cdiv(min(ranges[p_end-1][1],query_tokens),64)
             scalars=(qb_start,qb_end-qb_start,p_start,head_start,head_count,
                      d**-.5,sink_first,sink_last)
-            if capability in ((8,0), (12,0)):
+            if capability in ((8,0), (8,9), (12,0)):
                 scalars += (round(fused_topk_ratio * 10000),)
             if compiled is None:
                 kernel=(FusedKernel(external_route=external,
@@ -934,7 +936,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
                                     runtime_fused_topk_ratio=runtime_sm80_topk_ratio,
                                     prefetch_summary=sm80_prefetch_summary,
                                     skip_final_tile_barrier=sm80_skip_final_tile_barrier)
-                        if capability==(8,0) else
+                        if capability in ((8,0), (8,9)) else
                         FusedKernel(t,external_route=external,hybrid_route=hybrid,export_route=export_route,force_local_blocks=force_local_blocks)
                         if capability==(9,0) else
                         FusedKernel(external_route=external,packed_external_route=packed_external,

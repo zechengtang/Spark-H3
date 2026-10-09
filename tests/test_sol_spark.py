@@ -291,6 +291,9 @@ def test_sol_sm80_native_backend(monkeypatch):
     assert interface._backend_for_arch(
         (8, 0), cute_available=False
     ) == "triton_sm80"
+    assert interface._backend_for_arch(
+        (8, 9), cute_available=False
+    ) == "triton_sm89"
     capability = tuple(torch.cuda.get_device_capability())
     assert interface.get_sol_attn_backend("cuda") == interface._backend_for_arch(
         capability, cute_available=False

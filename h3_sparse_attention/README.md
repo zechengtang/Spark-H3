@@ -16,11 +16,13 @@ python -m pip install -e '.[cuda]'
 The pipeline still needs the H3-capable diffusers build and model dependencies
 listed in the repository's main README and `requirements.txt`. CUDA execution
 requires a matching PyTorch/CUDA installation. Plain Sol-Attn selects the
-native SM80 Triton backend or the SM90/SM100/SM120 CuTe backend before launch;
+native SM80/SM89 Triton backend or the SM90/SM100/SM120 CuTe backend before launch;
 other NVIDIA GPUs with compute capability at least 8.0 use the portable Triton
 backend. Spark-H3's Diffusers integration contains architecture dispatch for
-SM80, SM90, SM100, and SM120 and raises before reblocking on every other
-architecture. Production kernel support is complete for SM80 and SM120. SM90
+SM80, SM89, SM90, SM100, and SM120 and raises before reblocking on every other
+architecture. Production kernel support is complete for SM80 and SM120. SM89
+uses the SM80-style CuTe `cp.async` kernel compiled for Ada and has been
+validated on an RTX 4090 with fused Top-K and packed routes. SM90
 and SM100 remain development targets until compatible GPU resources become
 available for implementation and validation. Spark requires CUDA and Triton
 for its supported execution paths.
@@ -33,17 +35,23 @@ tensors. These are forward/inference kernels.
 from h3_sparse_attention import install_h3_sol_attn
 
 # pipe is an already loaded MiniMaxH3Pipeline or MiniMaxH3ModularPipeline.
+# MiniMaxH3Scheduler includes the terminal sigma=0 in num_inference_steps,
+# but that terminal point does not run the transformer.
+num_denoise_steps = 19
+num_inference_steps = num_denoise_steps + 1
+
 with install_h3_sol_attn(
     pipe.transformer,
-    num_inference_steps=50,  # must match the pipeline invocation
-    warmup_percent=20,
+    num_denoise_steps=num_denoise_steps,
+    warmup_mode="warmup_ratio",
+    warmup_ratio=0.2,
     sol_tau=1.0,
     sol_thresh_type="diag",
     sol_kv_splits=1,
-    sol_dense_layers=1,
+    dense_layers=0,
     sol_force_local_blocks=True,
 ) as attention:
-    result = pipe(..., num_inference_steps=50)
+    result = pipe(..., num_inference_steps=num_inference_steps)
     stats = attention.summary()
 ```
 
@@ -51,10 +59,20 @@ The context manager installs attention processors and a layout pre-hook,
 then restores them even if inference raises. Call `attention.reset()` before
 a second pipeline invocation inside the same context. With the default
 [MiniMaxH3Scheduler sigma grid](https://huggingface.co/docs/diffusers/main/api/schedulers/minimax_h3),
-`num_inference_steps` includes the terminal `0`, so H3 performs
-`num_inference_steps - 1` transformer evaluations. Warmup rounds up from the
-nominal grid-point count, matching MiniMax-H3-Sparse (10 dense evaluations for
-50 grid points). The first transformer layer remains dense by default.
+prefer the installer's `num_denoise_steps` parameter, which directly counts
+actual denoising iterations and Transformer evaluations. The legacy installer
+parameter `num_inference_steps` remains supported and is interpreted as the
+sigma-grid count. For the pipeline, set
+`num_inference_steps = num_denoise_steps + 1` because the grid includes the
+terminal `0`. With `warmup_mode="warmup_ratio"`, warmup is computed from
+actual denoising calls as `ceil(num_denoise_steps * warmup_ratio)`, matching
+ComfyUI's model-evaluation convention. With `warmup_mode="warmup_steps"`,
+`warmup_steps` gives the exact dense prefix length. Both modes cap the result
+at `num_denoise_steps`; the defaults are ratio mode, `warmup_ratio=0.2`, and
+`warmup_steps=4`. Thus 19 denoising steps with the default ratio produce four
+dense evaluations. The legacy `warmup_percent` parameter remains supported
+when none of the new warmup parameters are supplied. The first transformer
+layer remains dense by default.
 
 For fixed Top-K routing, `sol_exact_block_radius=0` forces only the self block
 exact, while `1` forces the self block and its two immediate neighbors. These
@@ -87,8 +105,20 @@ attention path. It follows the updated MiniMax-H3-Sparse installer defaults:
 ```python
 from h3_sparse_attention import install_h3_spark_attn
 
-with install_h3_spark_attn(pipe.transformer, num_inference_steps=20) as attention:
-    result = pipe(..., num_inference_steps=20)
+# MiniMaxH3Scheduler includes the terminal sigma=0 in num_inference_steps,
+# but that terminal point does not run the transformer.
+num_denoise_steps = 19
+num_inference_steps = num_denoise_steps + 1
+
+with install_h3_spark_attn(
+    pipe.transformer,
+    num_denoise_steps=num_denoise_steps,
+    warmup_mode="warmup_steps",
+    warmup_steps=4,
+    dense_layers=0,
+    topk_ratio=0.1,
+) as attention:
+    result = pipe(..., num_inference_steps=num_inference_steps)
     stats = attention.summary()
 ```
 
@@ -100,11 +130,13 @@ cached reblocking plans and query topology.
 
 Default Spark settings match the source:
 
+- Sequences shorter than 8192 packed tokens use the original dense attention;
+  `min_tokens=0` disables this size gate.
 - Native mean Top-K routing with ratio `0.1`, `gemm_radix` cutoffs, and
   `packed_external_no_route_qk` execution. This exports the packed route once
   and avoids recomputing route QK inside the attention kernel. Set
   `sol_route_topk_execution="threshold"` explicitly for the historical
-  compiled Table 4 path. The packed route is implemented on SM80 and SM120;
+  compiled Table 4 path. The packed route is implemented on SM80, SM89 and SM120;
   SM90 and SM100 resolve this default to `threshold` and report that fallback
   in the plugin summary. The slower legacy `packed_external` execution was
   removed after dual-SM120 verification showed bitwise-identical output; old
@@ -195,10 +227,10 @@ Configuration overrides are passed as keyword arguments, for example
 automatically clears the default target-block setting; specifying both is an error.
 
 
-Plain Sol on SM80 retains its pointer-based Triton kernels. Spark BF16 on SM80
-and SM120 uses a CuTe fused virtual-query mainloop automatically above 8192
+Plain Sol on SM80/SM89 retains pointer-based Triton kernels. Spark BF16 on SM80,
+SM89 and SM120 uses a CuTe fused virtual-query mainloop automatically above 8192
 packed tokens; smaller inputs use the streamed exact/skipped implementation.
-The SM80 mainloop follows the SM120 structure: CTA-local native-threshold or
+The SM80/SM89 mainloop follows the SM120 structure: CTA-local native-threshold or
 fixed-budget fused Top-K routing, warp exact-index compaction, two-stage
 `cp.async` K/V streaming, and a single FP32 online-softmax/output accumulator
 for exact and approximate tiles. Set `sol_route_topk_execution="fused"` to
@@ -213,7 +245,7 @@ fallback.
 See the [kernel performance matrix](../docs/kernel_performance_matrix.md) for
 the current cross-architecture benchmark format and locally measured results.
 `H3_SPARK_REWEIGHT_FUSED=0` or `1` selects the source's fallback/fused path on
-SM80/SM90/SM100/SM120 for testing. On SM80, fused mode supports native-threshold
+SM80/SM89/SM90/SM100/SM120 for testing. On SM80/SM89, fused mode supports native-threshold
 and CTA-local fused Top-K routes; unsupported external/hybrid route modes raise
 directly.
 This code does not change environment variables.

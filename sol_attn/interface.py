@@ -14,6 +14,7 @@ _CUTE_BACKENDS = {
 }
 _NATIVE_TRITON_BACKENDS = {
     (8, 0): "triton_sm80",
+    (8, 9): "triton_sm89",
 }
 _compiled = {}
 
@@ -408,11 +409,13 @@ def sol_attn(
     scale = q.shape[-1] ** -0.5 if scale is None else float(scale)
     tau = float(tau)
 
-    if backend in ("triton", "triton_sm80"):
+    if backend in ("triton", "triton_sm80", "triton_sm89"):
         if kv_splits != 1:
             raise ValueError("kv_splits=2/4 is currently available on SM90 only")
         if backend == "triton_sm80":
             from .sm80 import sol_attn as triton_sol_attn
+        elif backend == "triton_sm89":
+            from .sm89 import sol_attn as triton_sol_attn
         else:
             from .triton_ref import sol_attn as triton_sol_attn
 

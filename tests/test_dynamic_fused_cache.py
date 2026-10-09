@@ -192,8 +192,8 @@ def test_sm120_compiled_callable_reuses_different_fused_topk_ratios(monkeypatch)
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 def test_sm80_compiled_callable_reuses_text_lengths_and_topk_ratios(monkeypatch):
-    if torch.cuda.get_device_capability() != (8, 0):
-        pytest.skip("SM80 required")
+    if torch.cuda.get_device_capability() not in ((8, 0), (8, 9)):
+        pytest.skip("SM80 or SM89 required")
 
     import h3_sparse_attention.sol_numerator_virtual_q as fused
 
