@@ -10,12 +10,20 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_NAME = "ComfyUI-Spark-H3"
+PACKAGE_BUILD_IDENTITY = "spark_h3_build.json"
 DEFAULT_VERSION = "0.1.1"
+RELEASE_CUDA_TAGS = ("cu130",)
+EXPERIMENTAL_CUDA_TAGS = ("cu128", "cu129")
+KNOWN_CUDA_TAGS = EXPERIMENTAL_CUDA_TAGS + RELEASE_CUDA_TAGS
 PACKAGE_CNR_ID = "comfyui-spark-h3"
 PACKAGE_SPARK_NODE = "MiniMaxH3SparkAttentionSM120"
 PACKAGE_SPARK_NODES = {
     "sm89": "MiniMaxH3SparkAttentionSM89",
     "sm120": PACKAGE_SPARK_NODE,
+}
+BACKEND_LOCAL_VERSION_PREFIXES = {
+    "sm89": "spark.h3.sm89",
+    "sm120": "spark.h3.sm120",
 }
 
 ROOT_FILES = (
@@ -92,6 +100,7 @@ def assemble(
     publisher_id: str,
     kernel_wheels: tuple[Path, ...] = (),
     architecture: str = "sm120",
+    cuda_tag: str = "cu130",
 ) -> Path:
     """Create and return an unpacked, registry-compatible custom-node tree."""
 
@@ -145,7 +154,22 @@ def assemble(
         for wheel in kernel_wheels:
             if wheel.suffix != ".whl" or not wheel.is_file():
                 raise ValueError(f"kernel wheel does not exist or is not a .whl: {wheel}")
+            _validate_kernel_wheel(wheel, architecture=architecture, cuda_tag=cuda_tag)
             shutil.copy2(wheel, wheelhouse / wheel.name)
+
+    (target / PACKAGE_BUILD_IDENTITY).write_text(
+        json.dumps(
+            {
+                "architecture": architecture,
+                "cuda_tag": cuda_tag,
+                "kernel_wheels": sorted(wheel.name for wheel in kernel_wheels),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     template = (REPOSITORY_ROOT / "comfyui/standalone/pyproject.toml.in").read_text(
         encoding="utf-8"
@@ -164,8 +188,26 @@ def make_zip(
     version: str,
     architecture: str = "sm120",
     cuda_tag: str | None = None,
+    experimental: bool = False,
 ) -> Path:
-    suffix = "" if architecture == "sm120" else f"-{architecture}"
+    validate_cuda_tag(cuda_tag, experimental=experimental)
+    identity_path = package_dir / PACKAGE_BUILD_IDENTITY
+    if not identity_path.is_file():
+        raise ValueError(f"package build identity is missing: {identity_path}")
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    if identity.get("architecture") != architecture:
+        raise ValueError(
+            f"package architecture {identity.get('architecture')!r} does not match "
+            f"archive architecture {architecture!r}"
+        )
+    if cuda_tag is not None and identity.get("cuda_tag") != cuda_tag:
+        raise ValueError(
+            f"package CUDA tag {identity.get('cuda_tag')!r} does not match "
+            f"archive CUDA tag {cuda_tag!r}"
+        )
+    suffix = "-experimental" if experimental else ""
+    if architecture != "sm120":
+        suffix += f"-{architecture}"
     if cuda_tag is not None:
         suffix += f"-{cuda_tag}"
     archive = output_dir / f"{PACKAGE_NAME}-{version}{suffix}.zip"
@@ -186,6 +228,38 @@ def make_zip(
     return archive
 
 
+def validate_cuda_tag(cuda_tag: str | None, *, experimental: bool = False) -> None:
+    """Keep experimental CUDA archives out of the default release path."""
+
+    if cuda_tag in EXPERIMENTAL_CUDA_TAGS and not experimental:
+        raise ValueError(
+            f"{cuda_tag} is an experimental build target, not a release target; "
+            "pass --experimental-cuda to build a local diagnostic archive"
+        )
+
+
+def _validate_kernel_wheel(
+    wheel: Path,
+    *,
+    architecture: str,
+    cuda_tag: str,
+) -> None:
+    try:
+        from packaging.utils import parse_wheel_filename
+    except ImportError:
+        from pip._vendor.packaging.utils import parse_wheel_filename
+    try:
+        distribution, version, _, _ = parse_wheel_filename(wheel.name)
+    except ValueError as error:
+        raise ValueError(f"invalid kernel wheel filename: {wheel.name}") from error
+    expected_local = f"{BACKEND_LOCAL_VERSION_PREFIXES[architecture]}.{cuda_tag}.1"
+    if distribution != "comfy-kitchen" or version.local != expected_local:
+        raise ValueError(
+            f"kernel wheel {wheel.name!r} does not match {architecture}/{cuda_tag}; "
+            f"expected local version +{expected_local}"
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path("dist/comfyui"))
@@ -198,8 +272,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--cuda-tag",
-        choices=("cu128", "cu129", "cu130"),
+        choices=KNOWN_CUDA_TAGS,
         help="append the CUDA toolchain tag to the release archive name",
+    )
+    parser.add_argument(
+        "--experimental-cuda",
+        action="store_true",
+        help="allow a diagnostic CUDA target excluded from the release plan",
     )
     parser.add_argument(
         "--publisher-id",
@@ -215,6 +294,10 @@ def main(argv: list[str] | None = None) -> int:
         help="bundle a prebuilt backend wheel; may be repeated",
     )
     args = parser.parse_args(argv)
+    try:
+        validate_cuda_tag(args.cuda_tag, experimental=args.experimental_cuda)
+    except ValueError as error:
+        parser.error(str(error))
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     package = assemble(
@@ -223,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         publisher_id=args.publisher_id,
         kernel_wheels=tuple(path.resolve() for path in args.kernel_wheel),
         architecture=args.architecture,
+        cuda_tag=args.cuda_tag or "cu130",
     )
     print(package)
     if not args.no_zip:
@@ -233,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
                 version=args.version,
                 architecture=args.architecture,
                 cuda_tag=args.cuda_tag,
+                experimental=args.experimental_cuda,
             )
         )
     return 0

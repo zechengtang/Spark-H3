@@ -20,18 +20,17 @@ dense. It does not replace each attention module's `forward` method.
 
 ## Install
 
-This release provides three architecture-specific archives:
+This release provides two architecture-specific CUDA 13.0 archives:
 
 | GPU | CUDA toolkit | Release archive |
 | --- | --- | --- |
-| SM120 (RTX 50 series) | 12.8 | `ComfyUI-Spark-H3-<version>-cu128.zip` |
 | SM120 (RTX 50 series) | 13.0 | `ComfyUI-Spark-H3-<version>-cu130.zip` |
 | SM89 (RTX 4090) | 13.0 | `ComfyUI-Spark-H3-<version>-sm89-cu130.zip` |
 
 Select the archive matching both the GPU architecture and
-`torch.version.cuda`. An SM89 CUDA 12.8 archive is not part of this release;
-use `install.py --source` with a matching local CUDA toolkit for that
-configuration. Each archive contains only the custom node, its reblock runtime,
+`torch.version.cuda`. CUDA 12.8 is available only through the explicit
+`--experimental-cuda` local-wheel or source-build path and is not a release
+asset. Each archive contains only the custom node, its reblock runtime,
 workflows, and compatible backend wheels—not this repository's model or research
 assets. Extract it below `custom_nodes` and run its installer with the same
 Python interpreter that starts ComfyUI:
@@ -52,10 +51,11 @@ then selects a bundled or pinned-release wheel. It falls back to building the
 pinned, patched `comfy-kitchen` source only when no wheel matches. Source builds
 require Git, CMake, Ninja, a C++ compiler, and CUDA `nvcc`.
 
-The backend wheels are architecture-specific: SM89 is compiled with CUDA
-architecture `89`, while SM120 is compiled with `120f`. The prebuilt matrix is
-exactly the three combinations listed above. CUDA 12.9 and SM89 CUDA 12.8 users
-must run `install.py --source` with the matching local CUDA toolkit. Python
+The backend wheel version encodes both architecture and CUDA toolchain: SM89
+CU130 uses `+spark.h3.sm89.cu130.1`, SM120 CU130 uses
+`+spark.h3.sm120.cu130.1`, and experimental SM120 CU128 uses
+`+spark.h3.sm120.cu128.1`. SM89 is compiled with CUDA architecture `89`, while
+SM120 CU130 is compiled with `120f`. Python
 3.10/3.11 also requires its own wheel or source compilation. Windows packaging
 is prepared, but the Windows runtime has not yet been validated. Other GPU
 architectures are unsupported.

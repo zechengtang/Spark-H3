@@ -7,7 +7,7 @@ ComfyUI's native MiniMax-H3 model.
 
 - ComfyUI 0.38.x or 0.39.x with native MiniMax-H3 support
 - NVIDIA SM89 (RTX 4090) or SM120 GPU (RTX 50 series)
-- CUDA BF16 execution
+- PyTorch CUDA 13.0+ and CUDA BF16 execution
 - Linux; Windows wheels can be produced from the same backend source but require
   a separately validated Windows release asset
 
@@ -21,28 +21,34 @@ This release provides the following architecture-specific archives:
 
 | GPU | CUDA toolkit | Release archive |
 | --- | --- | --- |
-| SM120 (RTX 50 series) | 12.8 | `ComfyUI-Spark-H3-<version>-cu128.zip` |
 | SM120 (RTX 50 series) | 13.0 | `ComfyUI-Spark-H3-<version>-cu130.zip` |
 | SM89 (RTX 4090) | 13.0 | `ComfyUI-Spark-H3-<version>-sm89-cu130.zip` |
 
-Select by both GPU architecture and `torch.version.cuda`. SM89 with CUDA 12.8
-is a source-build configuration in this release and must use
-`install.py --source`. Each archive supports both ComfyUI release lines, and
+Select by both GPU architecture and `torch.version.cuda`. CUDA 12.8 has been
+removed from the release plan: ComfyUI disables its optimized comfy-kitchen
+CUDA backend on that runtime, causing a severe end-to-end performance
+regression. Existing local CU128 artifacts are diagnostic-only and must not be
+published. Explicit local-wheel and source-build paths remain available under
+`--experimental-cuda` for adaptation and correctness work. Each archive
+supports both ComfyUI release lines, and
 the installer selects the wheel matching the `comfy-kitchen` base already
 present in ComfyUI:
 
 | Installed ComfyUI | Spark backend |
 | --- | --- |
-| 0.38.x | `comfy-kitchen 0.2.36+spark.h3.1` |
-| 0.39.x | `comfy-kitchen 0.2.37+spark.h3.1` |
+| 0.38.x | `comfy-kitchen 0.2.36+spark.h3.<architecture>.cu130.1` |
+| 0.39.x | `comfy-kitchen 0.2.37+spark.h3.<architecture>.cu130.1` |
 
-SM89 wheels use the `+spark.h3.sm89.1` local version and contain code compiled
-for CUDA architecture `89`. SM120 wheels retain `+spark.h3.1` and compile for
-`120f`. The installer rejects a wheel for the other architecture.
+SM89 wheels use the `+spark.h3.sm89.cu130.1` local version and contain code
+compiled for CUDA architecture `89`. SM120 wheels use
+`+spark.h3.sm120.cu130.1` and compile for `120f`. Experimental SM120 CU128
+wheels use `+spark.h3.sm120.cu128.1`, so CUDA variants cannot match each other
+even when placed in the same wheelhouse. The installer rejects a wheel for a
+different architecture or CUDA toolchain.
 
-Do not mix the architecture-specific backend versions or CUDA archives. CUDA
-12.9 and SM89 CUDA 12.8 are source-build configurations and must use
-`install.py --source` with the matching local CUDA toolkit.
+Do not mix the architecture-specific backend versions or CUDA archives.
+Source builds use CUDA 13.0+ by default. A CUDA 12.8 source build is available
+only through the explicit experimental path and is not a release target.
 
 For a release ZIP, stop ComfyUI, extract
 the package under `ComfyUI/custom_nodes`, and use the same Python interpreter
@@ -54,7 +60,7 @@ unzip /path/to/ComfyUI-Spark-H3-<version>-cu130.zip  # SM120 example
 /path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
 ```
 
-For CUDA 12.9 or SM89 CUDA 12.8:
+For a supported CUDA 13.0+ environment that needs a local source build:
 
 ```bash
 /path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py --source
@@ -64,7 +70,21 @@ The installer checks the existing environment, the package's `wheelhouse`, and
 the matching release wheel in that order. It compiles the pinned backend only
 when no compatible wheel is available or `--source` is supplied. Source
 compilation requires Git, CMake, Ninja, a C++ compiler, and a matching CUDA
-12.8, 12.9, or 13.0 `nvcc`.
+13.0+ `nvcc`.
+
+For local CU128 adaptation or correctness work, automatic wheel discovery is
+disabled. Supply an explicit local wheel or request a source build:
+
+```bash
+python ComfyUI-Spark-H3/install.py \
+  --experimental-cuda --wheel /path/to/cu128/comfy_kitchen-*.whl
+
+python ComfyUI-Spark-H3/install.py --experimental-cuda --source
+```
+
+The SM120 source path uses CUDA 12.8's `120a` target. Experimental mode prints
+a performance-regression warning and must not be represented as release
+support or used for CU130-equivalent performance claims.
 
 Automatic selection is recommended. For troubleshooting, select the expected
 base explicitly:
@@ -105,7 +125,7 @@ core Spark-H3 node does not.
 To install a wheel supplied out of band:
 
 ```bash
-python install.py --wheel /path/to/comfy_kitchen-0.2.37+spark.h3.1-*.whl
+python install.py --wheel /path/to/comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-*.whl
 ```
 
 ## Nodes
@@ -159,6 +179,7 @@ python kernel_builder.py --kitchen-base 0.2.37 --output-dir wheelhouse
 ```
 
 The builder pins the selected upstream revision, applies the bundled Spark
-patch, marks the wheel as either `0.2.36+spark.h3.1` or
-`0.2.37+spark.h3.1`, and compiles only SM120 by default. One custom-node ZIP
+patch, marks a default release wheel as either
+`0.2.36+spark.h3.sm120.cu130.1` or
+`0.2.37+spark.h3.sm120.cu130.1`, and compiles only SM120 by default. One custom-node ZIP
 can contain both wheels and the installer chooses the matching one.

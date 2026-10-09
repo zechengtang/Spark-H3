@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -26,12 +27,17 @@ KITCHEN_TARGETS = {
 }
 DEFAULT_KITCHEN_BASE = "0.2.37"
 DEFAULT_ARCHITECTURE = "sm120"
+DEFAULT_CUDA_TAG = "cu130"
 ARCHITECTURES = {
-    "sm89": {"capability": (8, 9), "cuda_archs": "89", "local": "spark.h3.sm89.1"},
-    "sm120": {"capability": (12, 0), "cuda_archs": "120f", "local": "spark.h3.1"},
+    "sm89": {"capability": (8, 9), "cuda_archs": "89"},
+    "sm120": {"capability": (12, 0), "cuda_archs": "120f"},
+}
+CUDA_ARCH_OVERRIDES = {
+    ("sm120", "cu128"): "120a",
+    ("sm120", "cu129"): "120a",
 }
 # Retain the public constant for existing SM120 release automation.
-SPARK_LOCAL_VERSION = ARCHITECTURES[DEFAULT_ARCHITECTURE]["local"]
+SPARK_LOCAL_VERSION = "spark.h3.sm120.cu130.1"
 CUDA_ARCHS = ARCHITECTURES[DEFAULT_ARCHITECTURE]["cuda_archs"]
 
 
@@ -62,6 +68,30 @@ def _architecture(name: str) -> dict:
         ) from error
 
 
+def _validate_cuda_tag(cuda_tag: str) -> str:
+    if re.fullmatch(r"cu\d+", cuda_tag) is None:
+        raise ValueError(
+            f"invalid CUDA tag {cuda_tag!r}; expected a tag such as 'cu128' or 'cu130'"
+        )
+    return cuda_tag
+
+
+def _cuda_architecture(architecture: str, cuda_tag: str) -> str:
+    _validate_cuda_tag(cuda_tag)
+    return CUDA_ARCH_OVERRIDES.get(
+        (architecture, cuda_tag), str(_architecture(architecture)["cuda_archs"])
+    )
+
+
+def _spark_local_version(
+    architecture: str = DEFAULT_ARCHITECTURE,
+    cuda_tag: str = DEFAULT_CUDA_TAG,
+) -> str:
+    _architecture(architecture)
+    _validate_cuda_tag(cuda_tag)
+    return f"spark.h3.{architecture}.{cuda_tag}.1"
+
+
 def architecture_for_capability(capability: tuple[int, int]) -> str:
     for name, target in ARCHITECTURES.items():
         if tuple(target["capability"]) == tuple(capability):
@@ -74,24 +104,26 @@ def architecture_for_capability(capability: tuple[int, int]) -> str:
 def _spark_version(
     kitchen_base: str,
     architecture: str = DEFAULT_ARCHITECTURE,
+    cuda_tag: str = DEFAULT_CUDA_TAG,
 ) -> str:
     if kitchen_base not in KITCHEN_TARGETS:
         raise ValueError(
             f"unsupported comfy-kitchen base {kitchen_base!r}; expected one of "
             f"{', '.join(KITCHEN_TARGETS)}"
         )
-    return f"{kitchen_base}+{_architecture(architecture)['local']}"
+    return f"{kitchen_base}+{_spark_local_version(architecture, cuda_tag)}"
 
 
 def _set_local_version(
     source: Path,
     kitchen_base: str,
     architecture: str = DEFAULT_ARCHITECTURE,
+    cuda_tag: str = DEFAULT_CUDA_TAG,
 ) -> None:
     pyproject = source / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
     old = f'version = "{kitchen_base}"'
-    new = f'version = "{_spark_version(kitchen_base, architecture)}"'
+    new = f'version = "{_spark_version(kitchen_base, architecture, cuda_tag)}"'
     if old not in text:
         raise RuntimeError(f"cannot find {old!r} in the pinned comfy-kitchen source")
     pyproject.write_text(text.replace(old, new, 1), encoding="utf-8")
@@ -104,14 +136,14 @@ def prepare_source(
     source_url: str,
     kitchen_base: str = DEFAULT_KITCHEN_BASE,
     architecture: str = DEFAULT_ARCHITECTURE,
+    cuda_tag: str = DEFAULT_CUDA_TAG,
 ) -> Path:
     """Clone, pin, patch, and version the backend in ``destination``."""
 
     if destination.exists():
         raise FileExistsError(f"build destination already exists: {destination}")
-    target = KITCHEN_TARGETS.get(kitchen_base)
-    if target is None:
-        _spark_version(kitchen_base, architecture)
+    _spark_version(kitchen_base, architecture, cuda_tag)
+    target = KITCHEN_TARGETS[kitchen_base]
     _run([
         "git", "clone", "--quiet", "--depth", "1", "--branch", target["tag"],
         "--recursive", source_url, str(destination),
@@ -124,7 +156,7 @@ def prepare_source(
     patch = _patch_path(node_root.resolve())
     _run(["git", "apply", "--check", str(patch)], cwd=destination)
     _run(["git", "apply", str(patch)], cwd=destination)
-    _set_local_version(destination, kitchen_base, architecture)
+    _set_local_version(destination, kitchen_base, architecture, cuda_tag)
     return destination
 
 
@@ -136,9 +168,17 @@ def build_wheel(
     source_url: str = KITCHEN_SOURCE,
     kitchen_base: str = DEFAULT_KITCHEN_BASE,
     architecture: str = DEFAULT_ARCHITECTURE,
+    cuda_tag: str = DEFAULT_CUDA_TAG,
+    cuda_archs: str | None = None,
 ) -> list[Path]:
     """Build one architecture-specific wheel and return the created paths."""
 
+    expected_cuda_archs = _cuda_architecture(architecture, cuda_tag)
+    if cuda_archs is not None and cuda_archs != expected_cuda_archs:
+        raise ValueError(
+            f"CUDA architecture {cuda_archs!r} does not match "
+            f"{architecture}/{cuda_tag}; expected {expected_cuda_archs!r}"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="spark-comfy-kitchen-") as temporary:
         source = prepare_source(
@@ -147,9 +187,10 @@ def build_wheel(
             source_url=source_url,
             kitchen_base=kitchen_base,
             architecture=architecture,
+            cuda_tag=cuda_tag,
         )
         env = os.environ.copy()
-        env["COMFY_CUDA_ARCHS"] = str(_architecture(architecture)["cuda_archs"])
+        env["COMFY_CUDA_ARCHS"] = expected_cuda_archs
         _run(
             [python, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(output_dir), "."],
             cwd=source,
@@ -157,7 +198,7 @@ def build_wheel(
         )
     wheels = sorted(
         output_dir.glob(
-            f"comfy_kitchen-{_spark_version(kitchen_base, architecture)}-*.whl"
+            f"comfy_kitchen-{_spark_version(kitchen_base, architecture, cuda_tag)}-*.whl"
         )
     )
     if not wheels:
@@ -172,9 +213,17 @@ def install_from_source(
     source_url: str = KITCHEN_SOURCE,
     kitchen_base: str = DEFAULT_KITCHEN_BASE,
     architecture: str = DEFAULT_ARCHITECTURE,
+    cuda_tag: str = DEFAULT_CUDA_TAG,
+    cuda_archs: str | None = None,
 ) -> None:
     """Compile and install the pinned backend into ``python``."""
 
+    expected_cuda_archs = _cuda_architecture(architecture, cuda_tag)
+    if cuda_archs is not None and cuda_archs != expected_cuda_archs:
+        raise ValueError(
+            f"CUDA architecture {cuda_archs!r} does not match "
+            f"{architecture}/{cuda_tag}; expected {expected_cuda_archs!r}"
+        )
     with tempfile.TemporaryDirectory(prefix="spark-comfy-kitchen-") as temporary:
         source = prepare_source(
             node_root,
@@ -182,9 +231,10 @@ def install_from_source(
             source_url=source_url,
             kitchen_base=kitchen_base,
             architecture=architecture,
+            cuda_tag=cuda_tag,
         )
         env = os.environ.copy()
-        env["COMFY_CUDA_ARCHS"] = str(_architecture(architecture)["cuda_archs"])
+        env["COMFY_CUDA_ARCHS"] = expected_cuda_archs
         _run(
             [python, "-m", "pip", "install", "--force-reinstall", "--no-deps", str(source)],
             env=env,
@@ -211,6 +261,15 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_ARCHITECTURE,
         help="GPU architecture encoded into the comfy-kitchen Spark wheel",
     )
+    parser.add_argument(
+        "--cuda-tag",
+        default=DEFAULT_CUDA_TAG,
+        help="CUDA toolchain identity encoded into the wheel version (for example cu130)",
+    )
+    parser.add_argument(
+        "--cuda-archs",
+        help="advanced CMake CUDA architecture override (for example 120a on CUDA 12.8)",
+    )
     parser.add_argument("--install", action="store_true", help="install instead of building a wheel")
     args = parser.parse_args(argv)
     node_root = Path(__file__).resolve().parent
@@ -225,6 +284,8 @@ def main(argv: list[str] | None = None) -> int:
             source_url=args.source_url,
             kitchen_base=args.kitchen_base,
             architecture=args.architecture,
+            cuda_tag=args.cuda_tag,
+            cuda_archs=args.cuda_archs,
         )
     else:
         for wheel in build_wheel(
@@ -234,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
             source_url=args.source_url,
             kitchen_base=args.kitchen_base,
             architecture=args.architecture,
+            cuda_tag=args.cuda_tag,
+            cuda_archs=args.cuda_archs,
         ):
             print(wheel)
     return 0

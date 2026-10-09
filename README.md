@@ -85,9 +85,11 @@ with install_h3_spark_attn(
 
 The current ComfyUI package targets Linux, CUDA BF16, and NVIDIA SM89 or SM120
 GPUs (RTX 4090 and RTX 50 series). It supports ComfyUI 0.38.x and 0.39.x and does not include
-ComfyUI or model weights. CUDA 12.8 and CUDA 13.0 prebuilt wheels are provided
-as separate release archives; CUDA 12.9 and other
-toolkit versions must compile locally with `install.py --source`.
+ComfyUI or model weights. Published wheels require a PyTorch CUDA 13.0 or newer
+runtime. CUDA 12.8 has been removed from the release plan because ComfyUI disables
+its optimized comfy-kitchen CUDA backend on that runtime. CU128 source builds and
+local-wheel installs remain available behind an explicit experimental opt-in for
+adaptation and correctness work, but they are not supported release assets.
 
 For package selection, installation commands, and troubleshooting, see the
 **[ComfyUI 中文安装指南](comfyui/INSTALL.zh-CN.md)**.
