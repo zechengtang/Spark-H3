@@ -123,4 +123,4 @@ Reblock 输出布局和置换索引，随后用该布局中的原始 Q/K/V 构�
 - [landmark_v2_cosine_fast.py](../h3_sparse_attention/landmark_v2_cosine_fast.py)：小规模 proxy 二分树与 2 次中心更新。
 - [processor.py](../h3_sparse_attention/processor.py)：Spark preset 和 reblock 配置。
 
-以上描述当前基线；环境变量和后端优化可能改变精度或实现路径，实验应保存实际生效配置。后续消融计划见 [prompt_reblock.md](prompt_reblock.md)。
+以上描述当前基线；环境变量和后端优化可能改变精度或实现路径，实验应保存实际生效配置。

@@ -34,7 +34,7 @@ to two decimal places and times to one decimal place after aggregation.
   A800 row used `sm80_fused_virtual_query`; no fallback backend was used.
 - The PRO 6000 measurements use four prompts (cases 2, 13, 31, and 33). Raw
   records and the aggregate are under
-  `/autodl-fs/data/h3_experiments/pro6000_task1_matrix_20261003`; its four
+  `${H3_EXPERIMENTS_ROOT}/pro6000_task1_matrix_20261003`; its four
   formal Spark runs at every duration reported zero new fused-kernel compile
   calls after runtime warmup.
 
