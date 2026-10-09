@@ -130,7 +130,7 @@ requirements, defaults, and options. -->
 |---|---|---|
 | ✅ Available | Fused Spark kernels for SM80, SM89, and SM120 | [Kernel documentation](h3_sparse_attention/README.md) · [Performance matrix](docs/kernel_performance_matrix.md) |
 | ✅ Available | Standalone ComfyUI node packaging with wheel-first installation and source fallback | [ComfyUI guide](comfyui/README.md) |
-| ✅ Available | Release Ref2VA inference examples | [Spark-Ref2VA Preview](docs/blogs/spark-attn/README.md#spark-ref2va-preview) |
+| ✅ Available | Release Ref2VA inference examples | [Spark-Ref2VA Preview](https://zechengtang.github.io/Spark-H3/#spark-ref2va-preview) |
 | 🚧 In progress | Test and validate the ComfyUI implementation on NVIDIA GeForce RTX 50 series | — |
 | 🗓️ Planned | Standalone stable ComfyUI implementation without a `comfy-kitchen` dependency | — |
 | 🗓️ Planned | Fused Spark kernels for SM90 and SM100 | Pending resources |
