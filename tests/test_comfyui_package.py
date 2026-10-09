@@ -28,6 +28,7 @@ def test_standalone_package_is_small_complete_and_importable(tmp_path):
         tmp_path,
         version="0.1.7",
         publisher_id="test-publisher",
+        platform_tag="linux-x86_64",
     )
     assert (package / "__init__.py").is_file()
     assert (package / "comfyui_backend.py").is_file()
@@ -44,6 +45,7 @@ def test_standalone_package_is_small_complete_and_importable(tmp_path):
         "architecture": "sm120",
         "cuda_tag": "cu130",
         "kernel_wheels": [],
+        "platform": "linux-x86_64",
     }
     assert (package / "convert_larryvrh_lora_comfyui.py").is_file()
     assert sum(path.stat().st_size for path in package.rglob("*") if path.is_file()) < 3_000_000
@@ -229,8 +231,15 @@ def test_standalone_zip_has_one_installable_root(tmp_path):
         version="0.1.0",
         publisher_id="test",
         kernel_wheels=wheels,
+        platform_tag="linux-x86_64",
     )
-    archive = builder.make_zip(package, tmp_path, version="0.1.0")
+    archive = builder.make_zip(
+        package,
+        tmp_path,
+        version="0.1.0",
+        platform_tag="linux-x86_64",
+    )
+    assert archive.name == "ComfyUI-Spark-H3-0.1.0-linux-x86_64.zip"
     with zipfile.ZipFile(archive) as bundle:
         names = bundle.namelist()
     assert names
@@ -271,6 +280,7 @@ def test_release_package_rejects_wrong_cuda_or_architecture_wheel(tmp_path):
             kernel_wheels=(cu128,),
             architecture="sm120",
             cuda_tag="cu130",
+            platform_tag="linux-x86_64",
         )
 
     cu128_package = builder.assemble(
@@ -279,6 +289,7 @@ def test_release_package_rejects_wrong_cuda_or_architecture_wheel(tmp_path):
         publisher_id="test",
         architecture="sm120",
         cuda_tag="cu128",
+        platform_tag="linux-x86_64",
     )
     with pytest.raises(ValueError, match="package CUDA tag 'cu128'"):
         builder.make_zip(
@@ -287,6 +298,7 @@ def test_release_package_rejects_wrong_cuda_or_architecture_wheel(tmp_path):
             version="0.1.7",
             architecture="sm120",
             cuda_tag="cu130",
+            platform_tag="linux-x86_64",
         )
 
     sm89 = (
@@ -302,7 +314,71 @@ def test_release_package_rejects_wrong_cuda_or_architecture_wheel(tmp_path):
             kernel_wheels=(sm89,),
             architecture="sm120",
             cuda_tag="cu130",
+            platform_tag="linux-x86_64",
         )
+
+
+def test_release_package_isolates_linux_and_windows_wheels(tmp_path):
+    builder = _load(
+        "build_comfyui_package_platform_identity",
+        ROOT / "tools/build_comfyui_package.py",
+    )
+    windows_wheel = (
+        tmp_path
+        / "comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-win_amd64.whl"
+    )
+    windows_wheel.touch()
+    with pytest.raises(ValueError, match="does not match platform linux-x86_64"):
+        builder.assemble(
+            tmp_path / "wrong-platform",
+            version="0.1.7",
+            publisher_id="test",
+            kernel_wheels=(windows_wheel,),
+            architecture="sm120",
+            cuda_tag="cu130",
+            platform_tag="linux-x86_64",
+        )
+
+    windows_package = builder.assemble(
+        tmp_path / "windows-package",
+        version="0.1.7",
+        publisher_id="test",
+        kernel_wheels=(windows_wheel,),
+        architecture="sm120",
+        cuda_tag="cu130",
+        platform_tag="windows-x86_64",
+    )
+    assert json.loads(
+        (windows_package / "spark_h3_build.json").read_text(encoding="utf-8")
+    )["platform"] == "windows-x86_64"
+    windows_archive = builder.make_zip(
+        windows_package,
+        tmp_path,
+        version="0.1.7",
+        architecture="sm120",
+        cuda_tag="cu130",
+        platform_tag="windows-x86_64",
+    )
+    assert windows_archive.name == (
+        "ComfyUI-Spark-H3-0.1.7-windows-x86_64-cu130.zip"
+    )
+    with pytest.raises(ValueError, match="package platform 'windows-x86_64'"):
+        builder.make_zip(
+            windows_package,
+            tmp_path,
+            version="0.1.7",
+            architecture="sm120",
+            cuda_tag="cu130",
+            platform_tag="linux-x86_64",
+        )
+
+    assert builder._wheel_platform_matches(
+        "manylinux_2_28_x86_64", "linux-x86_64"
+    )
+    assert not builder._wheel_platform_matches("win_amd64", "linux-x86_64")
+    assert not builder._wheel_platform_matches(
+        "linux_x86_64", "windows-x86_64"
+    )
 
 
 def test_sm89_package_rewrites_workflows_and_archive_name(tmp_path):
@@ -312,6 +388,7 @@ def test_sm89_package_rewrites_workflows_and_archive_name(tmp_path):
         version="0.1.7",
         publisher_id="test",
         architecture="sm89",
+        platform_tag="linux-x86_64",
     )
     for workflow_path in (package / "workflows").glob("*.json"):
         workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
@@ -322,23 +399,29 @@ def test_sm89_package_rewrites_workflows_and_archive_name(tmp_path):
         )
         assert spark["properties"]["ver"] == "0.1.7"
     archive = builder.make_zip(
-        package, tmp_path, version="0.1.7", architecture="sm89"
+        package,
+        tmp_path,
+        version="0.1.7",
+        architecture="sm89",
+        platform_tag="linux-x86_64",
     )
-    assert archive.name == "ComfyUI-Spark-H3-0.1.7-sm89.zip"
+    assert archive.name == "ComfyUI-Spark-H3-0.1.7-linux-x86_64-sm89.zip"
     tagged = builder.make_zip(
         package,
         tmp_path,
         version="0.1.7",
         architecture="sm89",
         cuda_tag="cu130",
+        platform_tag="linux-x86_64",
     )
-    assert tagged.name == "ComfyUI-Spark-H3-0.1.7-sm89-cu130.zip"
+    assert tagged.name == "ComfyUI-Spark-H3-0.1.7-linux-x86_64-sm89-cu130.zip"
     experimental_package = builder.assemble(
         tmp_path / "experimental-sm89",
         version="0.1.7",
         publisher_id="test",
         architecture="sm89",
         cuda_tag="cu128",
+        platform_tag="linux-x86_64",
     )
     experimental = builder.make_zip(
         experimental_package,
@@ -347,8 +430,11 @@ def test_sm89_package_rewrites_workflows_and_archive_name(tmp_path):
         architecture="sm89",
         cuda_tag="cu128",
         experimental=True,
+        platform_tag="linux-x86_64",
     )
-    assert experimental.name == "ComfyUI-Spark-H3-0.1.7-experimental-sm89-cu128.zip"
+    assert experimental.name == (
+        "ComfyUI-Spark-H3-0.1.7-experimental-linux-x86_64-sm89-cu128.zip"
+    )
 
 
 def test_kernel_builder_applies_distinct_local_versions(tmp_path):
@@ -508,6 +594,41 @@ def test_installer_requires_explicit_opt_in_for_cu128_runtime(monkeypatch, capsy
     assert "experimental CUDA mode" in capsys.readouterr().err
     torch_stub.version.cuda = "13.0"
     assert installer._validate_runtime() == (13, 0)
+
+
+def test_installer_validates_runtime_and_package_platform(monkeypatch, tmp_path):
+    installer = _load(
+        "spark_comfyui_installer_platform", ROOT / "comfyui/install.py"
+    )
+    monkeypatch.setattr(installer.sys, "platform", "linux")
+    monkeypatch.setattr(installer.platform, "machine", lambda: "x86_64")
+    assert installer._runtime_platform_tag() == "linux-x86_64"
+    monkeypatch.setattr(installer.sys, "platform", "win32")
+    monkeypatch.setattr(installer.platform, "machine", lambda: "AMD64")
+    assert installer._runtime_platform_tag() == "windows-x86_64"
+
+    identity = {
+        "architecture": "sm89",
+        "cuda_tag": "cu130",
+        "platform": "windows-x86_64",
+        "kernel_wheels": [],
+    }
+    (tmp_path / "spark_h3_build.json").write_text(
+        json.dumps(identity), encoding="utf-8"
+    )
+    installer._validate_package_identity(
+        tmp_path,
+        architecture="sm89",
+        cuda_tag="cu130",
+        platform_tag="windows-x86_64",
+    )
+    with pytest.raises(RuntimeError, match="platform='windows-x86_64'"):
+        installer._validate_package_identity(
+            tmp_path,
+            architecture="sm89",
+            cuda_tag="cu130",
+            platform_tag="linux-x86_64",
+        )
 
 
 @pytest.mark.parametrize(

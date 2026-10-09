@@ -10,12 +10,12 @@
 
 ## 选择版本
 
-本次发布提供两个按 GPU 架构区分的 CUDA 13.0 安装包：
+本次发布提供两个按 GPU 架构区分的 Linux x86_64 CUDA 13.0 安装包：
 
 | GPU | CUDA 工具链 | 安装包 |
 | --- | --- | --- |
-| SM120（RTX 50 系） | 13.0 | `ComfyUI-Spark-H3-<version>-cu130.zip` |
-| SM89（RTX 4090） | 13.0 | `ComfyUI-Spark-H3-<version>-sm89-cu130.zip` |
+| SM120（RTX 50 系） | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-cu130.zip` |
+| SM89（RTX 4090） | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm89-cu130.zip` |
 
 请同时根据 GPU 架构和 `torch.version.cuda` 选择安装包。CUDA 12.8
 已从发布计划中移除：虽然本地 Spark 内核能够编译和执行，但 ComfyUI
@@ -39,6 +39,11 @@ CUDA 版本的 wheel 位于同一目录，安装器也不会交叉选择。找�
 时，固定版本的 comfy-kitchen 源码编译在 SM89 使用 `89`，在 SM120 CU130
 使用 `120f`。
 
+ZIP 文件名和包内 `spark_h3_build.json` 同时记录目标平台。Linux 包只接受
+`linux_x86_64` 或兼容的 manylinux wheel，Windows 包只接受 `win_amd64`
+wheel；安装器也会在安装 backend 前检查当前操作系统。Windows 完成独立
+编译和实机验证后使用 `windows-x86_64` 文件名，不能与 Linux ZIP 混用。
+
 两种架构的后端版本不能混用。正常情况下不需要手动选择，直接运行
 `install.py` 即可。
 
@@ -61,7 +66,7 @@ CUDA 版本的 wheel 位于同一目录，安装器也不会交叉选择。找�
 
 ```bash
 cd /path/to/ComfyUI/custom_nodes
-unzip /path/to/ComfyUI-Spark-H3-<version>-cu130.zip  # SM120 示例
+unzip /path/to/ComfyUI-Spark-H3-<version>-linux-x86_64-cu130.zip  # SM120 示例
 /path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
 ```
 

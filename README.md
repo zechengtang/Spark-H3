@@ -90,6 +90,9 @@ runtime. CUDA 12.8 has been removed from the release plan because ComfyUI disabl
 its optimized comfy-kitchen CUDA backend on that runtime. CU128 source builds and
 local-wheel installs remain available behind an explicit experimental opt-in for
 adaptation and correctness work, but they are not supported release assets.
+Release ZIP names and build manifests encode `linux-x86_64` or
+`windows-x86_64`; wheel platform tags are validated so binaries cannot be
+cross-packaged between operating systems.
 
 For package selection, installation commands, and troubleshooting, see the
 **[ComfyUI 中文安装指南](comfyui/INSTALL.zh-CN.md)**.

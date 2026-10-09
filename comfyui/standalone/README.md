@@ -17,12 +17,12 @@ Model weights are not bundled. Use ComfyUI's native MiniMax-H3 model files.
 
 Chinese instructions: [ComfyUI 中文安装指南](INSTALL.zh-CN.md).
 
-This release provides the following architecture-specific archives:
+This release provides the following Linux x86_64 architecture-specific archives:
 
 | GPU | CUDA toolkit | Release archive |
 | --- | --- | --- |
-| SM120 (RTX 50 series) | 13.0 | `ComfyUI-Spark-H3-<version>-cu130.zip` |
-| SM89 (RTX 4090) | 13.0 | `ComfyUI-Spark-H3-<version>-sm89-cu130.zip` |
+| SM120 (RTX 50 series) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-cu130.zip` |
+| SM89 (RTX 4090) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm89-cu130.zip` |
 
 Select by both GPU architecture and `torch.version.cuda`. CUDA 12.8 has been
 removed from the release plan: ComfyUI disables its optimized comfy-kitchen
@@ -46,6 +46,13 @@ wheels use `+spark.h3.sm120.cu128.1`, so CUDA variants cannot match each other
 even when placed in the same wheelhouse. The installer rejects a wheel for a
 different architecture or CUDA toolchain.
 
+The archive and its `spark_h3_build.json` also encode the target platform.
+Linux packages accept `linux_x86_64` or compatible manylinux wheel tags;
+Windows packages accept only `win_amd64`. A package built for the other OS is
+rejected before backend installation. Once Windows runtime validation is
+complete, its archives use the same matrix with `windows-x86_64` in place of
+`linux-x86_64`.
+
 Do not mix the architecture-specific backend versions or CUDA archives.
 Source builds use CUDA 13.0+ by default. A CUDA 12.8 source build is available
 only through the explicit experimental path and is not a release target.
@@ -56,7 +63,7 @@ that starts ComfyUI:
 
 ```bash
 cd /path/to/ComfyUI/custom_nodes
-unzip /path/to/ComfyUI-Spark-H3-<version>-cu130.zip  # SM120 example
+unzip /path/to/ComfyUI-Spark-H3-<version>-linux-x86_64-cu130.zip  # SM120 example
 /path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
 ```
 
@@ -116,9 +123,10 @@ Diffusers, `comfy-aimdo`, or `comfy-kitchen` repositories. It reuses the
 PyTorch, Triton, CUDA integration, and native MiniMax-H3 implementation already
 provided by ComfyUI.
 
-ComfyUI and model weights are not bundled. Windows, Python 3.10/3.11, and
-other wheel tags still require a separately built wheel or the source-build
-fallback, which downloads the pinned `comfy-kitchen` source. Optional example
+ComfyUI and model weights are not bundled. Windows release assets still require
+separately built and validated `win_amd64` wheels; Python 3.10/3.11 and other
+wheel tags require a matching wheel or the source-build fallback, which
+downloads the pinned `comfy-kitchen` source. Optional example
 workflows can require separately downloaded LoRAs or third-party nodes; the
 core Spark-H3 node does not.
 

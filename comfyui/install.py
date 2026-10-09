@@ -5,6 +5,7 @@ import argparse
 from importlib import metadata
 import json
 import os
+import platform
 import subprocess
 import sys
 import urllib.request
@@ -22,6 +23,7 @@ BACKEND_LOCAL_VERSION_PREFIXES = {
 }
 MINIMUM_RELEASE_CUDA = (13, 0)
 DEFAULT_RELEASE_CUDA_TAG = "cu130"
+PACKAGE_BUILD_IDENTITY = "spark_h3_build.json"
 DEFAULT_RELEASE_APIS = {
     base: (
         "https://api.github.com/repos/zechengtang/Spark-H3/releases/tags/"
@@ -52,9 +54,72 @@ def _backend_local_version(
     return f"{BACKEND_LOCAL_VERSION_PREFIXES[architecture]}.{cuda_tag}.1"
 
 
+def _runtime_platform_tag() -> str:
+    machine = platform.machine().lower()
+    if sys.platform.startswith("linux") and machine in {"x86_64", "amd64"}:
+        return "linux-x86_64"
+    if sys.platform == "win32" and machine in {"x86_64", "amd64"}:
+        return "windows-x86_64"
+    raise RuntimeError(
+        f"unsupported Spark-H3 platform: sys.platform={sys.platform!r}, "
+        f"machine={platform.machine()!r}"
+    )
+
+
 def _node_root() -> Path:
     here = Path(__file__).resolve().parent
     return here.parent if (here.parent / "comfyui_backend.py").is_file() else here
+
+
+def _validate_package_identity(
+    root: Path,
+    *,
+    architecture: str,
+    cuda_tag: str,
+    platform_tag: str,
+) -> None:
+    identity_path = root / PACKAGE_BUILD_IDENTITY
+    if not identity_path.is_file():
+        # The repository source tree intentionally has no generated package
+        # identity. A standalone package always includes one.
+        if root == Path(__file__).resolve().parent:
+            raise RuntimeError(
+                f"standalone package build identity is missing: {identity_path}"
+            )
+        return
+    try:
+        identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"cannot read package build identity {identity_path}") from error
+    expected = {
+        "architecture": architecture,
+        "cuda_tag": cuda_tag,
+        "platform": platform_tag,
+    }
+    mismatches = {
+        key: (identity.get(key), value)
+        for key, value in expected.items()
+        if identity.get(key) != value
+    }
+    if mismatches:
+        details = ", ".join(
+            f"{key}={found!r} (expected {wanted!r})"
+            for key, (found, wanted) in mismatches.items()
+        )
+        raise RuntimeError(f"Spark-H3 package identity mismatch: {details}")
+    listed_wheels = identity.get("kernel_wheels")
+    if not isinstance(listed_wheels, list) or not all(
+        isinstance(name, str) for name in listed_wheels
+    ):
+        raise RuntimeError("Spark-H3 package identity has an invalid kernel_wheels list")
+    actual_wheels = sorted(
+        wheel.name for wheel in (root / "wheelhouse").glob("*.whl")
+    )
+    if sorted(listed_wheels) != actual_wheels:
+        raise RuntimeError(
+            "Spark-H3 package wheelhouse does not match its build identity: "
+            f"listed={sorted(listed_wheels)!r}, actual={actual_wheels!r}"
+        )
 
 
 def _requirements(root: Path) -> Path | None:
@@ -285,6 +350,7 @@ def main(argv: list[str] | None = None) -> int:
         _install_requirements(root)
     cuda_version = _validate_runtime(experimental_cuda=args.experimental_cuda)
     cuda_tag = _cuda_tag(cuda_version)
+    platform_tag = _runtime_platform_tag()
     experimental_runtime = cuda_version < MINIMUM_RELEASE_CUDA
     requested_wheel = args.wheel or os.environ.get("SPARK_H3_KERNEL_WHEEL")
     if experimental_runtime and not (args.source or requested_wheel):
@@ -300,10 +366,17 @@ def main(argv: list[str] | None = None) -> int:
             f"this ComfyUI package supports SM89 and SM120, found "
             f"SM{capability[0]}{capability[1]}"
         )
+    _validate_package_identity(
+        root,
+        architecture=architecture,
+        cuda_tag=cuda_tag,
+        platform_tag=platform_tag,
+    )
     kitchen_base = _resolve_kitchen_base(args.kitchen_base)
     print(
         f"[Spark-H3] target comfy-kitchen base: {kitchen_base}; "
-        f"kernel architecture: {architecture.upper()}; CUDA tag: {cuda_tag}",
+        f"kernel architecture: {architecture.upper()}; CUDA tag: {cuda_tag}; "
+        f"platform: {platform_tag}",
         flush=True,
     )
     if (

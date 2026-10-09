@@ -15,6 +15,10 @@ DEFAULT_VERSION = "0.1.1"
 RELEASE_CUDA_TAGS = ("cu130",)
 EXPERIMENTAL_CUDA_TAGS = ("cu128", "cu129")
 KNOWN_CUDA_TAGS = EXPERIMENTAL_CUDA_TAGS + RELEASE_CUDA_TAGS
+PACKAGE_PLATFORMS = {
+    "linux-x86_64": ("linux_x86_64", "manylinux"),
+    "windows-x86_64": ("win_amd64",),
+}
 PACKAGE_CNR_ID = "comfyui-spark-h3"
 PACKAGE_SPARK_NODE = "MiniMaxH3SparkAttentionSM120"
 PACKAGE_SPARK_NODES = {
@@ -101,9 +105,11 @@ def assemble(
     kernel_wheels: tuple[Path, ...] = (),
     architecture: str = "sm120",
     cuda_tag: str = "cu130",
+    platform_tag: str,
 ) -> Path:
     """Create and return an unpacked, registry-compatible custom-node tree."""
 
+    _validate_platform_tag(platform_tag)
     try:
         package_spark_node = PACKAGE_SPARK_NODES[architecture]
     except KeyError as error:
@@ -154,7 +160,12 @@ def assemble(
         for wheel in kernel_wheels:
             if wheel.suffix != ".whl" or not wheel.is_file():
                 raise ValueError(f"kernel wheel does not exist or is not a .whl: {wheel}")
-            _validate_kernel_wheel(wheel, architecture=architecture, cuda_tag=cuda_tag)
+            _validate_kernel_wheel(
+                wheel,
+                architecture=architecture,
+                cuda_tag=cuda_tag,
+                platform_tag=platform_tag,
+            )
             shutil.copy2(wheel, wheelhouse / wheel.name)
 
     (target / PACKAGE_BUILD_IDENTITY).write_text(
@@ -162,6 +173,7 @@ def assemble(
             {
                 "architecture": architecture,
                 "cuda_tag": cuda_tag,
+                "platform": platform_tag,
                 "kernel_wheels": sorted(wheel.name for wheel in kernel_wheels),
             },
             indent=2,
@@ -189,8 +201,10 @@ def make_zip(
     architecture: str = "sm120",
     cuda_tag: str | None = None,
     experimental: bool = False,
+    platform_tag: str,
 ) -> Path:
     validate_cuda_tag(cuda_tag, experimental=experimental)
+    _validate_platform_tag(platform_tag)
     identity_path = package_dir / PACKAGE_BUILD_IDENTITY
     if not identity_path.is_file():
         raise ValueError(f"package build identity is missing: {identity_path}")
@@ -200,12 +214,18 @@ def make_zip(
             f"package architecture {identity.get('architecture')!r} does not match "
             f"archive architecture {architecture!r}"
         )
+    if identity.get("platform") != platform_tag:
+        raise ValueError(
+            f"package platform {identity.get('platform')!r} does not match "
+            f"archive platform {platform_tag!r}"
+        )
     if cuda_tag is not None and identity.get("cuda_tag") != cuda_tag:
         raise ValueError(
             f"package CUDA tag {identity.get('cuda_tag')!r} does not match "
             f"archive CUDA tag {cuda_tag!r}"
         )
     suffix = "-experimental" if experimental else ""
+    suffix += f"-{platform_tag}"
     if architecture != "sm120":
         suffix += f"-{architecture}"
     if cuda_tag is not None:
@@ -238,18 +258,39 @@ def validate_cuda_tag(cuda_tag: str | None, *, experimental: bool = False) -> No
         )
 
 
+def _validate_platform_tag(platform_tag: str) -> None:
+    if platform_tag not in PACKAGE_PLATFORMS:
+        raise ValueError(
+            f"unsupported package platform {platform_tag!r}; expected one of "
+            f"{', '.join(PACKAGE_PLATFORMS)}"
+        )
+
+
+def _wheel_platform_matches(wheel_platform: str, platform_tag: str) -> bool:
+    if platform_tag == "linux-x86_64":
+        return wheel_platform == "linux_x86_64" or (
+            wheel_platform.startswith("manylinux")
+            and wheel_platform.endswith("_x86_64")
+        )
+    if platform_tag == "windows-x86_64":
+        return wheel_platform == "win_amd64"
+    _validate_platform_tag(platform_tag)
+    return False
+
+
 def _validate_kernel_wheel(
     wheel: Path,
     *,
     architecture: str,
     cuda_tag: str,
+    platform_tag: str,
 ) -> None:
     try:
         from packaging.utils import parse_wheel_filename
     except ImportError:
         from pip._vendor.packaging.utils import parse_wheel_filename
     try:
-        distribution, version, _, _ = parse_wheel_filename(wheel.name)
+        distribution, version, _, tags = parse_wheel_filename(wheel.name)
     except ValueError as error:
         raise ValueError(f"invalid kernel wheel filename: {wheel.name}") from error
     expected_local = f"{BACKEND_LOCAL_VERSION_PREFIXES[architecture]}.{cuda_tag}.1"
@@ -257,6 +298,15 @@ def _validate_kernel_wheel(
         raise ValueError(
             f"kernel wheel {wheel.name!r} does not match {architecture}/{cuda_tag}; "
             f"expected local version +{expected_local}"
+        )
+    wheel_platforms = {tag.platform for tag in tags}
+    if not any(
+        _wheel_platform_matches(wheel_platform, platform_tag)
+        for wheel_platform in wheel_platforms
+    ):
+        raise ValueError(
+            f"kernel wheel {wheel.name!r} does not match platform {platform_tag}; "
+            f"found wheel platforms {', '.join(sorted(wheel_platforms))}"
         )
 
 
@@ -274,6 +324,13 @@ def main(argv: list[str] | None = None) -> int:
         "--cuda-tag",
         choices=KNOWN_CUDA_TAGS,
         help="append the CUDA toolchain tag to the release archive name",
+    )
+    parser.add_argument(
+        "--platform",
+        dest="platform_tag",
+        choices=tuple(PACKAGE_PLATFORMS),
+        required=True,
+        help="target OS/CPU identity encoded into the archive and build manifest",
     )
     parser.add_argument(
         "--experimental-cuda",
@@ -307,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         kernel_wheels=tuple(path.resolve() for path in args.kernel_wheel),
         architecture=args.architecture,
         cuda_tag=args.cuda_tag or "cu130",
+        platform_tag=args.platform_tag,
     )
     print(package)
     if not args.no_zip:
@@ -318,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
                 architecture=args.architecture,
                 cuda_tag=args.cuda_tag,
                 experimental=args.experimental_cuda,
+                platform_tag=args.platform_tag,
             )
         )
     return 0
