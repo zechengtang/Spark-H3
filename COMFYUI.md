@@ -7,8 +7,10 @@ The node uses architecture-specific comfy-kitchen Spark-H3 CUDA kernels on
 NVIDIA SM89 (RTX 4090) and SM120 (RTX 50-series) GPUs and keeps all packed
 text, image/video reference, and audio conditioning exact.
 
-The integration is built on ComfyUI's official MiniMax-H3 sparse-attention
-architecture and the comfy-kitchen v0.2.36 Sol kernel stack. It installs
+The integration supports ComfyUI 0.38.x and 0.39.x. Its backend builds on
+ComfyUI's official MiniMax-H3 sparse-attention architecture and the
+`comfy-kitchen` Sol kernel stack (0.2.36 for ComfyUI 0.38.x, 0.2.37 for
+ComfyUI 0.39.x). It installs
 `dit/double_block` replacements, follows the native sigma-based sparse window,
 resets state through `ON_CLEANUP`, and projects QKV in 4096-token chunks. The
 projected BTHD tensors then use comfy-kitchen kernels for Top-K routing and

@@ -94,6 +94,9 @@ Release ZIP names and build manifests encode `linux-x86_64` or
 `windows-x86_64`; wheel platform tags are validated so binaries cannot be
 cross-packaged between operating systems.
 
+The installer selects the Spark backend matching the `comfy-kitchen` dependency
+specified by the installed ComfyUI release.
+
 For package selection, installation commands, and troubleshooting, see the
 **[ComfyUI 中文安装指南](comfyui/INSTALL.zh-CN.md)**.
 

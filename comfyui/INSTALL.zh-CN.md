@@ -6,6 +6,10 @@
 - Linux x86_64、Python 3.12+、PyTorch CUDA 13.0+ 和 CUDA BF16。
 - NVIDIA SM89（RTX 4090）或 SM120 GPU（RTX 50 系）。
 
+**适配版本：ComfyUI 0.38.x 和 0.39.x。** 安装器根据 ComfyUI 环境中的
+`comfy-kitchen` 依赖版本，自动选择匹配的 Spark 后端。安装或更新依赖时，
+请使用对应 ComfyUI 发行版的 `requirements.txt`。
+
 安装包不包含 ComfyUI 本体和 MiniMax-H3 模型权重。
 
 ## 选择版本
@@ -27,10 +31,10 @@
 0.38.x 和 0.39.x；安装器会根据当前 ComfyUI 环境自动选择
 匹配的 backend wheel：
 
-| ComfyUI 版本 | 后端基础版本 |
+| ComfyUI 版本 | 对应的 comfy-kitchen 后端版本 |
 | --- | --- |
-| 0.38.x | `comfy-kitchen 0.2.36+spark.h3.<架构>.cu130.1` |
-| 0.39.x | `comfy-kitchen 0.2.37+spark.h3.<架构>.cu130.1` |
+| ComfyUI 0.38.x | `comfy-kitchen 0.2.36+spark.h3.<架构>.cu130.1` |
+| ComfyUI 0.39.x | `comfy-kitchen 0.2.37+spark.h3.<架构>.cu130.1` |
 
 正式 wheel 使用完整的架构和 CUDA 身份：SM89 为
 `+spark.h3.sm89.cu130.1`，SM120 为 `+spark.h3.sm120.cu130.1`。
@@ -111,9 +115,10 @@ CU128 不会被默认安装器自动发现或从 Release 下载。为修复和�
 UNETLoader -> MiniMax H3 Spark Attention (SM89 或 SM120) -> BasicGuider
 ```
 
-## 手动指定 ComfyUI 版本
+## 手动指定 comfy-kitchen 基础版本
 
 只有当自动检测失败，或者需要排查安装问题时，才需要手动指定：
+`--kitchen-base` 用于指定 `comfy-kitchen` 基础版本。
 
 ```bash
 # ComfyUI 0.38.x

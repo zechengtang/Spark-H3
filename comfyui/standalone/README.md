@@ -11,6 +11,10 @@ ComfyUI's native MiniMax-H3 model.
 - Linux; Windows wheels can be produced from the same backend source but require
   a separately validated Windows release asset
 
+**Supported ComfyUI releases: 0.38.x and 0.39.x.** The installer selects the
+Spark backend matching the `comfy-kitchen` dependency in the ComfyUI environment.
+Install or update dependencies with that ComfyUI release's `requirements.txt`.
+
 Model weights are not bundled. Use ComfyUI's native MiniMax-H3 model files.
 
 ## Installation
@@ -34,10 +38,10 @@ supports both ComfyUI release lines, and
 the installer selects the wheel matching the `comfy-kitchen` base already
 present in ComfyUI:
 
-| Installed ComfyUI | Spark backend |
+| Installed ComfyUI version | Corresponding comfy-kitchen backend version |
 | --- | --- |
-| 0.38.x | `comfy-kitchen 0.2.36+spark.h3.<architecture>.cu130.1` |
-| 0.39.x | `comfy-kitchen 0.2.37+spark.h3.<architecture>.cu130.1` |
+| ComfyUI 0.38.x | `comfy-kitchen 0.2.36+spark.h3.<architecture>.cu130.1` |
+| ComfyUI 0.39.x | `comfy-kitchen 0.2.37+spark.h3.<architecture>.cu130.1` |
 
 SM89 wheels use the `+spark.h3.sm89.cu130.1` local version and contain code
 compiled for CUDA architecture `89`. SM120 wheels use
@@ -93,8 +97,8 @@ The SM120 source path uses CUDA 12.8's `120a` target. Experimental mode prints
 a performance-regression warning and must not be represented as release
 support or used for CU130-equivalent performance claims.
 
-Automatic selection is recommended. For troubleshooting, select the expected
-base explicitly:
+Automatic selection is recommended. For troubleshooting, specify the expected
+`comfy-kitchen` base with `--kitchen-base`:
 
 ```bash
 # ComfyUI 0.38.x
