@@ -21,9 +21,8 @@ BACKEND_LOCAL_VERSION_PREFIXES = {
     "sm89": "spark.h3.sm89",
     "sm120": "spark.h3.sm120",
 }
-SUPPORTED_RELEASE_CUDA = {(12, 8), (13, 0)}
+SUPPORTED_RELEASE_CUDA = {(13, 0)}
 SUPPORTED_RELEASE_TARGETS = {
-    ("sm120", (12, 8)),
     ("sm120", (13, 0)),
     ("sm89", (13, 0)),
 }

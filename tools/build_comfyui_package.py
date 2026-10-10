@@ -12,10 +12,10 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_NAME = "ComfyUI-Spark-H3"
 PACKAGE_BUILD_IDENTITY = "spark_h3_build.json"
 DEFAULT_VERSION = "0.1.2"
-RELEASE_CUDA_TAGS = ("cu128", "cu130")
-EXPERIMENTAL_CUDA_TAGS = ("cu129",)
+RELEASE_CUDA_TAGS = ("cu130",)
+EXPERIMENTAL_CUDA_TAGS = ("cu128", "cu129")
 KNOWN_CUDA_TAGS = EXPERIMENTAL_CUDA_TAGS + RELEASE_CUDA_TAGS
-RELEASE_TARGETS = {("sm120", "cu128"), ("sm120", "cu130"), ("sm89", "cu130")}
+RELEASE_TARGETS = {("sm120", "cu130"), ("sm89", "cu130")}
 PACKAGE_PLATFORMS = {
     "linux-x86_64": ("linux_x86_64", "manylinux"),
     "windows-x86_64": ("win_amd64",),

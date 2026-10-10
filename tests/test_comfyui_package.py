@@ -267,15 +267,17 @@ def test_standalone_zip_has_one_installable_root(tmp_path):
     }.issubset(names)
 
 
-def test_release_package_supports_cu128_and_keeps_cu129_experimental():
+def test_release_package_keeps_cu128_and_cu129_experimental():
     builder = _load(
         "build_comfyui_package_release_cuda", ROOT / "tools/build_comfyui_package.py"
     )
-    assert builder.RELEASE_CUDA_TAGS == ("cu128", "cu130")
-    assert "cu129" in builder.EXPERIMENTAL_CUDA_TAGS
-    builder.validate_cuda_tag("cu128")
+    assert builder.RELEASE_CUDA_TAGS == ("cu130",)
+    assert {"cu128", "cu129"}.issubset(builder.EXPERIMENTAL_CUDA_TAGS)
+    with pytest.raises(ValueError, match="experimental build target"):
+        builder.validate_cuda_tag("cu128")
     with pytest.raises(ValueError, match="experimental build target"):
         builder.validate_cuda_tag("cu129")
+    builder.validate_cuda_tag("cu128", experimental=True)
     builder.validate_cuda_tag("cu129", experimental=True)
     builder.validate_cuda_tag("cu130")
 
@@ -698,7 +700,7 @@ def test_installer_resolves_supported_installed_base(monkeypatch):
         installer._resolve_kitchen_base()
 
 
-def test_installer_supports_cu128_and_requires_opt_in_for_unknown_cuda(monkeypatch, capsys):
+def test_installer_requires_opt_in_for_cu128_and_unknown_cuda(monkeypatch, capsys):
     installer = _load("spark_comfyui_installer_cuda", ROOT / "comfyui/install.py")
     torch_stub = ModuleType("torch")
     torch_stub.version = ModuleType("torch.version")
@@ -706,7 +708,9 @@ def test_installer_supports_cu128_and_requires_opt_in_for_unknown_cuda(monkeypat
     monkeypatch.setitem(sys.modules, "torch", torch_stub)
     monkeypatch.setitem(sys.modules, "triton", ModuleType("triton"))
 
-    assert installer._validate_runtime() == (12, 8)
+    with pytest.raises(RuntimeError, match="not in the Spark-H3 release matrix"):
+        installer._validate_runtime()
+    assert installer._validate_runtime(experimental_cuda=True) == (12, 8)
     torch_stub.version.cuda = "12.9"
     with pytest.raises(RuntimeError, match="not in the Spark-H3 release matrix"):
         installer._validate_runtime()
@@ -759,7 +763,7 @@ def test_installer_validates_runtime_and_package_platform(monkeypatch, tmp_path)
         (
             (12, 8),
             (12, 0),
-            (),
+            ("--experimental-cuda",),
             ("sm120", "cu128", "120a"),
         ),
     ),

@@ -23,20 +23,17 @@ dense. It does not replace each attention module's `forward` method.
 
 ## Install
 
-This release provides five architecture-specific archives:
+This release provides four CUDA 13.0 architecture-specific archives:
 
 | GPU | CUDA toolkit | Release archive |
 | --- | --- | --- |
-| SM120 (GeForce RTX 50 series; RTX PRO 5000/6000 Blackwell) | 12.8 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm120-cu128.zip` |
 | SM120 (GeForce RTX 50 series; RTX PRO 5000/6000 Blackwell) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm120-cu130.zip` |
 | SM89 (GeForce RTX 40 series) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm89-cu130.zip` |
 | SM120 (GeForce RTX 50 series; RTX PRO 5000/6000 Blackwell) | 13.0 | `ComfyUI-Spark-H3-<version>-windows-x86_64-sm120-cu130.zip` |
 | SM89 (GeForce RTX 40 series) | 13.0 | `ComfyUI-Spark-H3-<version>-windows-x86_64-sm89-cu130.zip` |
 
-Select the archive matching both the GPU architecture and
-`torch.version.cuda`. The CU128 SM120 package verifies its architecture-specific
-Spark extension before re-enabling comfy-kitchen CUDA dispatch, which ComfyUI
-otherwise disables on CUDA 12.8. Each archive contains only the custom node, its reblock runtime,
+Select the archive matching both the GPU architecture and operating system.
+Each archive contains only the custom node, its reblock runtime,
 workflows, and compatible backend wheels—not this repository's model or research
 assets. Extract it below `custom_nodes` and run its installer with the same
 Python interpreter that starts ComfyUI:
@@ -58,10 +55,9 @@ pinned, patched `comfy-kitchen` source only when no wheel matches. Source builds
 require Git, CMake, Ninja, a C++ compiler, and CUDA `nvcc`.
 
 The backend wheel version encodes both architecture and CUDA toolchain: SM89
-CU130 uses `+spark.h3.sm89.cu130.1`, SM120 CU130 uses
-`+spark.h3.sm120.cu130.1`, and SM120 CU128 uses
-`+spark.h3.sm120.cu128.1`. SM89 is compiled with CUDA architecture `89`, while
-SM120 CU128 uses `120a` and SM120 CU130 uses `120f`. Archive names and
+CU130 uses `+spark.h3.sm89.cu130.1`, while SM120 CU130 uses
+`+spark.h3.sm120.cu130.1`. SM89 is compiled with CUDA architecture `89`, while
+SM120 CU130 uses `120f`. Archive names and
 `spark_h3_build.json` also encode `linux-x86_64` or `windows-x86_64`; the
 packager and installer reject wheels or packages for the other OS. Python
 3.10/3.11 also requires its own wheel or source compilation. The Windows CUDA

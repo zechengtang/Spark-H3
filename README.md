@@ -86,7 +86,7 @@ with install_h3_spark_attn(
 Spark-H3 provides standalone nodes for ComfyUI 0.38.x and 0.39.x on Linux and
 Windows x86_64. Release packages support GeForce RTX 40-series GPUs (SM89),
 GeForce RTX 50-series and RTX PRO 5000/6000 Blackwell GPUs (SM120). Choose the
-package matching your operating system, GPU architecture, and CUDA version.
+CUDA 13.0 package matching your operating system and GPU architecture.
 ComfyUI and model weights are not included.
 
 See the **[ComfyUI guide](comfyui/README.md)** or
