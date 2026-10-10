@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 license = {file = "LICENSE"}
 dynamic = ["dependencies"]
 classifiers = [
-    "Operating System :: POSIX :: Linux",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
 ]

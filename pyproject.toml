@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "minimax-h3-sparse-attention"
-version = "0.1.1"
+version = "0.1.2"
 description = "Sol-Attn and Spark primitives for MiniMax-H3 inference"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}

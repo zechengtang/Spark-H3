@@ -2,9 +2,10 @@
 
 This repository is also a ComfyUI custom node for the native MiniMax-H3 model.
 Its current implementation and cross-pipeline differences are described in the
-[ComfyUI guide](comfyui/README.md#实现说明).
+[ComfyUI guide](comfyui/README.md#implementation-notes).
 The node uses architecture-specific comfy-kitchen Spark-H3 CUDA kernels on
-NVIDIA SM89 (RTX 4090) and SM120 (RTX 50-series) GPUs and keeps all packed
+NVIDIA SM89 (GeForce RTX 40 series) and SM120 (GeForce RTX 50 series and RTX
+PRO 5000/6000 Blackwell) GPUs and keeps all packed
 text, image/video reference, and audio conditioning exact.
 
 The integration supports ComfyUI 0.38.x and 0.39.x. Its backend builds on
@@ -22,17 +23,20 @@ dense. It does not replace each attention module's `forward` method.
 
 ## Install
 
-This release provides two Linux x86_64 CUDA 13.0 archives:
+This release provides five architecture-specific archives:
 
 | GPU | CUDA toolkit | Release archive |
 | --- | --- | --- |
-| SM120 (RTX 50 series) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm120-cu130.zip` |
-| SM89 (RTX 4090) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm89-cu130.zip` |
+| SM120 (GeForce RTX 50 series; RTX PRO 5000/6000 Blackwell) | 12.8 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm120-cu128.zip` |
+| SM120 (GeForce RTX 50 series; RTX PRO 5000/6000 Blackwell) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm120-cu130.zip` |
+| SM89 (GeForce RTX 40 series) | 13.0 | `ComfyUI-Spark-H3-<version>-linux-x86_64-sm89-cu130.zip` |
+| SM120 (GeForce RTX 50 series; RTX PRO 5000/6000 Blackwell) | 13.0 | `ComfyUI-Spark-H3-<version>-windows-x86_64-sm120-cu130.zip` |
+| SM89 (GeForce RTX 40 series) | 13.0 | `ComfyUI-Spark-H3-<version>-windows-x86_64-sm89-cu130.zip` |
 
 Select the archive matching both the GPU architecture and
-`torch.version.cuda`. CUDA 12.8 is available only through the explicit
-`--experimental-cuda` local-wheel or source-build path and is not a release
-asset. Each archive contains only the custom node, its reblock runtime,
+`torch.version.cuda`. The CU128 SM120 package verifies its architecture-specific
+Spark extension before re-enabling comfy-kitchen CUDA dispatch, which ComfyUI
+otherwise disables on CUDA 12.8. Each archive contains only the custom node, its reblock runtime,
 workflows, and compatible backend wheels—not this repository's model or research
 assets. Extract it below `custom_nodes` and run its installer with the same
 Python interpreter that starts ComfyUI:
@@ -55,17 +59,18 @@ require Git, CMake, Ninja, a C++ compiler, and CUDA `nvcc`.
 
 The backend wheel version encodes both architecture and CUDA toolchain: SM89
 CU130 uses `+spark.h3.sm89.cu130.1`, SM120 CU130 uses
-`+spark.h3.sm120.cu130.1`, and experimental SM120 CU128 uses
+`+spark.h3.sm120.cu130.1`, and SM120 CU128 uses
 `+spark.h3.sm120.cu128.1`. SM89 is compiled with CUDA architecture `89`, while
-SM120 CU130 is compiled with `120f`. Archive names and
+SM120 CU128 uses `120a` and SM120 CU130 uses `120f`. Archive names and
 `spark_h3_build.json` also encode `linux-x86_64` or `windows-x86_64`; the
 packager and installer reject wheels or packages for the other OS. Python
-3.10/3.11 also requires its own wheel or source compilation. Windows packaging
-is prepared, but the Windows runtime has not yet been validated. Other GPU
-architectures are unsupported.
+3.10/3.11 also requires its own wheel or source compilation. The Windows CUDA
+13.0 packages have been validated independently on SM89 and SM120 hardware.
+Other GPU architectures are unsupported.
 
-Restart ComfyUI afterward; select **MiniMax H3 Spark Attention (SM89)** on an
-RTX 4090 or **MiniMax H3 Spark Attention (SM120)** on an RTX 50-series GPU.
+Restart ComfyUI afterward; select **MiniMax H3 Spark Attention (SM89)** on a
+GeForce RTX 40-series GPU or **MiniMax H3 Spark Attention (SM120)** on a
+GeForce RTX 50-series or RTX PRO 5000/6000 Blackwell GPU.
 Both appear in `model_patches/attention`. See the dedicated
 [ComfyUI installation and workflow guide](comfyui/README.md) for model files and
 examples.

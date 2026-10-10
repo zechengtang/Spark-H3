@@ -2497,12 +2497,12 @@
       "properties": {
         "Node name for S&R": "MiniMaxH3SparkAttentionSM120",
         "cnr_id": "comfyui-spark-h3",
-        "ver": "0.1.1"
+        "ver": "0.1.2"
       },
       "widgets_values": [
         true,
         3,
-        "warmup_steps",
+        "warmup_ratio",
         0.0,
         0,
         "topk_ratio",
@@ -2517,7 +2517,7 @@
       "widgets_values_named": {
         "enabled": true,
         "steps": 3,
-        "warmup_mode": "warmup_steps",
+        "warmup_mode": "warmup_ratio",
         "warmup_ratio": 0.0,
         "warmup_steps": 0,
         "topk_mode": "topk_ratio",
@@ -2528,8 +2528,7 @@
         "strict": true,
         "tail_granularity": "query",
         "reblock_layout": "q_reuse_k"
-      },
-      "title": "Spark-H3 · LBH high-res TopK 10%"
+      }
     }
   ],
   "links": [

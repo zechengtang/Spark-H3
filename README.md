@@ -83,22 +83,15 @@ with install_h3_spark_attn(
 
 ## 🧩 ComfyUI Installation
 
-The current ComfyUI package targets Linux, CUDA BF16, and NVIDIA SM89 or SM120
-GPUs (RTX 4090 and RTX 50 series). It supports ComfyUI 0.38.x and 0.39.x and does not include
-ComfyUI or model weights. Published wheels require a PyTorch CUDA 13.0 or newer
-runtime. CUDA 12.8 has been removed from the release plan because ComfyUI disables
-its optimized comfy-kitchen CUDA backend on that runtime. CU128 source builds and
-local-wheel installs remain available behind an explicit experimental opt-in for
-adaptation and correctness work, but they are not supported release assets.
-Release ZIP names and build manifests encode `linux-x86_64` or
-`windows-x86_64`; wheel platform tags are validated so binaries cannot be
-cross-packaged between operating systems.
+Spark-H3 provides standalone nodes for ComfyUI 0.38.x and 0.39.x on Linux and
+Windows x86_64. Release packages support GeForce RTX 40-series GPUs (SM89),
+GeForce RTX 50-series and RTX PRO 5000/6000 Blackwell GPUs (SM120). Choose the
+package matching your operating system, GPU architecture, and CUDA version.
+ComfyUI and model weights are not included.
 
-The installer selects the Spark backend matching the `comfy-kitchen` dependency
-specified by the installed ComfyUI release.
-
-For package selection, installation commands, and troubleshooting, see the
-**[ComfyUI 中文安装指南](comfyui/INSTALL.zh-CN.md)**.
+See the **[ComfyUI guide](comfyui/README.md)** or
+**[中文安装指南](comfyui/INSTALL.zh-CN.md)** for downloads, installation, and
+example workflows.
 
 ## Step-count convention
 
@@ -134,7 +127,7 @@ requirements, defaults, and options. -->
 | ✅ Available | Fused Spark kernels for SM80, SM89, and SM120 | [Kernel documentation](h3_sparse_attention/README.md) · [Performance matrix](docs/kernel_performance_matrix.md) |
 | ✅ Available | Standalone ComfyUI node packaging with wheel-first installation and source fallback | [ComfyUI guide](comfyui/README.md) |
 | ✅ Available | Release Ref2VA inference examples | [Spark-Ref2VA Preview](https://zechengtang.github.io/Spark-H3/#spark-ref2va-preview) |
-| 🚧 In progress | Test and validate the ComfyUI implementation on NVIDIA GeForce RTX 50 series | — |
+| 🚧 In progress | Test and validate the ComfyUI implementation on SM120 GPUs, including GeForce RTX 50 series and RTX PRO 5000/6000 Blackwell | — |
 | 🗓️ Planned | Standalone stable ComfyUI implementation without a `comfy-kitchen` dependency | — |
 | 🗓️ Planned | Fused Spark kernels for SM90 and SM100 | Pending resources |
 | 🗓️ Planned | Release the technical report | — |

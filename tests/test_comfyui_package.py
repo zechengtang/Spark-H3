@@ -32,6 +32,7 @@ def test_standalone_package_is_small_complete_and_importable(tmp_path):
     )
     assert (package / "__init__.py").is_file()
     assert (package / "comfyui_backend.py").is_file()
+    assert not (package / "comfyui_ref2va.py").exists()
     assert (package / "h3_sparse_attention/landmark_tree_v2.py").is_file()
     assert not (package / "h3_sparse_attention/spark_reweight_sm89.py").exists()
     assert not (package / "h3_sparse_attention/processor.py").exists()
@@ -52,6 +53,8 @@ def test_standalone_package_is_small_complete_and_importable(tmp_path):
 
     metadata = tomllib.loads((package / "pyproject.toml").read_text(encoding="utf-8"))
     assert metadata["project"]["version"] == "0.1.7"
+    assert "Operating System :: OS Independent" in metadata["project"]["classifiers"]
+    assert "Operating System :: POSIX :: Linux" not in metadata["project"]["classifiers"]
     assert metadata["tool"]["comfy"]["PublisherId"] == "test-publisher"
     assert metadata["tool"]["comfy"]["requires-comfyui"] == ">=0.38.0,<0.40.0"
 
@@ -163,7 +166,8 @@ def test_standalone_package_is_small_complete_and_importable(tmp_path):
                 "precision": "fp16",
             }
             assert spark["widgets_values_named"]["steps"] == 3
-            assert spark["widgets_values_named"]["warmup_mode"] == "warmup_steps"
+            assert spark["widgets_values_named"]["warmup_mode"] == "warmup_ratio"
+            assert spark["widgets_values_named"]["warmup_ratio"] == 0.0
             assert spark["widgets_values_named"]["warmup_steps"] == 0
             assert spark["widgets_values_named"]["topk_ratio"] == 0.1
             assert any(
@@ -208,7 +212,19 @@ module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 assert 'MiniMaxH3SparkAttentionSM120' in module.NODE_CLASS_MAPPINGS
-assert 'MiniMaxH3SparkAttentionSM89' in module.NODE_CLASS_MAPPINGS
+assert 'MiniMaxH3SolAttentionSM120' in module.NODE_CLASS_MAPPINGS
+assert 'MiniMaxH3SparkAttentionSM89' not in module.NODE_CLASS_MAPPINGS
+assert 'MiniMaxH3SparkAttentionSM89' not in module.NODE_DISPLAY_NAME_MAPPINGS
+assert set(module.NODE_CLASS_MAPPINGS) == set(module.NODE_DISPLAY_NAME_MAPPINGS)
+assert 'MiniMaxH3Ref2VA12FPS480P' not in module.NODE_CLASS_MAPPINGS
+for workflow_path in (root / 'workflows').glob('*.json'):
+    workflow = __import__('json').loads(workflow_path.read_text(encoding='utf-8'))
+    spark_nodes = [
+        node['type'] for node in workflow['nodes']
+        if node.get('type', '').startswith('MiniMaxH3SparkAttention')
+    ]
+    assert spark_nodes == ['MiniMaxH3SparkAttentionSM120']
+    assert spark_nodes[0] in module.NODE_CLASS_MAPPINGS
 reblock = __import__(
     'comfyui_spark_h3_package.comfyui_reblock_plan', fromlist=['unused']
 )
@@ -251,15 +267,16 @@ def test_standalone_zip_has_one_installable_root(tmp_path):
     }.issubset(names)
 
 
-def test_release_package_requires_explicit_opt_in_for_cu128_tag():
+def test_release_package_supports_cu128_and_keeps_cu129_experimental():
     builder = _load(
         "build_comfyui_package_release_cuda", ROOT / "tools/build_comfyui_package.py"
     )
-    assert builder.RELEASE_CUDA_TAGS == ("cu130",)
-    assert "cu128" in builder.EXPERIMENTAL_CUDA_TAGS
+    assert builder.RELEASE_CUDA_TAGS == ("cu128", "cu130")
+    assert "cu129" in builder.EXPERIMENTAL_CUDA_TAGS
+    builder.validate_cuda_tag("cu128")
     with pytest.raises(ValueError, match="experimental build target"):
-        builder.validate_cuda_tag("cu128")
-    builder.validate_cuda_tag("cu128", experimental=True)
+        builder.validate_cuda_tag("cu129")
+    builder.validate_cuda_tag("cu129", experimental=True)
     builder.validate_cuda_tag("cu130")
 
 
@@ -398,6 +415,36 @@ def test_sm89_package_rewrites_workflows_and_archive_name(tmp_path):
             if node.get("type") == "MiniMaxH3SparkAttentionSM89"
         )
         assert spark["properties"]["ver"] == "0.1.7"
+        assert "title" not in spark
+    probe = """
+import importlib.util
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    'comfyui_spark_h3_sm89_package', root / '__init__.py',
+    submodule_search_locations=[str(root)],
+)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+assert 'MiniMaxH3SparkAttentionSM89' in module.NODE_CLASS_MAPPINGS
+assert 'MiniMaxH3SparkAttentionSM120' not in module.NODE_CLASS_MAPPINGS
+assert 'MiniMaxH3SolAttentionSM120' not in module.NODE_CLASS_MAPPINGS
+assert 'MiniMaxH3SparkAttentionSM120' not in module.NODE_DISPLAY_NAME_MAPPINGS
+assert 'MiniMaxH3SolAttentionSM120' not in module.NODE_DISPLAY_NAME_MAPPINGS
+assert set(module.NODE_CLASS_MAPPINGS) == set(module.NODE_DISPLAY_NAME_MAPPINGS)
+for workflow_path in (root / 'workflows').glob('*.json'):
+    workflow = json.loads(workflow_path.read_text(encoding='utf-8'))
+    spark_nodes = [
+        node['type'] for node in workflow['nodes']
+        if node.get('type', '').startswith('MiniMaxH3SparkAttention')
+    ]
+    assert spark_nodes == ['MiniMaxH3SparkAttentionSM89']
+    assert spark_nodes[0] in module.NODE_CLASS_MAPPINGS
+"""
+    subprocess.run([sys.executable, "-I", "-c", probe, str(package)], check=True)
     archive = builder.make_zip(
         package,
         tmp_path,
@@ -434,6 +481,78 @@ def test_sm89_package_rewrites_workflows_and_archive_name(tmp_path):
     )
     assert experimental.name == (
         "ComfyUI-Spark-H3-0.1.7-experimental-linux-x86_64-sm89-cu128.zip"
+    )
+
+
+@pytest.mark.parametrize(
+    ("architecture", "registered", "hidden"),
+    (
+        (
+            "sm89",
+            "MiniMaxH3SparkAttentionSM89",
+            ("MiniMaxH3SparkAttentionSM120", "MiniMaxH3SolAttentionSM120"),
+        ),
+        (
+            "sm120",
+            "MiniMaxH3SparkAttentionSM120",
+            ("MiniMaxH3SparkAttentionSM89",),
+        ),
+    ),
+)
+def test_release_package_registers_only_target_architecture_nodes(
+    tmp_path, architecture, registered, hidden
+):
+    builder = _load(
+        f"build_comfyui_package_node_isolation_{architecture}",
+        ROOT / "tools/build_comfyui_package.py",
+    )
+    package = builder.assemble(
+        tmp_path / architecture,
+        version="0.1.7",
+        publisher_id="test",
+        architecture=architecture,
+        platform_tag="linux-x86_64",
+    )
+    probe = """
+import importlib.util
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+registered = sys.argv[2]
+hidden = json.loads(sys.argv[3])
+spec = importlib.util.spec_from_file_location(
+    f'comfyui_spark_h3_isolated_{registered}', root / '__init__.py',
+    submodule_search_locations=[str(root)],
+)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+assert registered in module.NODE_CLASS_MAPPINGS
+assert registered in module.NODE_DISPLAY_NAME_MAPPINGS
+assert all(name not in module.NODE_CLASS_MAPPINGS for name in hidden)
+assert all(name not in module.NODE_DISPLAY_NAME_MAPPINGS for name in hidden)
+for workflow_path in (root / 'workflows').glob('*.json'):
+    workflow = json.loads(workflow_path.read_text(encoding='utf-8'))
+    spark_nodes = [
+        node for node in workflow['nodes']
+        if node.get('type', '').startswith('MiniMaxH3SparkAttention')
+    ]
+    assert len(spark_nodes) == 1
+    assert spark_nodes[0]['type'] == registered
+    assert spark_nodes[0]['type'] in module.NODE_CLASS_MAPPINGS
+"""
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            probe,
+            str(package),
+            registered,
+            json.dumps(hidden),
+        ],
+        check=True,
     )
 
 
@@ -579,7 +698,7 @@ def test_installer_resolves_supported_installed_base(monkeypatch):
         installer._resolve_kitchen_base()
 
 
-def test_installer_requires_explicit_opt_in_for_cu128_runtime(monkeypatch, capsys):
+def test_installer_supports_cu128_and_requires_opt_in_for_unknown_cuda(monkeypatch, capsys):
     installer = _load("spark_comfyui_installer_cuda", ROOT / "comfyui/install.py")
     torch_stub = ModuleType("torch")
     torch_stub.version = ModuleType("torch.version")
@@ -587,10 +706,11 @@ def test_installer_requires_explicit_opt_in_for_cu128_runtime(monkeypatch, capsy
     monkeypatch.setitem(sys.modules, "torch", torch_stub)
     monkeypatch.setitem(sys.modules, "triton", ModuleType("triton"))
 
-    with pytest.raises(RuntimeError, match="excluded from the Spark-H3 release plan"):
+    assert installer._validate_runtime() == (12, 8)
+    torch_stub.version.cuda = "12.9"
+    with pytest.raises(RuntimeError, match="not in the Spark-H3 release matrix"):
         installer._validate_runtime()
-
-    assert installer._validate_runtime(experimental_cuda=True) == (12, 8)
+    assert installer._validate_runtime(experimental_cuda=True) == (12, 9)
     assert "experimental CUDA mode" in capsys.readouterr().err
     torch_stub.version.cuda = "13.0"
     assert installer._validate_runtime() == (13, 0)
@@ -639,7 +759,7 @@ def test_installer_validates_runtime_and_package_platform(monkeypatch, tmp_path)
         (
             (12, 8),
             (12, 0),
-            ("--experimental-cuda",),
+            (),
             ("sm120", "cu128", "120a"),
         ),
     ),
@@ -688,7 +808,11 @@ def test_installer_backend_probe_ignores_stale_parent_modules(tmp_path, monkeypa
     (package.parent / "__init__.py").write_text("", encoding="utf-8")
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "cuda.py").write_text(
-        "def spark_attn():\n    return None\n", encoding="utf-8"
+        "class Native:\n"
+        "    def spark_attn(self):\n        return None\n"
+        "_C = Native()\n"
+        "def spark_attn():\n    return None\n",
+        encoding="utf-8",
     )
     dist_info = tmp_path / "comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1.dist-info"
     dist_info.mkdir()

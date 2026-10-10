@@ -18,6 +18,7 @@ from comfyui_nodes import (
     MiniMaxH3SparkAttentionSM120,
     SaveMiniMaxH3AVLatentCache,
     _RunState,
+    _enable_cu128_cuda_backend,
     _make_spark_layout,
 )
 
@@ -77,6 +78,50 @@ def test_run_state_uses_comfy_model_evaluation_count_and_resets():
     assert state.controller.evaluation_index == 2 and not state.is_warmup
     state.begin_evaluation({"sigmas": torch.tensor([1.0])})
     assert state.controller.evaluation_index == 0
+
+
+def test_cu128_enables_only_verified_spark_cuda_backend(monkeypatch):
+    ck = ModuleType("comfy_kitchen")
+    state = {"disabled": True}
+    ck.enable_backend = lambda name: state.update(disabled=False)
+    ck.list_backends = lambda: {
+        "cuda": {"available": True, "disabled": state["disabled"]}
+    }
+    backends = ModuleType("comfy_kitchen.backends")
+    cuda = ModuleType("comfy_kitchen.backends.cuda")
+    cuda._C = SimpleNamespace(spark_attn=lambda: None)
+    backends.cuda = cuda
+    monkeypatch.setitem(sys.modules, "comfy_kitchen", ck)
+    monkeypatch.setitem(sys.modules, "comfy_kitchen.backends", backends)
+    monkeypatch.setitem(sys.modules, "comfy_kitchen.backends.cuda", cuda)
+    monkeypatch.setattr(torch.version, "cuda", "12.8")
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *_args: (12, 0))
+    monkeypatch.setattr(
+        "comfyui_nodes.metadata.version",
+        lambda _name: "0.2.37+spark.h3.sm120.cu128.1",
+    )
+
+    assert _enable_cu128_cuda_backend((12, 0))
+    assert not state["disabled"]
+
+
+def test_cu128_rejects_ordinary_comfy_kitchen(monkeypatch):
+    ck = ModuleType("comfy_kitchen")
+    ck.enable_backend = lambda _name: None
+    ck.list_backends = lambda: {"cuda": {"available": True, "disabled": False}}
+    backends = ModuleType("comfy_kitchen.backends")
+    cuda = ModuleType("comfy_kitchen.backends.cuda")
+    cuda._C = SimpleNamespace(spark_attn=lambda: None)
+    backends.cuda = cuda
+    monkeypatch.setitem(sys.modules, "comfy_kitchen", ck)
+    monkeypatch.setitem(sys.modules, "comfy_kitchen.backends", backends)
+    monkeypatch.setitem(sys.modules, "comfy_kitchen.backends.cuda", cuda)
+    monkeypatch.setattr(torch.version, "cuda", "12.8")
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *_args: (12, 0))
+    monkeypatch.setattr("comfyui_nodes.metadata.version", lambda _name: "0.2.37")
+
+    with pytest.raises(RuntimeError, match="not a Spark-H3 SM120/CU128 backend"):
+        _enable_cu128_cuda_backend((12, 0))
 
 
 def test_spark_warmup_steps_mode_and_limits():

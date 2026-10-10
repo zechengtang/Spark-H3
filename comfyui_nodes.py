@@ -11,6 +11,7 @@ import logging
 import json
 import math
 import os
+from importlib import metadata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,6 +47,56 @@ class _Unsupported(RuntimeError):
 
 class _Incompatible(_Unsupported):
     pass
+
+
+def _enable_cu128_cuda_backend(target_capability: tuple[int, int]) -> bool:
+    """Undo ComfyUI's blanket CU128 comfy-kitchen disable for our pinned wheel.
+
+    ComfyUI 0.38/0.39 disables the complete comfy-kitchen CUDA registry on
+    PyTorch CUDA versions older than 13.  Spark calls its CUDA extension
+    directly, but the surrounding quantized H3 projections then silently use
+    the eager backend and dominate runtime.  A Spark wheel is compiled for the
+    exact runtime and architecture, so it is safe to restore CUDA dispatch once
+    its identity and required native entry point have both been verified.
+    """
+    cuda_text = torch.version.cuda
+    if cuda_text is None or tuple(int(x) for x in cuda_text.split(".")[:2]) != (12, 8):
+        return False
+    if target_capability != (12, 0):
+        raise RuntimeError("Spark-H3 CU128 acceleration is only supported on SM120")
+    capability = tuple(torch.cuda.get_device_capability())
+    if capability != target_capability:
+        raise RuntimeError(
+            f"Spark-H3 CU128 expected SM120, found SM{capability[0]}{capability[1]}"
+        )
+
+    try:
+        import comfy_kitchen as ck
+        from comfy_kitchen.backends import cuda as cuda_backend
+
+        installed = metadata.version("comfy-kitchen")
+    except (ImportError, metadata.PackageNotFoundError) as error:
+        raise RuntimeError(
+            "Spark-H3 CU128 requires its architecture-specific comfy-kitchen wheel"
+        ) from error
+    local = installed.partition("+")[2]
+    supported_identity = local == "spark.h3.sm120.cu128.1"
+    extension = getattr(cuda_backend, "_C", None)
+    if not supported_identity or extension is None or not hasattr(extension, "spark_attn"):
+        raise RuntimeError(
+            f"comfy-kitchen {installed} is not a Spark-H3 SM120/CU128 backend"
+        )
+    ck.enable_backend("cuda")
+    status = ck.list_backends().get("cuda", {})
+    if not status.get("available") or status.get("disabled"):
+        raise RuntimeError("failed to enable the verified comfy-kitchen CU128 CUDA backend")
+    if not getattr(_enable_cu128_cuda_backend, "_logged", False):
+        log.info(
+            "[Spark-H3] enabled verified comfy-kitchen CUDA dispatch on CU128; "
+            "quantized projections and Spark attention now remain on CUDA"
+        )
+        _enable_cu128_cuda_backend._logged = True
+    return True
 
 
 def _target_video_span(layout, sequence_length: int) -> tuple[int, int]:
@@ -595,7 +646,8 @@ class MiniMaxH3SparkAttentionSM120:
     CATEGORY = "model_patches/attention"
     DESCRIPTION = (
         "Patch ComfyUI's native MiniMax H3 DiT with Spark-H3 block-sparse "
-        "attention on RTX 50-series SM120 GPUs. Uses ComfyUI's official H3 "
+        "attention on SM120 GPUs (GeForce RTX 50 series and RTX PRO "
+        "5000/6000 Blackwell). Uses ComfyUI's official H3 "
         "block-replacement, sigma scheduling, cleanup, and chunked QKV producer "
         "architecture. Connect it after UNETLoader and set steps to the "
         "sampler's model-evaluation count."
@@ -628,6 +680,8 @@ class MiniMaxH3SparkAttentionSM120:
         blocks = getattr(diffusion_model, "blocks", None)
         if diffusion_model.__class__.__name__ != "MiniMaxH3Model" or blocks is None:
             raise TypeError("Spark-H3 expects ComfyUI's native MiniMaxH3Model")
+
+        _enable_cu128_cuda_backend(self.TARGET_CAPABILITY)
 
         import comfy.patcher_extension
         from comfy_extras.nodes_sparse_attention import SparseAttnPatch
@@ -788,7 +842,8 @@ class MiniMaxH3SparkAttentionSM89(MiniMaxH3SparkAttentionSM120):
 
     DESCRIPTION = (
         "Patch ComfyUI's native MiniMax H3 DiT with the comfy-kitchen "
-        "Spark-H3 CUDA kernel compiled for RTX 4090 (SM89). Connect it after "
+        "Spark-H3 CUDA kernel compiled for GeForce RTX 40-series GPUs "
+        "(SM89). Connect it after "
         "UNETLoader and set steps to the sampler's model-evaluation count."
     )
 

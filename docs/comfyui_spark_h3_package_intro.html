@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Spark-H3 ComfyUI 安装包速览</title>
+  <style>
+    @page { size: A4; margin: 17mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #1d2a3b; font: 10.5pt/1.55 "Noto Sans CJK SC", sans-serif; }
+    h1 { margin: 3mm 0 2mm; color: #12365f; font-size: 25pt; line-height: 1.2; }
+    h2 { margin: 0 0 2mm; color: #174d82; font-size: 12.5pt; }
+    p { margin: 0 0 3mm; }
+    ol { margin: 0; padding-left: 5mm; }
+    li { margin-bottom: 1.5mm; }
+    code { font-family: "Noto Sans Mono CJK SC", monospace; color: #19548a; font-size: 8.8pt; overflow-wrap: anywhere; }
+    .eyebrow { color: #2f71b9; font-size: 8pt; font-weight: 700; letter-spacing: .15em; }
+    .lead { color: #43536a; font-size: 12pt; }
+    .hero { margin: 6mm 0 7mm; padding: 5mm 6mm; border-left: 1.5mm solid #3278c7; border-radius: 2mm; background: #eef6ff; }
+    .hero p { margin: 0; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; margin-bottom: 7mm; }
+    .card { padding: 4mm 4.5mm; border: 1px solid #d8e5f2; border-radius: 2mm; min-height: 39mm; }
+    .card p:last-child { margin-bottom: 0; }
+    .section { margin: 0 0 7mm; }
+    .band { padding: 4mm 5mm; background: #f4f8fc; border-radius: 2mm; }
+    .tag { display: inline-block; margin: 0 1mm 1mm 0; padding: 1mm 2.5mm; border-radius: 8mm; background: #e1efff; color: #225991; font-size: 8.5pt; font-weight: 700; }
+    .muted { color: #65748a; font-size: 8.5pt; }
+    .warning { padding: 3mm 4mm; border-left: 1mm solid #d59a2b; background: #fff8e9; border-radius: 1.5mm; }
+    .footer { margin-top: 8mm; padding-top: 2mm; border-top: 1px solid #d8e5f2; color: #6f7c8e; font-size: 8pt; }
+  </style>
+</head>
+<body>
+  <div class="eyebrow">MINIMAX-H3 · COMFYUI 插件</div>
+  <h1>Spark-H3 安装包速览</h1>
+  <p class="lead">让原生 MiniMax-H3 工作流使用 Spark 块稀疏注意力。</p>
+
+  <div class="hero">
+    <p><strong>支持当前最新两个 ComfyUI 正式版本系列：0.38.x 和 0.39.x。</strong>适用 Linux 或 Windows x86_64、PyTorch CUDA 12.8/13.0、NVIDIA GeForce RTX 40 系（SM89），以及 GeForce RTX 50 系或 RTX PRO 5000/6000 Blackwell（SM120）。安装包<strong>不含模型权重</strong>。</p>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>选对安装包</h2>
+      <p>GeForce RTX 40 系选 <code>…sm89-cu130.zip</code></p>
+      <p>GeForce RTX 50 系或 RTX PRO 5000/6000 Blackwell 选 <code>…sm120-cu128/130.zip</code></p>
+      <p class="muted">GPU 架构、系统与 <code>torch.version.cuda</code> 必须匹配。</p>
+    </div>
+    <div class="card">
+      <h2>包里有什么</h2>
+      <p>Spark 节点、安装器、匹配的 CUDA 后端 wheel，以及 5 个示例工作流。</p>
+      <p class="muted">ComfyUI 本体、MiniMax-H3 权重和可选 LoRA 需另行准备。</p>
+    </div>
+  </div>
+
+  <div class="section band">
+    <h2>三步安装</h2>
+    <ol>
+      <li>停止 ComfyUI，把对应 ZIP 解压到 <code>ComfyUI/custom_nodes</code>。</li>
+      <li>用<strong>启动 ComfyUI 的同一个 Python</strong>执行 <code>ComfyUI-Spark-H3/install.py</code>。</li>
+      <li>重启 ComfyUI，在工作流中连接：<br><code>UNETLoader → MiniMax H3 Spark Attention → BasicGuider</code></li>
+    </ol>
+  </div>
+
+  <div class="section">
+    <h2>内附样例</h2>
+    <span class="tag">原生 20 步</span><span class="tag">LightX2V 8 步</span><span class="tag">Larryvrh 8 步</span><span class="tag">DMAD 4 步</span><span class="tag">LBH 双阶段</span>
+    <p class="muted">后四个样例可能需要额外 LoRA、转换权重或第三方节点；首次使用建议从“原生 20 步”开始。</p>
+  </div>
+
+  <div class="warning"><strong>平台说明：</strong>Windows CUDA 13.0 的 SM89 与 SM120 安装包均已完成实机验证；CUDA 12.8 正式包目前仅提供 Linux SM120。</div>
+
+  <div class="footer">完整步骤与排障：仓库 <code>comfyui/INSTALL.zh-CN.md</code>。内容快照：2026-10-11。</div>
+</body>
+</html>

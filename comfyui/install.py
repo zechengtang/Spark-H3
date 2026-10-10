@@ -21,7 +21,12 @@ BACKEND_LOCAL_VERSION_PREFIXES = {
     "sm89": "spark.h3.sm89",
     "sm120": "spark.h3.sm120",
 }
-MINIMUM_RELEASE_CUDA = (13, 0)
+SUPPORTED_RELEASE_CUDA = {(12, 8), (13, 0)}
+SUPPORTED_RELEASE_TARGETS = {
+    ("sm120", (12, 8)),
+    ("sm120", (13, 0)),
+    ("sm89", (13, 0)),
+}
 DEFAULT_RELEASE_CUDA_TAG = "cu130"
 PACKAGE_BUILD_IDENTITY = "spark_h3_build.json"
 DEFAULT_RELEASE_APIS = {
@@ -35,10 +40,11 @@ DEFAULT_RELEASE_APIS = {
 BACKEND_PROBE = (
     "from importlib.metadata import version\n"
     "import sys\n"
-    "from comfy_kitchen.backends.cuda import spark_attn\n"
+    "from comfy_kitchen.backends import cuda\n"
     "installed = version('comfy-kitchen')\n"
     "base, _, local = installed.partition('+')\n"
-    "ok = callable(spark_attn) and base == sys.argv[1] and local == sys.argv[2]\n"
+    "native = getattr(getattr(cuda, '_C', None), 'spark_attn', None)\n"
+    "ok = callable(cuda.spark_attn) and callable(native) and base == sys.argv[1] and local == sys.argv[2]\n"
     "raise SystemExit(0 if ok else 1)\n"
 )
 
@@ -206,15 +212,14 @@ def _validate_runtime(*, experimental_cuda: bool = False) -> tuple[int, int]:
         cuda_version = tuple(int(part) for part in cuda_text.split(".")[:2])
     except ValueError as error:
         raise RuntimeError(f"cannot parse PyTorch CUDA version {cuda_text!r}") from error
-    if cuda_version < MINIMUM_RELEASE_CUDA:
+    if cuda_version not in SUPPORTED_RELEASE_CUDA:
         message = (
-            f"PyTorch CUDA {cuda_text} is excluded from the Spark-H3 release plan "
-            "because ComfyUI disables its optimized comfy-kitchen CUDA backend, "
-            "causing a severe end-to-end performance regression"
+            f"PyTorch CUDA {cuda_text} is not in the Spark-H3 release matrix "
+            f"{sorted(SUPPORTED_RELEASE_CUDA)}"
         )
         if not experimental_cuda:
             raise RuntimeError(
-                message + ". Use CUDA 13.0+ for a release installation, or pass "
+                message + ". Use a supported runtime, or pass "
                 "--experimental-cuda together with --wheel or --source for local "
                 "correctness and adaptation work."
             )
@@ -327,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--experimental-cuda",
         action="store_true",
-        help="opt in to a CUDA < 13 diagnostic install; requires --wheel or --source",
+        help="opt in to a CUDA target outside the release matrix; requires --wheel or --source",
     )
     parser.add_argument(
         "--no-source-fallback",
@@ -351,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
     cuda_version = _validate_runtime(experimental_cuda=args.experimental_cuda)
     cuda_tag = _cuda_tag(cuda_version)
     platform_tag = _runtime_platform_tag()
-    experimental_runtime = cuda_version < MINIMUM_RELEASE_CUDA
+    experimental_runtime = cuda_version not in SUPPORTED_RELEASE_CUDA
     requested_wheel = args.wheel or os.environ.get("SPARK_H3_KERNEL_WHEEL")
     if experimental_runtime and not (args.source or requested_wheel):
         raise RuntimeError(
@@ -366,6 +371,18 @@ def main(argv: list[str] | None = None) -> int:
             f"this ComfyUI package supports SM89 and SM120, found "
             f"SM{capability[0]}{capability[1]}"
         )
+    if (architecture, cuda_version) not in SUPPORTED_RELEASE_TARGETS:
+        if not args.experimental_cuda:
+            raise RuntimeError(
+                f"{architecture.upper()} with CUDA {cuda_version[0]}.{cuda_version[1]} "
+                "is not in the Spark-H3 release matrix"
+            )
+        experimental_runtime = True
+        if not (args.source or requested_wheel):
+            raise RuntimeError(
+                "experimental CUDA installs require an explicit --wheel or --source; "
+                "automatic release-wheel discovery is disabled"
+            )
     _validate_package_identity(
         root,
         architecture=architecture,
@@ -425,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
         cuda_tag=cuda_tag,
         cuda_archs=(
             "120a"
-            if experimental_runtime and architecture == "sm120" and cuda_version < (13, 0)
+            if architecture == "sm120" and cuda_version < (13, 0)
             else None
         ),
         source_url=os.environ.get(

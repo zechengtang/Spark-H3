@@ -1,6 +1,6 @@
 # ComfyUI Spark 节点参数
 
-节点名称：RTX 4090 使用 `MiniMax H3 Spark Attention (SM89)`，RTX 50 系使用 `MiniMax H3 Spark Attention (SM120)`。把对应节点接在 MiniMax H3 模型加载节点与采样器之间。两个节点的参数接口相同，界面中的每个输入也有中文悬浮说明。
+节点名称：GeForce RTX 40 系使用 `MiniMax H3 Spark Attention (SM89)`；GeForce RTX 50 系及 RTX PRO 5000/6000 Blackwell 使用 `MiniMax H3 Spark Attention (SM120)`。把对应节点接在 MiniMax H3 模型加载节点与采样器之间。两个节点的参数接口相同，界面中的每个输入也有中文悬浮说明。
 
 `warmup_mode` 显示在预热参数上方，`topk_mode` 显示在 Top-K 参数上方。每组只显示当前模式使用的数值框；切换模式不会清除另一模式原来填写的值。如果把模式接成外部输入，界面会显示该组的两个数值框，因为实际模式要到运行时才能确定。旧工作流中的 `warmup_percent=20/25` 会在前端加载时迁移为 `warmup_ratio=0.2/0.25`。
 

@@ -1,51 +1,77 @@
-# Spark-H3 ComfyUI 节点
+# Spark-H3 ComfyUI Nodes
 
-为 ComfyUI 原生 MiniMax-H3 提供 **MiniMax H3 Spark Attention
-(SM89)** 与 **MiniMax H3 Spark Attention (SM120)** 节点。将对应节点接在
-模型加载器和 `BasicGuider` 之间；同一模型只使用一个注意力补丁。目前实现
-面向 Linux、NVIDIA SM89（RTX 4090）或 SM120（RTX 50 系）和 CUDA BF16。
+<p align="center">
+  <a href="README.md"><strong>English</strong></a> |
+  <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-## 安装
+Spark-H3 provides **MiniMax H3 Spark Attention (SM89)** and **MiniMax H3
+Spark Attention (SM120)** nodes for ComfyUI's native MiniMax-H3 implementation.
+Place the matching node between the model loader and `BasicGuider`, and apply
+only one attention patch to a model. The current release targets Linux or Windows x86_64, NVIDIA
+SM89 (GeForce RTX 40 series) or SM120 (GeForce RTX 50 series and RTX PRO
+5000/6000 Blackwell), and CUDA BF16 execution.
 
-请参阅 **[ComfyUI 中文安装指南](INSTALL.zh-CN.md)**。指南包含
-ComfyUI 0.38.x/0.39.x 的版本选择、ZIP 安装命令、手动指定版本和
-常见问题排查。
+## Installation
 
-## 模型与工作流
+See the **[English installation and release guide](standalone/README.md#installation)**
+for release selection, ZIP installation, manual version selection, and
+troubleshooting. A **[Chinese installation guide](INSTALL.zh-CN.md)** is also
+available.
 
-从 [Comfy-Org 的 MiniMax-H3 仓库](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main)下载原生模型，按 ComfyUI 的目录放置：扩散模型放 `models/diffusion_models`，文本编码器放 `models/text_encoders`，视频和音频 VAE 放 `models/vae`。也可以通过 `extra_model_paths.yaml` 使用已有模型目录。示例默认使用官方 `minimax_h3_video_vae_fp16.safetensors`。VAE 选择不改变 Spark attention 算法。
+## Models and Workflows
 
-将工作流 JSON 拖入 ComfyUI 画布，并检查模型文件名。DMAD 与 LBH 示例生成约
-5.2 秒的视频，其余示例均生成约 14.4 秒的视频：
+Download the native model files from the
+[Comfy-Org MiniMax-H3 repository](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main).
+Place the diffusion model under `models/diffusion_models`, the text encoder
+under `models/text_encoders`, and the video and audio VAEs under `models/vae`.
+You can also reuse an existing model directory through `extra_model_paths.yaml`.
+The examples default to the official `minimax_h3_video_vae_fp16.safetensors`;
+the VAE choice does not change the Spark attention algorithm.
 
-| 工作流示例 | 配置 |
+Drag a workflow JSON onto the ComfyUI canvas and verify the model filenames.
+The DMAD and LBH examples generate approximately 5.2-second videos; the other
+examples generate approximately 14.4-second videos:
+
+| Example workflow | Configuration |
 | --- | --- |
-| [原始 MiniMax-H3](../workflows/spark_h3_vdn8_14p4s_t2va.json) | 核心示例；20 步，无 LoRA，无额外节点 |
-| [LightX2V 8-step LoRA](../workflows/spark_h3_lightx2v_768p_8step_lora_14p4s_t2va.json) | 扩展示例；需另行[下载 LightX2V LoRA](https://huggingface.co/lightx2v/Minimax-h3-Turbo/tree/main) |
-| [Larryvrh 8-step LoRA](../workflows/spark_h3_larryvrh_8step_lora_14p4s_t2va.json) | 扩展示例；需[下载 LoRA](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora)并先转换为 ComfyUI 通用格式 |
-| [DMAD 4-step LoRA](../workflows/spark_h3_dmad_4step_lora_5p2s_t2va.json) | 使用 DMAD re-noise sampler；需先转换 DMAD LoRA |
-| [LBH 官方 two-pass + LightX2V 4-step](../workflows/spark_h3_lbh_official_lightx2v_4step_5p2s_i2va.json) | 需安装 LBH 官方 ComfyUI 节点并下载 latent upscaler |
+| [Native MiniMax-H3](../workflows/spark_h3_vdn8_14p4s_t2va.json) | Core example; 20 steps, no LoRA, no extra nodes |
+| [LightX2V 8-step LoRA](../workflows/spark_h3_lightx2v_768p_8step_lora_14p4s_t2va.json) | Extended example; [download the LightX2V LoRA](https://huggingface.co/lightx2v/Minimax-h3-Turbo/tree/main) separately |
+| [Larryvrh 8-step LoRA](../workflows/spark_h3_larryvrh_8step_lora_14p4s_t2va.json) | Extended example; [download the LoRA](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) and convert it to ComfyUI's generic format |
+| [DMAD 4-step LoRA](../workflows/spark_h3_dmad_4step_lora_5p2s_t2va.json) | Uses the DMAD re-noise sampler; convert the DMAD LoRA first |
+| [Official LBH two-pass + LightX2V 4-step](../workflows/spark_h3_lbh_official_lightx2v_4step_5p2s_i2va.json) | Requires the official LBH ComfyUI node and latent upscaler |
 
-LightX2V 和 Larryvrh 工作流会继续随独立 ZIP 提供，但它们的额外 LoRA
-不会由 Spark-H3 静默安装。将 LoRA 放入 `models/loras`。所有示例均显式固定
-`topk_mode=topk_ratio` 和 `reblock_layout=q_reuse_k`。常规、LightX2V、
-Larryvrh 与 DMAD 示例使用 `topk_ratio=0.2`；LBH 示例为对齐 Diffusers
-`h3_lbh` 路径使用 `topk_ratio=0.1`。Spark 节点参数见
-[中文说明](../docs/comfyui_spark_node_parameters.md)。
+The LightX2V and Larryvrh workflows remain included in the standalone ZIP, but
+Spark-H3 never installs their additional LoRAs silently. Put those files under
+`models/loras`. Every example explicitly fixes `topk_mode=topk_ratio` and
+`reblock_layout=q_reuse_k`. The native, LightX2V, Larryvrh, and DMAD examples
+use `topk_ratio=0.2`; the LBH example uses `topk_ratio=0.1` to match the
+Diffusers `h3_lbh` path. See the
+[Spark node parameter reference](../docs/comfyui_spark_node_parameters.md)
+(currently in Chinese) for the full interface.
 
-Larryvrh 原始权重需使用 `tools/convert_larryvrh_lora_comfyui.py` 转换。转换会保留
-208 个主干 LoRA，并将 51 个 AdaLN 更新投影到 pruned 模型的 8 维时间曲线；之后
-工作流与 LightX2V 一样使用原生 `LoraLoaderModelOnly`，无需 Larryvrh 自定义节点，
-也没有逐步 runtime-LoRA 矩阵乘法。
+Convert the original Larryvrh weights with
+`tools/convert_larryvrh_lora_comfyui.py`. The conversion retains 208 backbone
+LoRAs and projects 51 AdaLN updates onto the pruned model's eight-dimensional
+timestep curve. The workflow can then use ComfyUI's native
+`LoraLoaderModelOnly`, just like LightX2V, without the Larryvrh custom node or
+per-step runtime-LoRA matrix multiplications.
 
-LBH 示例使用官方 two-pass 结构：0.2 MP 的低分辨率阶段执行 4 次模型评估，
-取 `denoised_output` 后分离音视频 latent，只提升视频 latent；随后在 0.98 MP
-重新加噪，并用 `0.9035, 0.6316, 0.3158, 0.0` 完成 3 次高分辨率评估。
-Spark 只作用于第二阶段，设置为零 warmup、10% Top-K。安装
-`LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler`，并将
-`minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors` 放入
-`ComfyUI/models/latent_upscale_models/`。
+The LBH example follows the official two-pass structure. Its 0.2 MP
+low-resolution stage performs four model evaluations, separates the audio and
+video latents from `denoised_output`, and upscales only the video latent. It
+then re-noises at 0.98 MP and performs three high-resolution evaluations with
+`0.9035, 0.6316, 0.3158, 0.0`. Spark applies only to the second stage, with
+zero warmup and 10% Top-K. Install
+`LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler` and place
+`minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors` under
+`ComfyUI/models/latent_upscale_models/`.
 
-## 实现说明
+## Implementation Notes
 
-这是 Spark-Attn 的初步 ComfyUI 实现，端到端效率仍在优化。Sol-Engine 的 Sol 近似分支只下采样 K/V、保留逐条 Q；ComfyUI 原生 Sol 同时按块下采样 Q 和 K/V。Spark 节点默认使用逐 Q 模式，但两套实现的路由、INT8 数值路径、模型权重和推理步数仍有差异，因此输出和加速比例尚未完全对齐。
+This is the initial Spark-Attn ComfyUI implementation, and end-to-end efficiency
+continues to be optimized. Sol-Engine's approximate Sol branch downsamples only
+K/V and retains per-query Q, while ComfyUI's native Sol downsamples both Q and
+K/V by block. Spark defaults to the per-query mode, but the two implementations
+still differ in routing, INT8 numerical paths, model weights, and inference
+steps, so their outputs and acceleration ratios are not yet directly aligned.

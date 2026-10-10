@@ -600,8 +600,7 @@
         "strict": true,
         "tail_granularity": "query",
         "reblock_layout": "q_reuse_k"
-      },
-      "title": "Spark-H3 + DMAD · TopK 20%"
+      }
     },
     {
       "id": 126,

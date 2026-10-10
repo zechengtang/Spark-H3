@@ -569,7 +569,7 @@
       "properties": {
         "Node name for S&R": "MiniMaxH3SparkAttentionSM120",
         "cnr_id": "comfyui-spark-h3",
-        "ver": "0.1.1"
+        "ver": "0.1.2"
       },
       "widgets_values": [
         true,
@@ -600,8 +600,7 @@
         "strict": true,
         "tail_granularity": "query",
         "reblock_layout": "q_reuse_k"
-      },
-      "title": "Spark-H3 · TopK 20% ratio"
+      }
     },
     {
       "id": 126,
