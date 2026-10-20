@@ -71,6 +71,9 @@ The animated preview and linked clip cover the final 5.4 seconds, starting at 9 
 
 <p align="center"><a href="https://huggingface.co/Aazeus/Spark-H3/resolve/main/comfyui/demos/H3_native_vdn_selected_0006_dense_fidelity_speed_native_resolution.mp4">Watch the full 14.4-second comparison</a></p>
 
+- [Veda / Sol / Spark: subjective visual quality and speed comparison (Bilibili)](https://www.bilibili.com/video/BV1zynA6aEZG/)
+- [Spark-H3 + VPack on Ref2VA (Bilibili)](https://www.bilibili.com/video/BV1i6J163EGG/)
+
 <a id="quick-start"></a>
 
 ## 🚀 Quick Start

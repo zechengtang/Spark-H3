@@ -69,6 +69,9 @@ Spark-H3 提供 Spark 注意力算子及其与 MiniMax-H3 推理流程的集成�
 
 <p align="center"><a href="https://huggingface.co/Aazeus/Spark-H3/resolve/main/comfyui/demos/H3_native_vdn_selected_0006_dense_fidelity_speed_native_resolution.mp4">观看完整 14.4 秒对比视频</a></p>
 
+- [Veda / Sol / Spark：主观画质与速度对比（B 站）](https://www.bilibili.com/video/BV1zynA6aEZG/)
+- [Spark-H3 与 VPack 联合用于 Ref2VA 的演示（B 站）](https://www.bilibili.com/video/BV1i6J163EGG/)
+
 <a id="quick-start"></a>
 
 ## 🚀 快速开始
