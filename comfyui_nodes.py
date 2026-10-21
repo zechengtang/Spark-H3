@@ -1559,28 +1559,3 @@ except ImportError:  # Direct module import in tests / development checkouts.
 
 NODE_CLASS_MAPPINGS.update(DMAD_NODE_CLASS_MAPPINGS)
 NODE_DISPLAY_NAME_MAPPINGS.update(DMAD_NODE_DISPLAY_NAME_MAPPINGS)
-
-# Expose the compact Ref2VA conditioner from the repository checkout as part of
-# the same ComfyUI custom-node entry point.
-try:
-    if __package__:
-        from .comfyui_ref2va import (
-            NODE_CLASS_MAPPINGS as REF2VA_NODE_CLASS_MAPPINGS,
-            NODE_DISPLAY_NAME_MAPPINGS as REF2VA_NODE_DISPLAY_NAME_MAPPINGS,
-        )
-    else:  # Direct module import in tests / development checkouts.
-        from comfyui_ref2va import (
-            NODE_CLASS_MAPPINGS as REF2VA_NODE_CLASS_MAPPINGS,
-            NODE_DISPLAY_NAME_MAPPINGS as REF2VA_NODE_DISPLAY_NAME_MAPPINGS,
-        )
-except ModuleNotFoundError as error:
-    optional_names = {"comfyui_ref2va"}
-    if __package__:
-        optional_names.add(f"{__package__}.comfyui_ref2va")
-    if error.name not in optional_names:
-        raise
-    REF2VA_NODE_CLASS_MAPPINGS = {}
-    REF2VA_NODE_DISPLAY_NAME_MAPPINGS = {}
-
-NODE_CLASS_MAPPINGS.update(REF2VA_NODE_CLASS_MAPPINGS)
-NODE_DISPLAY_NAME_MAPPINGS.update(REF2VA_NODE_DISPLAY_NAME_MAPPINGS)

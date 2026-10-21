@@ -28,7 +28,6 @@ from comfyui_nodes import (
     _make_kj_low_vram_spark_block_patch,
     _spark_mode_is_dense,
 )
-from comfyui_ref2va import ROPE_SCALE_KEY, _apply_physical_time_rope
 
 
 def test_h3_av_latent_cache_roundtrip(tmp_path, monkeypatch):
@@ -261,12 +260,10 @@ def test_ref2va_12fps_480p_layout_matches_validated_diffusers_shape():
             "latent_h": 30,
             "latent_w": 52,
             "ref_audio_t": 207,
-            ROPE_SCALE_KEY: 2.0,
         },
         {"kind": "audio", "ref_audio_t": 207},
     ]
     layout = PackedLayout(2807, 37, 48, 84, 207, refs=refs)
-    original = layout.position_ids.clone()
     assert layout.seq_len == 47975
     reference_start, reference_stop, kind = layout.segments[2]
     assert kind == "ref_img"
@@ -286,12 +283,6 @@ def test_ref2va_12fps_480p_layout_matches_validated_diffusers_shape():
         range(reference_start, reference_stop)
     )
 
-    assert _apply_physical_time_rope({"layout": layout, "refs": refs})
-    origin = original[reference_start, 0]
-    torch.testing.assert_close(
-        layout.position_ids[reference_start:reference_stop, 0],
-        origin + (original[reference_start:reference_stop, 0] - origin) * 2.0,
-    )
 
 
 def test_ref2va_mixed_image_video_layout_sparsifies_only_reference_video():
