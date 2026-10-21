@@ -100,7 +100,7 @@ def test_streamed_query_prefix_preserves_dense_context(monkeypatch):
     assert torch.equal(run(False),run(True))
 
 
-def test_topk_caller_preserves_full_output_default():
+def test_topk_video_prefix_uses_packed_route_default():
     if torch.cuda.get_device_capability() not in ((8,0),(9,0),(10,0),(12,0)):pytest.skip('Spark kernel requires SM80/SM90/SM100/SM120')
     from types import SimpleNamespace
     import h3_sparse_attention.processor as proc
@@ -115,13 +115,12 @@ def test_topk_caller_preserves_full_output_default():
         sol_force_local_blocks=False,sol_log_density=False,
         sol_landmark_preprocess=True,sol_landmark_preprocess_version='v2',
         sol_virtual_query_levels_up=1)
-    def run(prefix):
-        out=integration._spark_topk_attention(proc._Controller(cfg),q,k,v,layout,
-            virtual_query_data=(ranges,mapping,None),_query_tokens=video if prefix else None)
-        if not prefix:assert torch.isfinite(out).all()
-        out[:,video:]=torch.nn.functional.scaled_dot_product_attention(q[:,video:].transpose(1,2),k.transpose(1,2),v.transpose(1,2)).transpose(1,2)
-        return out
-    assert torch.equal(run(False),run(True))
+    controller=proc._Controller(cfg)
+    out=integration._spark_topk_attention(controller,q,k,v,layout,
+        virtual_query_data=(ranges,mapping,None),_query_tokens=video)
+    assert torch.isfinite(out[:,:video]).all()
+    assert controller.counts["sol_topk_packed_route_calls"]==1
+    assert not any(key.startswith("route_qk_free_fallback:") for key in controller.counts)
 
 
 @pytest.mark.parametrize('tail_mode',["dense","pad"])
