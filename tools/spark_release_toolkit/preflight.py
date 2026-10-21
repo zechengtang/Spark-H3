@@ -161,13 +161,6 @@ def main() -> None:
     verify_packaged_source()
     planner = require_direct_triton_imports(KIT / "ComfyUI-Spark-H3")
     report = {"architecture": ARCH, "cuda_tag": CUDA_TAG, "planner_sha256": planner, **probe_triton()}
-    nvcc = shutil.which("nvcc")
-    report["nvcc"] = {
-        "path": nvcc,
-        "version_output": subprocess.check_output(
-            [nvcc, "--version"], text=True, encoding="utf-8", errors="replace"
-        ).strip() if nvcc else None,
-    }
     if args.require_build_toolkit:
         report["build_toolkit"] = check_build_toolkit()
     args.report.parent.mkdir(parents=True, exist_ok=True)

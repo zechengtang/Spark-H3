@@ -65,6 +65,32 @@ def test_build_toolkit_checks_actual_nvcc_not_driver(tmp_path, monkeypatch):
         preflight.check_build_toolkit()
 
 
+def test_validation_preflight_does_not_probe_nvcc(tmp_path, monkeypatch):
+    config = types.ModuleType("config")
+    for name, value in {
+        "ARCH": "sm120", "CAPABILITY": (12, 0), "CUDA_TAG": "cu130",
+        "KIT": tmp_path, "PLATFORM": "linux-x86_64",
+    }.items():
+        setattr(config, name, value)
+    monkeypatch.setitem(sys.modules, "config", config)
+    spec = importlib.util.spec_from_file_location(
+        "spark_test_validation_preflight", ROOT / "tools" / "spark_release_toolkit" / "preflight.py"
+    )
+    preflight = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preflight)
+    monkeypatch.setattr(preflight, "verify_packaged_source", lambda: None)
+    monkeypatch.setattr(preflight, "require_direct_triton_imports", lambda plugin: {})
+    monkeypatch.setattr(preflight, "probe_triton", lambda: {"jit_probe": "pass"})
+    def reject_compiler_search(name):
+        raise AssertionError(f"validation unexpectedly searched for {name}")
+    monkeypatch.setattr(preflight.shutil, "which", reject_compiler_search)
+    report = tmp_path / "validation-preflight.json"
+    monkeypatch.setattr(sys, "argv", ["preflight.py", "--report", str(report)])
+
+    preflight.main()
+    assert json.loads(report.read_text(encoding="utf-8"))["jit_probe"] == "pass"
+
+
 def test_generated_windows_kits_select_their_own_architecture(tmp_path):
     for arch, capability in (("sm86", [8, 6]), ("sm89", [8, 9]), ("sm120", [12, 0])):
         kit = tmp_path / f"kit-{arch}"
@@ -155,16 +181,6 @@ def test_generated_windows_kits_select_their_own_architecture(tmp_path):
         assert json.loads(warmups.stdout) == {
             "processes": 1, "steps": {"dense": 1, "fidelity": 3, "speed": 1}
         }
-        no_nvcc = subprocess.run(
-            [sys.executable, "-c",
-             "from unittest.mock import patch\n"
-             "import run_lightx2v_three_variants as b\n"
-             "with patch.object(b.shutil, 'which', return_value=None):\n"
-             "    print(b.nvcc_details())\n"],
-            cwd=kit, env=env, capture_output=True, text=True,
-        )
-        assert no_nvcc.returncode == 0, no_nvcc.stderr
-        assert no_nvcc.stdout.strip() == "None"
         runner_tree = ast.parse((kit / "run_lightx2v_three_variants.py").read_text(encoding="utf-8"))
         runner_main = next(
             node for node in runner_tree.body
