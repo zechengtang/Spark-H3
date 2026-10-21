@@ -39,7 +39,7 @@ def wheel_base(wheel_name: str) -> str | None:
     import re
 
     match = re.fullmatch(
-        rf"comfy_kitchen-(0\.2\.3[67])\+{re.escape(LOCAL_VERSION)}-.*-"
+        rf"comfy_kitchen-(0\.2\.(?:36|37|39))\+{re.escape(LOCAL_VERSION)}-.*-"
         rf"(?P<platform>[^-]+)\.whl", wheel_name,
     )
     if match is None:

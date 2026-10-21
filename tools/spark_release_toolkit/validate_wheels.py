@@ -96,9 +96,9 @@ def main() -> None:
         return
 
     wheels = sorted(args.wheelhouse.resolve().glob("comfy_kitchen-*.whl"))
-    expected_bases = {"0.2.36", "0.2.37"}
+    expected_bases = {"0.2.36", "0.2.37", "0.2.39"}
     if not 1 <= len(wheels) <= len(expected_bases):
-        raise RuntimeError(f"expected one or two wheels for {sorted(expected_bases)} in {args.wheelhouse}, found {wheels}")
+        raise RuntimeError(f"expected one to three wheels for {sorted(expected_bases)} in {args.wheelhouse}, found {wheels}")
     results = []
     found_bases = set()
     for wheel in wheels:

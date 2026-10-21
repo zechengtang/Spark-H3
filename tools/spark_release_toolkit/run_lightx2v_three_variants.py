@@ -7,12 +7,14 @@ import ast
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -27,7 +29,7 @@ from config import ARCH, CAPABILITY, ELF_ARCH, NODE, ACTIVATION, RESULTS, WHEEL,
 
 KIT = Path(__file__).resolve().parent
 COMFY = Path(os.environ["COMFYUI_ROOT"]).resolve()
-PYTHON = Path(sys.executable).resolve()
+PYTHON = Path(sys.executable).absolute()
 WORKFLOW = KIT / "lightx2v_workflow.json"
 ROOT = RESULTS
 OUTPUTS = ROOT / "outputs"
@@ -45,9 +47,11 @@ _VERSION_MATCH = re.search(r"comfy_kitchen-(.+?)-cp\d+", SOURCE_WHEEL.name)
 if _VERSION_MATCH is None:
     raise RuntimeError(f"cannot parse comfy-kitchen version from {SOURCE_WHEEL.name}")
 EXPECTED_BACKEND = _VERSION_MATCH.group(1)
+FIDELITY_WARMUP_STEPS = min(STEPS - 1, math.ceil(STEPS * 0.2))
 TIERS = (
     {"name": "dense", "mode": "dense", "warmup_steps": 0, "warmup_evaluations": 1},
-    {"name": "fidelity", "mode": "fidelity", "warmup_steps": 2, "warmup_evaluations": 3},
+    {"name": "fidelity", "mode": "fidelity", "warmup_steps": FIDELITY_WARMUP_STEPS,
+     "warmup_evaluations": FIDELITY_WARMUP_STEPS + 1},
     {"name": "speed", "mode": "speed", "warmup_steps": 0, "warmup_evaluations": 1},
 )
 
@@ -409,6 +413,71 @@ def inspect_video(path: Path) -> dict:
     return result
 
 
+def make_comparison_video(videos: dict[str, Path]) -> dict:
+    """Place the three formal outputs side by side, using Dense audio."""
+    labels = ("Dense", "Fidelity", "Speed")
+    names = ("dense", "fidelity", "speed")
+    filters = [
+        f"[{index}:v]drawtext=text='{label}':fontcolor=white:fontsize=42:"
+        f"box=1:boxcolor=black@0.65:boxborderw=12:x=24:y=24[{name}]"
+        for index, (name, label) in enumerate(zip(names, labels))
+    ]
+    filters.append("[dense][fidelity][speed]hstack=inputs=3[comparison]")
+    destination = OUTPUTS / "dense_fidelity_speed_side_by_side.mp4"
+    # Encode on local temporary storage before copying. Some mounted output
+    # filesystems have yielded a truncated MP4 index during faststart remuxing.
+    with tempfile.TemporaryDirectory(prefix="spark-h3-comparison-") as directory:
+        temporary = Path(directory) / destination.name
+        subprocess.run(
+            [os.environ.get("FFMPEG", "ffmpeg"), "-hide_banner", "-loglevel", "error",
+             "-nostdin", "-y",
+             *(argument for name in names for argument in ("-i", str(videos[name]))),
+             "-filter_complex", ";".join(filters),
+             "-map", "[comparison]", "-map", "0:a:0",
+             "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+             "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
+             str(temporary)],
+            check=True,
+        )
+        media = inspect_comparison_video(temporary)
+        shutil.copy2(temporary, destination)
+    if inspect_comparison_video(destination) != media:
+        raise RuntimeError(f"comparison video changed while copying: {destination}")
+    result = {"path": str(destination), "sha256": sha256(destination), **media}
+    print(f"COMPARISON_DONE {destination}", flush=True)
+    return result
+
+
+def inspect_comparison_video(path: Path) -> dict:
+    raw = command(
+        os.environ.get("FFPROBE", "ffprobe"), "-v", "error", "-count_frames",
+        "-show_entries", "stream=codec_type,width,height,avg_frame_rate,nb_read_frames",
+        "-of", "json", str(path),
+    )
+    streams = json.loads(raw)["streams"]
+    videos = [stream for stream in streams if stream.get("codec_type") == "video"]
+    audio = [stream for stream in streams if stream.get("codec_type") == "audio"]
+    if len(videos) != 1:
+        raise RuntimeError(f"expected one comparison video stream in {path}")
+    video = videos[0]
+    media = {
+        "frames": int(video["nb_read_frames"]),
+        "width": int(video["width"]),
+        "height": int(video["height"]),
+        "fps": video["avg_frame_rate"],
+        "audio_streams": len(audio),
+        "layout": ["dense", "fidelity", "speed"],
+    }
+    expected = {
+        "frames": 345, "width": 4032, "height": 768,
+        "fps": "24/1", "audio_streams": 1,
+        "layout": ["dense", "fidelity", "speed"],
+    }
+    if media != expected:
+        raise RuntimeError(f"unexpected comparison media properties for {path}: {media}")
+    return media
+
+
 def environment(system_stats: dict, backend_state: dict) -> dict:
     wheel = next((ROOT / "wheelhouse").glob(f"comfy_kitchen-{EXPECTED_BACKEND}-*.whl"))
     extension = find_native_extension()
@@ -543,6 +612,13 @@ def protocol(run_token: str) -> dict:
         "run_token": run_token,
         "workflow": str(WORKFLOW),
         "execution_order": ["dense", "fidelity", "speed"],
+        "comfyui_processes": 1,
+        "process_policy": "reuse_one_server_with_short_warmup_per_variant",
+        "comparison_video": {
+            "layout": ["dense", "fidelity", "speed"],
+            "filename": "outputs/dense_fidelity_speed_side_by_side.mp4",
+            "audio_source": "dense",
+        },
         "fixed": {
             "width": 1344, "height": 768, "frames": 345, "fps": 24,
             "steps": STEPS, "lora": LORA_NAME,
@@ -553,13 +629,16 @@ def protocol(run_token: str) -> dict:
         },
         "variants": {
             "dense": {"mode": "dense", "steps": STEPS},
-            "fidelity": {**spark_common, "mode": "fidelity", "warmup_mode": "warmup_steps", "warmup_ratio": 0.2, "warmup_steps": 2, "steps": STEPS},
+            "fidelity": {**spark_common, "mode": "fidelity", "warmup_mode": "warmup_steps", "warmup_ratio": 0.2, "warmup_steps": FIDELITY_WARMUP_STEPS, "steps": STEPS},
             "speed": {**spark_common, "mode": "speed", "warmup_mode": "warmup_steps", "warmup_ratio": 0.0, "warmup_steps": 0, "steps": STEPS},
         },
         "benchmark_warmup": {
             "excluded_from_measurement": True,
             "dense": {"evaluations": 1, "dense_evaluations": 1, "sparse_evaluations": 0},
-            "fidelity": {"evaluations": 3, "dense_evaluations": 2, "sparse_evaluations": 1, "formal_warmup_steps_retained": 2},
+            "fidelity": {"evaluations": FIDELITY_WARMUP_STEPS + 1,
+                         "dense_evaluations": FIDELITY_WARMUP_STEPS,
+                         "sparse_evaluations": 1,
+                         "formal_warmup_steps_retained": FIDELITY_WARMUP_STEPS},
             "speed": {"evaluations": 1, "dense_evaluations": 0, "sparse_evaluations": 1, "formal_warmup_steps_retained": 0},
         },
         "timing": {
@@ -573,6 +652,7 @@ def protocol(run_token: str) -> dict:
 
 def launch_server(env: dict[str, str], log_handle):
     extra = shlex.split(os.environ.get("SPARK_EXTRA_COMFY_ARGS", "--reserve-vram 1.5"))
+    model_paths = COMFY / "extra_model_paths.yaml"
     command_line = [
         str(PYTHON), "main.py", "--listen", "127.0.0.1", "--port", str(PORT),
         "--disable-auto-launch", "--preview-method", "none",
@@ -583,6 +663,7 @@ def launch_server(env: dict[str, str], log_handle):
         "--temp-directory", str(ROOT / "temp"),
         "--input-directory", str(ROOT / "input"),
         "--user-directory", str(ROOT / "user"),
+        *(["--extra-model-paths-config", str(model_paths)] if model_paths.is_file() else []),
         *extra,
     ]
     return subprocess.Popen(
@@ -633,10 +714,13 @@ def main() -> None:
         print(f"SERVER_READY pid={server.pid} port={PORT}", flush=True)
         write_json(ROOT / "environment.json", environment(stats, state))
 
-        for index, tier in enumerate(TIERS):
+        for tier in TIERS:
             name = tier["name"]
             formal = formal_prompt(tier, run_token)
             warmup = warmup_prompt(formal, tier, run_token)
+            if (warmup["124"]["inputs"]["steps"] != tier["warmup_evaluations"]
+                    or warmup["141"]["inputs"]["steps"] != tier["warmup_evaluations"]):
+                raise RuntimeError(f"{name} short warmup step count does not match protocol")
             print(f"WARMUP_START {name}", flush=True)
             warmup_result = run_prompt(
                 server, warmup, f"{name}_benchmark_warmup", log_path,
@@ -713,6 +797,7 @@ def main() -> None:
             record = {
                 "valid": not unexpected,
                 "variant": name,
+                "comfyui_pid": server.pid,
                 "formal_configuration": formal["141"]["inputs"],
                 "warmup": {
                     "excluded_from_measurement": True,
@@ -759,12 +844,6 @@ def main() -> None:
                 f"kernel_calls={kernel_calls} peak_mib={record['formal']['peak_cuda_memory_mib']}",
                 flush=True,
             )
-            if index + 1 < len(TIERS):
-                stop_server(server)
-                server = launch_server(env, log_handle)
-                wait_server(server)
-                print(f"SERVER_RESTARTED pid={server.pid} port={PORT}", flush=True)
-
         full_log = log_path.read_text(encoding="utf-8", errors="replace")
         required_logs = (ACTIVATION,)
         missing_logs = [marker for marker in required_logs if marker not in full_log]
@@ -772,6 +851,10 @@ def main() -> None:
         for marker in ("dense after Spark failure", "[Spark-H3] dense fallback:"):
             if marker in full_log:
                 unexpected_fallbacks.append(marker)
+        comparison = make_comparison_video({
+            name: Path(records[name]["output"]["path"])
+            for name in ("dense", "fidelity", "speed")
+        })
         cuda = state["backends"]["cuda"]
         dense = records["dense"]["formal"]["sampler_seconds"]
         fidelity = records["fidelity"]["formal"]["sampler_seconds"]
@@ -781,13 +864,15 @@ def main() -> None:
             and not unexpected_fallbacks
             and cuda["available"]
             and not cuda["disabled"]
-            and records["fidelity"]["formal"]["kernel_calls"] == (STEPS - 2) * 50
+            and records["fidelity"]["formal"]["kernel_calls"] == (STEPS - FIDELITY_WARMUP_STEPS) * 50
             and records["speed"]["formal"]["kernel_calls"] == STEPS * 50
         )
         summary = {
             "valid": valid,
             "gpu": command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader").strip(),
-            "torch_cuda": "13.0",
+            "torch_cuda": command(str(PYTHON), "-c", "import torch; print(torch.version.cuda)"),
+            "comfyui_pid": server.pid,
+            "process_policy": "reuse_one_server_with_short_warmup_per_variant",
             "architecture": ARCH,
             "backend_version": EXPECTED_BACKEND,
             "steps": STEPS,
@@ -809,13 +894,38 @@ def main() -> None:
             "outputs": {
                 name: records[name]["output"] for name in records
             },
+            "comparison_video": comparison,
         }
         write_json(ROOT / "summary.json", summary)
+        speedup_report = {
+            "valid": valid,
+            "basis": "formal_sampler_seconds",
+            "warmup_excluded": True,
+            "dense_seconds": dense,
+            "fidelity": {
+                "seconds": fidelity,
+                "speedup_vs_dense": dense / fidelity,
+                "time_saved_percent": (1.0 - fidelity / dense) * 100.0,
+            },
+            "speed": {
+                "seconds": speed,
+                "speedup_vs_dense": dense / speed,
+                "time_saved_percent": (1.0 - speed / dense) * 100.0,
+            },
+        }
+        write_json(ROOT / "speedup_report.json", speedup_report)
         protocol_data["status"] = "complete" if valid else "invalid"
         protocol_data["completed_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         write_json(ROOT / "protocol.json", protocol_data)
         if not valid:
             raise RuntimeError(f"benchmark validation failed: {summary}")
+        print(
+            f"SPEEDUP_VS_DENSE fidelity={dense / fidelity:.3f}x "
+            f"speed={dense / speed:.3f}x "
+            f"basis=formal_sampler_seconds warmup_excluded=true "
+            f"report={ROOT / 'speedup_report.json'}",
+            flush=True,
+        )
         print("ALL_VALID", flush=True)
     except BaseException as error:
         write_json(ROOT / "failure.json", {

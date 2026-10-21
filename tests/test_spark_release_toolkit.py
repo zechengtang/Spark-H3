@@ -5,15 +5,64 @@ from __future__ import annotations
 import json
 import ast
 import hashlib
+import importlib.util
 import os
 import subprocess
 import sys
+import types
 import zipfile
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = ROOT / "tools" / "build_spark_release_toolkit.py"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uses a POSIX nvcc stub")
+def test_build_toolkit_checks_actual_nvcc_not_driver(tmp_path, monkeypatch):
+    config = types.ModuleType("config")
+    for name, value in {
+        "ARCH": "sm120", "CAPABILITY": (12, 0), "CUDA_TAG": "cu130",
+        "KIT": tmp_path, "PLATFORM": "linux-x86_64",
+    }.items():
+        setattr(config, name, value)
+    monkeypatch.setitem(sys.modules, "config", config)
+    spec = importlib.util.spec_from_file_location(
+        "spark_test_preflight", ROOT / "tools" / "spark_release_toolkit" / "preflight.py"
+    )
+    preflight = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preflight)
+
+    compiler = tmp_path / "cuda" / "bin" / "nvcc"
+    compiler.parent.mkdir(parents=True)
+    compiler.write_text("#!/bin/sh\necho 'Cuda compilation tools, release 13.0, V13.0.1'\n", encoding="utf-8")
+    compiler.chmod(0o755)
+    torch = types.ModuleType("torch")
+    torch.version = types.SimpleNamespace(cuda="13.0")
+    extension = types.ModuleType("torch.utils.cpp_extension")
+    extension.CUDA_HOME = str(compiler.parent.parent)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "torch.utils", types.ModuleType("torch.utils"))
+    monkeypatch.setitem(sys.modules, "torch.utils.cpp_extension", extension)
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: str(compiler))
+    for variable in ("CUDA_HOME", "CUDA_PATH", "CUDAToolkit_ROOT", "CUDA_TOOLKIT_ROOT_DIR",
+                     "CUDA_ROOT", "CUDACXX", "CMAKE_CUDA_COMPILER", "CUDA_NVCC_EXECUTABLE"):
+        monkeypatch.delenv(variable, raising=False)
+
+    assert preflight.check_build_toolkit()["nvcc_release"] == "13.0"
+    compiler.write_text("#!/bin/sh\necho 'Cuda compilation tools, release 13.2, V13.2.1'\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="requires nvcc 13.0"):
+        preflight.check_build_toolkit()
+    compiler.write_text("#!/bin/sh\necho 'Cuda compilation tools, release 13.0, V13.0.1'\n", encoding="utf-8")
+    monkeypatch.setenv("CUDA_PATH", str(tmp_path / "other-cuda"))
+    with pytest.raises(RuntimeError, match="CUDA_PATH=.* differs"):
+        preflight.check_build_toolkit()
+    monkeypatch.delenv("CUDA_PATH")
+    torch.version.cuda = "13.2"
+    with pytest.raises(RuntimeError, match="requires PyTorch CUDA 13.0"):
+        preflight.check_build_toolkit()
 
 
 def test_generated_windows_kits_select_their_own_architecture(tmp_path):
@@ -27,9 +76,26 @@ def test_generated_windows_kits_select_their_own_architecture(tmp_path):
         identity = json.loads((kit / "release.json").read_text(encoding="utf-8"))
         assert identity["capability"] == capability
         assert identity["architecture"] == arch
+        graph = json.loads((kit / "lightx2v_workflow.json").read_text(encoding="utf-8"))
+        nodes = {node["id"]: node for node in graph["nodes"]}
+        assert nodes[124]["widgets_values_named"]["steps"] == 8
+        assert nodes[141]["widgets_values_named"]["steps"] == 8
+        assert nodes[141]["widgets_values_named"]["warmup_steps"] == 2
+        assert nodes[142]["widgets_values_named"]["lora_name"] == (
+            "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+        )
+        assert nodes[131]["title"] == "VDN selected prompt 06 · 14.4s"
+        assert nodes[131]["widgets_values"][0] == nodes[131]["widgets_values_named"]["prompt"]
+        assert hashlib.sha256(
+            nodes[131]["widgets_values_named"]["prompt"].encode("utf-8")
+        ).hexdigest() == "6adb0fb223bb81430c4c6261dc6cc5b787d7c8eb2955d44d2d9e9d70da950ea3"
         validate_source = (kit / "validate.ps1").read_text(encoding="utf-8")
         assert "'0.40' = '0.2.37'" in validate_source
+        assert "'0.42' = '0.2.39'" in validate_source
+        assert '"0.2.39"' in (kit / "build.ps1").read_text(encoding="utf-8")
         assert "0.38.x/0.39.x/0.40.x" in validate_source
+        assert "ExperimentalCudaRuntime" not in validate_source
+        assert "TestTorchCuda" not in validate_source
         check = subprocess.run(
             [sys.executable, "-c", "from preflight import verify_packaged_source, require_direct_triton_imports; "
              "verify_packaged_source(); require_direct_triton_imports(__import__('pathlib').Path('ComfyUI-Spark-H3'))"],
@@ -65,6 +131,40 @@ def test_generated_windows_kits_select_their_own_architecture(tmp_path):
             assert mode_inputs[tier]["mode"] == tier
             assert "enabled" not in mode_inputs[tier]
             assert set(mode_inputs[tier]) <= accepted_inputs
+        assert mode_inputs["fidelity"]["warmup_steps"] == 2
+        default_prompt = subprocess.run(
+            [sys.executable, "-c",
+             "import json,run_lightx2v_three_variants as b; "
+             "p=b.formal_prompt(b.TIERS[0],'test'); "
+             "print(json.dumps([p['124']['inputs']['steps'],p['142']['inputs']['lora_name']]))"],
+            cwd=kit, env=env, capture_output=True, text=True,
+        )
+        assert default_prompt.returncode == 0, default_prompt.stderr
+        assert json.loads(default_prompt.stdout) == [
+            8, "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+        ]
+        warmups = subprocess.run(
+            [sys.executable, "-c",
+             "import json,run_lightx2v_three_variants as b; "
+             "print(json.dumps({'processes':b.protocol('test')['comfyui_processes'],"
+             "'steps':{t['name']:b.warmup_prompt(b.formal_prompt(t,'test'),t,'test')['124']['inputs']['steps'] "
+             "for t in b.TIERS}}))"],
+            cwd=kit, env=env, capture_output=True, text=True,
+        )
+        assert warmups.returncode == 0, warmups.stderr
+        assert json.loads(warmups.stdout) == {
+            "processes": 1, "steps": {"dense": 1, "fidelity": 3, "speed": 1}
+        }
+        runner_tree = ast.parse((kit / "run_lightx2v_three_variants.py").read_text(encoding="utf-8"))
+        runner_main = next(
+            node for node in runner_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "main"
+        )
+        calls = [node.func.id for node in ast.walk(runner_main)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+        assert calls.count("launch_server") == 1
+        assert calls.count("stop_server") == 1
+        assert not (kit / "run_comfyui_compatibility.py").exists()
         configured = subprocess.run(
             [sys.executable, "-c",
              "import json,run_lightx2v_three_variants as b; "
@@ -110,6 +210,10 @@ def test_generated_linux_kit_uses_linux_wheels_and_entrypoints(tmp_path):
         command = [str(kit / script), "--help"] if script.endswith(".sh") else [sys.executable, str(kit / script), "--help"]
         result = subprocess.run(command, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
+        if script.startswith("validate"):
+            assert "--experimental-cuda-runtime" not in result.stdout
+            assert "--test-torch-cuda" not in result.stdout
+            assert "--mode {audit,full}" in result.stdout
 
     source = "from config import wheel_base, EXTENSION_SUFFIX; " \
              "print(wheel_base('comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-manylinux_2_17_x86_64.whl')); " \

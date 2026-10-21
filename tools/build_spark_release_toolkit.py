@@ -24,7 +24,7 @@ TEMPLATE_FILES = (
     "README.md", "build.py", "validate.py",
     "config.py", "preflight.py",
     "validate_wheels.py", "run_lightx2v_three_variants.py",
-    "run_comfyui_compatibility.py", "lightx2v_workflow.json", "bundle.py",
+    "lightx2v_workflow.json", "bundle.py",
 )
 
 
@@ -63,11 +63,7 @@ def generate(
     for name in (("build.ps1", "validate.ps1") if platform_tag == "windows-x86_64"
                  else ("build.sh", "validate.sh")):
         shutil.copy2(TEMPLATES / name, output / name)
-    # Keep the validation graph aligned with the current public workflow.
-    shutil.copy2(
-        ROOT / "workflows" / "spark_h3_lightx2v_768p_8step_lora_14p4s_t2va.json",
-        output / "lightx2v_workflow.json",
-    )
+    # lightx2v_workflow.json is the maintained eight-step validation graph.
     wheelhouse = output / "wheelhouse"
     wheelhouse.mkdir()
     (wheelhouse / "PUT_PLATFORM_WHEELS_HERE.txt").write_text(
