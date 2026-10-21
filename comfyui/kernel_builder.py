@@ -24,6 +24,10 @@ KITCHEN_TARGETS = {
         "tag": "v0.2.37",
         "revision": "be003b7c23c5b01328657955b8bc5d3f073d868e",
     },
+    "0.2.39": {
+        "tag": "v0.2.39",
+        "revision": "e40e76d9c544b3f74c3b9ea923f7bc3d45a96372",
+    },
 }
 DEFAULT_KITCHEN_BASE = "0.2.37"
 DEFAULT_ARCHITECTURE = "sm120"
@@ -48,10 +52,15 @@ def _run(command: list[str], *, cwd: Path | None = None, env=None) -> None:
     subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
-def _patch_path(node_root: Path) -> Path:
+def _patch_path(node_root: Path, kitchen_base: str) -> Path:
+    patch_name = (
+        "comfy-kitchen-spark-v0.2.39.patch"
+        if kitchen_base == "0.2.39"
+        else "comfy-kitchen-spark-v0.2.36.patch"
+    )
     candidates = (
-        node_root / "patches" / "comfy-kitchen-spark-v0.2.36.patch",
-        node_root / "comfyui" / "patches" / "comfy-kitchen-spark-v0.2.36.patch",
+        node_root / "patches" / patch_name,
+        node_root / "comfyui" / "patches" / patch_name,
     )
     for candidate in candidates:
         if candidate.is_file():
@@ -150,14 +159,26 @@ def prepare_source(
         source_url, str(destination),
     ])
     _run(["git", "checkout", "--quiet", target["revision"]], cwd=destination)
+    local_submodules = os.environ.get("SPARK_COMFY_KITCHEN_SUBMODULE_ROOT")
+    submodule_command = ["git"]
+    if local_submodules:
+        for name in ("cutlass", "flash-attention"):
+            local_path = Path(local_submodules) / name
+            if not local_path.is_dir():
+                raise FileNotFoundError(f"local comfy-kitchen submodule is missing: {local_path}")
+            _run(
+                ["git", "config", f"submodule.third_party/{name}.url", str(local_path)],
+                cwd=destination,
+            )
+        submodule_command += ["-c", "protocol.file.allow=always"]
     _run(
-        [
-            "git", "submodule", "update", "--init", "--depth", "1", "--quiet",
+        submodule_command + [
+            "submodule", "update", "--init", "--depth", "1", "--quiet",
             "third_party/cutlass", "third_party/flash-attention",
         ],
         cwd=destination,
     )
-    patch = _patch_path(node_root.resolve())
+    patch = _patch_path(node_root.resolve(), kitchen_base)
     _run(["git", "apply", "--check", str(patch)], cwd=destination)
     _run(["git", "apply", str(patch)], cwd=destination)
     _set_local_version(destination, kitchen_base, architecture, cuda_tag)
@@ -195,6 +216,7 @@ def build_wheel(
         )
         env = os.environ.copy()
         env["COMFY_CUDA_ARCHS"] = expected_cuda_archs
+        env.setdefault("COMFY_BUILD_JOBS", "8")
         _run(
             [python, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(output_dir), "."],
             cwd=source,
@@ -239,6 +261,7 @@ def install_from_source(
         )
         env = os.environ.copy()
         env["COMFY_CUDA_ARCHS"] = expected_cuda_archs
+        env.setdefault("COMFY_BUILD_JOBS", "8")
         _run(
             [python, "-m", "pip", "install", "--force-reinstall", "--no-deps", str(source)],
             env=env,
