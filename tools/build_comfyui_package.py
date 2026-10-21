@@ -11,7 +11,8 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_NAME = "ComfyUI-Spark-H3"
 PACKAGE_BUILD_IDENTITY = "spark_h3_build.json"
-DEFAULT_VERSION = "0.1.4"
+DEFAULT_VERSION = "0.1.5"
+DEFAULT_BACKEND_RELEASE_TAG = "comfyui-v0.1.5"
 DEFAULT_PUBLISHER_ID = "zechengtang"
 RELEASE_CUDA_TAGS = ("cu130",)
 EXPERIMENTAL_CUDA_TAGS = ("cu128", "cu129")
@@ -102,6 +103,9 @@ GENERATED_FILES = {
     ),
     "comfyui/patches/comfy-kitchen-spark-v0.2.36.patch": (
         "patches/comfy-kitchen-spark-v0.2.36.patch"
+    ),
+    "comfyui/patches/comfy-kitchen-spark-v0.2.39.patch": (
+        "patches/comfy-kitchen-spark-v0.2.39.patch"
     ),
 }
 
@@ -241,9 +245,9 @@ def assemble_registry(
     *,
     version: str,
     publisher_id: str = DEFAULT_PUBLISHER_ID,
-    kernel_wheels: tuple[Path, ...],
+    backend_release_tag: str = DEFAULT_BACKEND_RELEASE_TAG,
 ) -> Path:
-    """Create one self-contained Registry package for every release target."""
+    """Create one Registry package that routes backend installation to releases."""
 
     target = assemble(
         output_dir,
@@ -255,8 +259,7 @@ def assemble_registry(
     )
 
     # Registry publishes one archive per node version. Keep every architecture
-    # registered and bundle every platform wheel so installation stays within
-    # the Registry download.
+    # registered; install.py selects the matching Kitchen wheel from releases.
     shutil.copy2(REPOSITORY_ROOT / "__init__.py", target / "__init__.py")
     metadata_path = target / "pyproject.toml"
     metadata = metadata_path.read_text(encoding="utf-8")
@@ -264,32 +267,6 @@ def assemble_registry(
         metadata.replace('requires-python = ">=3.10"', 'requires-python = ">=3.12"'),
         encoding="utf-8",
     )
-
-    wheelhouse = target / "wheelhouse"
-    wheelhouse.mkdir()
-    coverage: dict[tuple[str, str, str], Path] = {}
-    for wheel in kernel_wheels:
-        identity = _registry_wheel_identity(wheel)
-        if identity in coverage:
-            raise ValueError(
-                f"duplicate Registry wheel target {identity}: "
-                f"{coverage[identity].name}, {wheel.name}"
-            )
-        coverage[identity] = wheel
-        shutil.copy2(wheel, wheelhouse / wheel.name)
-    expected_coverage = {
-        (base, architecture, platform_tag)
-        for base in ("0.2.36", "0.2.37")
-        for architecture in PACKAGE_SPARK_NODES
-        for platform_tag in PACKAGE_PLATFORMS
-    }
-    if set(coverage) != expected_coverage:
-        missing = sorted(expected_coverage - set(coverage))
-        unexpected = sorted(set(coverage) - expected_coverage)
-        raise ValueError(
-            f"Registry wheel coverage mismatch: missing={missing!r}, "
-            f"unexpected={unexpected!r}"
-        )
 
     workflows = target / "workflows"
     shutil.rmtree(workflows)
@@ -318,7 +295,9 @@ def assemble_registry(
                 "architectures": sorted(PACKAGE_SPARK_NODES),
                 "cuda_tag": "cu130",
                 "platforms": sorted(PACKAGE_PLATFORMS),
-                "kernel_wheels": sorted(wheel.name for wheel in kernel_wheels),
+                "kernel_wheels": [],
+                "backend_source": "github-release",
+                "backend_release_tag": backend_release_tag,
             },
             indent=2,
             sort_keys=True,
@@ -327,46 +306,6 @@ def assemble_registry(
         encoding="utf-8",
     )
     return target
-
-
-def _registry_wheel_identity(wheel: Path) -> tuple[str, str, str]:
-    if wheel.suffix != ".whl" or not wheel.is_file():
-        raise ValueError(f"Registry kernel wheel does not exist: {wheel}")
-    try:
-        from packaging.utils import parse_wheel_filename
-    except ImportError:
-        from pip._vendor.packaging.utils import parse_wheel_filename
-    try:
-        distribution, version, _, tags = parse_wheel_filename(wheel.name)
-    except ValueError as error:
-        raise ValueError(f"invalid Registry wheel filename: {wheel.name}") from error
-    if distribution != "comfy-kitchen" or version.base_version not in {
-        "0.2.36",
-        "0.2.37",
-    }:
-        raise ValueError(f"unsupported Registry wheel: {wheel.name}")
-    architecture = next(
-        (
-            name
-            for name, prefix in BACKEND_LOCAL_VERSION_PREFIXES.items()
-            if version.local == f"{prefix}.cu130.1"
-        ),
-        None,
-    )
-    if architecture is None:
-        raise ValueError(f"unsupported Registry wheel identity: {wheel.name}")
-    wheel_platforms = {tag.platform for tag in tags}
-    platforms = [
-        platform_tag
-        for platform_tag in PACKAGE_PLATFORMS
-        if any(
-            _wheel_platform_matches(wheel_platform, platform_tag)
-            for wheel_platform in wheel_platforms
-        )
-    ]
-    if len(platforms) != 1:
-        raise ValueError(f"unsupported Registry wheel platform: {wheel.name}")
-    return version.base_version, architecture, platforms[0]
 
 
 def make_registry_zip(package_dir: Path, output_dir: Path, *, version: str) -> Path:
@@ -552,6 +491,11 @@ def main(argv: list[str] | None = None) -> int:
         help="build one cross-platform Comfy Registry package",
     )
     parser.add_argument(
+        "--backend-release-tag",
+        default=DEFAULT_BACKEND_RELEASE_TAG,
+        help="GitHub Release containing the Kitchen wheels used by the Registry package",
+    )
+    parser.add_argument(
         "--experimental-cuda",
         action="store_true",
         help="allow a diagnostic CUDA target excluded from the release plan",
@@ -569,14 +513,9 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="bundle a prebuilt backend wheel; may be repeated",
     )
-    parser.add_argument(
-        "--kernel-wheel-dir",
-        type=Path,
-        help="directory containing all 12 wheels for a Registry package",
-    )
     args = parser.parse_args(argv)
-    if not args.registry and args.kernel_wheel_dir is not None:
-        parser.error("--kernel-wheel-dir is only valid with --registry")
+    if args.registry and args.kernel_wheel:
+        parser.error("Registry packages route to release wheels; omit --kernel-wheel")
     if not args.registry and args.platform_tag is None:
         parser.error("--platform is required unless --registry is used")
     try:
@@ -590,16 +529,11 @@ def main(argv: list[str] | None = None) -> int:
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     if args.registry:
-        registry_wheels = [path.resolve() for path in args.kernel_wheel]
-        if args.kernel_wheel_dir is not None:
-            registry_wheels.extend(
-                sorted(args.kernel_wheel_dir.resolve().glob("*.whl"))
-            )
         package = assemble_registry(
             output,
             version=args.version,
             publisher_id=args.publisher_id,
-            kernel_wheels=tuple(registry_wheels),
+            backend_release_tag=args.backend_release_tag,
         )
     else:
         package = assemble(

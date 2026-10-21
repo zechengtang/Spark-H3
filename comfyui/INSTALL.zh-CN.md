@@ -1,17 +1,27 @@
 # Spark-H3 ComfyUI 中文安装指南
 
-本指南适用于 Spark-H3 v0.1.4 的 ComfyUI 独立安装包。普通用户按照“快速安装”操作即可；手动指定 wheel、源码构建和 CUDA 12.8 实验通道集中在文末的“高级用法”。
+本指南适用于 Spark-H3 ComfyUI 独立安装包。普通用户按照“快速安装”操作即可；手动指定 wheel、源码构建和实验 CUDA 通道集中在文末的“高级用法”。
 
 ## 支持范围
 
-- ComfyUI 0.38.x、0.39.x 或 0.40.x，且已包含原生 MiniMax-H3 支持。
+- ComfyUI 0.38.x、0.39.x、0.40.x 或 0.42.x，且已包含原生 MiniMax-H3 支持。
 - Linux 或 Windows x86_64。
-- Python 3.12+、PyTorch CUDA 13.0，以及支持 CUDA BF16 的 NVIDIA GPU。
+- Python 3.12+、支持 CUDA 的 PyTorch（`torch.version.cuda >= 13.0`），以及支持 CUDA BF16 的 NVIDIA GPU。安装器不检查 PyTorch 版本号。
 - SM86：GeForce RTX 30 系。
 - SM89：GeForce RTX 40 系。
 - SM120：GeForce RTX 50 系及 RTX PRO 5000/6000 Blackwell。
 
-安装包**不包含** ComfyUI、MiniMax-H3 模型权重、LoRA 或第三方工作流节点。CUDA 12.8 不属于 v0.1.4 正式发布范围。
+安装包**不包含** ComfyUI、MiniMax-H3 模型权重、LoRA 或第三方工作流节点。CUDA 12.8 不属于 v0.1.5 正式发布范围。
+
+0.1.5 安装包内含对应平台和架构的 `comfy-kitchen 0.2.36`、`0.2.37`、`0.2.39`
+wheel。安装器按当前 ComfyUI 版本选择对应 wheel。选择安装包时以 ZIP 内的
+`spark_h3_build.json` 和 `wheelhouse/` 为准。
+
+通过 Comfy Registry 安装时，Registry 包不附带 wheel。ComfyUI Manager 会执行
+包内的 `install.py`，由安装器依据当前 comfy-kitchen 版本、系统、GPU 架构和
+CUDA 版本，从 `spark_h3_build.json` 指定的 GitHub Release 平台 ZIP 中提取
+匹配的 Kitchen wheel。此方式安装时需要访问 GitHub Releases；离线环境可手动
+运行 `install.py --wheel /path/to/匹配的.whl`。
 
 ## 快速安装
 
@@ -19,19 +29,19 @@
 
 请同时按照操作系统和 GPU 架构选择安装包：
 
-| GPU | 架构 | Linux 安装包 | Windows 安装包 |
+| GPU | 架构 | 平台 | 0.1.5 安装包 |
 | --- | --- | --- | --- |
-| GeForce RTX 30 系 | SM86 | `ComfyUI-Spark-H3-0.1.4-linux-x86_64-sm86-cu130.zip` | `ComfyUI-Spark-H3-0.1.4-windows-x86_64-sm86-cu130.zip` |
-| GeForce RTX 40 系 | SM89 | `ComfyUI-Spark-H3-0.1.4-linux-x86_64-sm89-cu130.zip` | `ComfyUI-Spark-H3-0.1.4-windows-x86_64-sm89-cu130.zip` |
-| GeForce RTX 50 系、RTX PRO 5000/6000 Blackwell | SM120 | `ComfyUI-Spark-H3-0.1.4-linux-x86_64-sm120-cu130.zip` | `ComfyUI-Spark-H3-0.1.4-windows-x86_64-sm120-cu130.zip` |
+| GeForce RTX 40 系 | SM89 | Windows | `ComfyUI-Spark-H3-0.1.5-windows-x86_64-sm89-cu130.zip` |
+| GeForce RTX 50 系、RTX PRO 5000/6000 Blackwell | SM120 | Windows | `ComfyUI-Spark-H3-0.1.5-windows-x86_64-sm120-cu130.zip` |
+| GeForce RTX 50 系、RTX PRO 5000/6000 Blackwell | SM120 | Linux | `ComfyUI-Spark-H3-0.1.5-linux-x86_64-sm120-cu130.zip` |
 
-文件名中的以下部分必须与本机环境一致：
+正式发布安装时，文件名中的以下部分必须与本机环境一致：
 
 - `linux` 或 `windows`：操作系统。
 - `sm86`、`sm89` 或 `sm120`：GPU 架构。
-- `cu130`：PyTorch CUDA 13.0。
+- `cu130`：wheel 以 CUDA 13.0 构建。
 
-不同操作系统、GPU 架构或 CUDA 版本的 ZIP 和后端 wheel 不能混用。
+不同操作系统或 GPU 架构的 ZIP 和后端 wheel 不能混用。安装器只检查 PyTorch CUDA ≥ 13.0，不限制 PyTorch 版本号；较新 CUDA 版本可直接尝试包内 cu130 wheel，无需额外参数。能安装不代表该 PyTorch/CUDA 组合已完成完整工作流验证。
 
 ### 2. 关闭 ComfyUI 并解压
 
@@ -108,6 +118,9 @@ custom_nodes/ComfyUI-Spark-H3/ComfyUI-Spark-H3/install.py
 | --- | --- |
 | ComfyUI 0.38.x | `0.2.36+spark.h3.<架构>.cu130.1` |
 | ComfyUI 0.39.x 或 0.40.x | `0.2.37+spark.h3.<架构>.cu130.1` |
+| ComfyUI 0.42.x | `0.2.39+spark.h3.<架构>.cu130.1` |
+
+每份安装包均内置上表三个后端版本的对应 wheel。
 
 使用 W6A8 权重时，建议使用 ComfyUI 0.39.2 或更新的 0.40.x。两者配套的 comfy-kitchen 0.2.37 已适配 W6A8。
 
@@ -140,7 +153,7 @@ custom_nodes/ComfyUI-Spark-H3/ComfyUI-Spark-H3/install.py
 - `mode=dense`：完全绕过 Spark，用于排错或建立性能对照。
 - `mode=custom`：保留手动设置的 warmup 参数。
 
-`kitchen` 和 `sage` dense 后端在 v0.1.4 中仍属于实验选项，尚未完成完整的端到端质量回归测试。`sage` 还需要单独安装 `sageattention`。
+`kitchen` 和 `sage` dense 后端仍属于实验选项，尚未完成完整的端到端质量回归测试。`sage` 还需要单独安装 `sageattention`。
 
 双采或两阶段工作流的高分辨率第二阶段建议使用 `mode=speed`，关闭 dense warmup。节点中的一键切换提示只用于界面交互，不会写入工作流 JSON。
 
@@ -191,7 +204,7 @@ Windows 便携版可以运行：
 - ZIP 是否与 Linux 或 Windows 匹配。
 - `sm86`、`sm89` 或 `sm120` 是否与 GPU 匹配。
 - 文件名是否包含 `cu130`。
-- ComfyUI 是否为 0.38.x、0.39.x 或 0.40.x。
+- ComfyUI 是否为 0.38.x、0.39.x、0.40.x 或 0.42.x。
 - 安装命令是否使用了 ComfyUI 自己的 Python。
 
 安装器会先检查 ZIP 内的 wheel，再查找匹配的 Release wheel。若不希望在找不到 wheel 时自动尝试源码构建，可添加：
@@ -204,6 +217,8 @@ Windows 便携版可以运行：
 Windows 用户请把前面的 Python 路径替换为当前 ComfyUI 实际使用的解释器。
 
 ### 运行时报错或结果异常
+
+若仅 `fidelity` 模式出现显存不足（OOM），而相同工作流的 `dense` 和 `speed` 模式均可运行，可尝试在**启动 ComfyUI 时**加入 `--disable-cuda-malloc`，作为临时规避办法；这是 ComfyUI 启动参数，不是 Spark 节点参数。
 
 1. 将 `mode` 切换为 `dense`，确认原始工作流能够运行。
 2. 恢复 `mode=fidelity`、`dense_backend=inherit` 和默认 Top-K 设置。
@@ -246,7 +261,17 @@ Windows 用户请把前面的 Python 路径替换为当前 ComfyUI 实际使用�
   --wheel /path/to/comfy_kitchen-0.2.37+spark.h3.sm89.cu130.1-<wheel-tag>.whl
 ```
 
-提供的 wheel 必须与操作系统、Python wheel tag、GPU 架构和 CUDA 标签一致。
+提供的 wheel 必须与操作系统、Python wheel tag、GPU 架构和 comfy-kitchen 版本一致。PyTorch CUDA 高于 13.0 时，安装器可直接选用 cu130 wheel。
+
+### 在较新的 PyTorch 或 CUDA 环境中试用 cu130 wheel
+
+安装包内已有对应架构和 comfy-kitchen 版本的 cu130 wheel 时，可以运行：
+
+```bash
+/path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py
+```
+
+也可同时传入 `--wheel /path/to/comfy_kitchen-...cu130...whl`。安装器会核对 wheel 的操作系统、Python 标签、GPU 架构和 comfy-kitchen 版本，并在安装后检查原生 `spark_attn` 是否可导入；不会修改 PyTorch。若包内没有匹配 wheel，安装器会尝试查找对应 Release wheel。安装成功只表示基本加载检查通过，完整工作流和性能仍需在该环境实测。
 
 ### CUDA 13.0 源码构建
 
@@ -267,7 +292,7 @@ CUDA 13.0 源码构建目标为：SM86 使用 `86`，SM89 使用 `89`，SM120 �
 
 ### CUDA 12.8 实验通道
 
-CUDA 12.8 暂不作为 v0.1.4 正式安装包发布。开发者可以显式提供本地 CU128 wheel：
+CUDA 12.8 暂不作为正式安装包发布。开发者可以显式提供本地 CU128 wheel：
 
 ```bash
 /path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py \

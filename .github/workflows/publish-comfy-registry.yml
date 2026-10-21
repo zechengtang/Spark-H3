@@ -2,6 +2,20 @@ name: Publish Comfy Registry package
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: New Registry version (must match the intended release)
+        required: true
+        type: string
+      changelog:
+        description: Changelog shown in Comfy Registry
+        required: true
+        type: string
+      backend_release_tag:
+        description: GitHub Release containing all six platform packages and Kitchen wheels
+        required: true
+        default: comfyui-v0.1.5
+        type: string
 
 permissions:
   contents: read
@@ -10,6 +24,9 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      PACKAGE_VERSION: ${{ inputs.version }}
+      BACKEND_RELEASE_TAG: ${{ inputs.backend_release_tag }}
     steps:
       - name: Check out the release commit
         uses: actions/checkout@v4
@@ -30,85 +47,58 @@ jobs:
             h3_sparse_attention/landmark_v2_cosine_triton.py \
             h3_sparse_attention/reblock_hierarchy.py
 
-      - name: Download v0.1.4 platform packages and checksums
+      - name: Confirm backend release archives exist
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p "$RUNNER_TEMP/platform-packages"
-          gh release download comfyui-v0.1.4 \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern 'ComfyUI-Spark-H3-0.1.4-*.zip' \
-            --pattern SHA256SUMS.txt \
-            --dir "$RUNNER_TEMP/platform-packages"
-          test "$(find "$RUNNER_TEMP/platform-packages" -maxdepth 1 -name '*.zip' | wc -l)" -eq 6
-          cd "$RUNNER_TEMP/platform-packages"
-          sha256sum --check SHA256SUMS.txt
+          gh release view "$BACKEND_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' > "$RUNNER_TEMP/backend-assets.txt"
+          for platform in linux-x86_64 windows-x86_64; do
+            for architecture in sm86 sm89 sm120; do
+              grep -E -- "-${platform}-${architecture}-cu130\\.zip$" \
+                "$RUNNER_TEMP/backend-assets.txt"
+            done
+          done
 
-      - name: Collect all release wheels
+      - name: Build Registry package
         run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import zipfile
+          python tools/build_comfyui_package.py \
+            --registry \
+            --version "$PACKAGE_VERSION" \
+            --backend-release-tag "$BACKEND_RELEASE_TAG" \
+            --publisher-id zechengtang \
+            --output-dir dist/registry
 
-          source = Path(os.environ["RUNNER_TEMP"]) / "platform-packages"
-          target = Path(os.environ["RUNNER_TEMP"]) / "registry-wheels"
-          target.mkdir()
-          for archive_path in sorted(source.glob("*.zip")):
-              with zipfile.ZipFile(archive_path) as archive:
-                  if archive.testzip() is not None:
-                      raise RuntimeError(f"corrupt ZIP: {archive_path}")
-                  for name in archive.namelist():
-                      if not name.endswith(".whl"):
-                          continue
-                      destination = target / Path(name).name
-                      if destination.exists():
-                          raise RuntimeError(f"duplicate wheel {destination.name}")
-                      destination.write_bytes(archive.read(name))
-          wheels = sorted(target.glob("*.whl"))
-          if len(wheels) != 12:
-              raise RuntimeError(f"expected 12 wheels, found {len(wheels)}")
-          PY
-
-      - name: Build the cross-platform Registry package
-        run: >-
-          python tools/build_comfyui_package.py
-          --registry
-          --version 0.1.6
-          --publisher-id zechengtang
-          --output-dir dist/registry
-          --kernel-wheel-dir "$RUNNER_TEMP/registry-wheels"
-
-      - name: Verify generated Registry package
+      - name: Verify Registry package
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
           import tomllib
+          import zipfile
 
+          version = os.environ["PACKAGE_VERSION"]
           package = Path("dist/registry/ComfyUI-Spark-H3")
           metadata = tomllib.loads((package / "pyproject.toml").read_text())
           identity = json.loads((package / "spark_h3_build.json").read_text())
-
           assert metadata["project"]["name"] == "comfyui-spark-h3"
-          assert metadata["project"]["version"] == "0.1.6"
-          assert metadata["project"]["requires-python"] == ">=3.12"
+          assert metadata["project"]["version"] == version
           assert metadata["tool"]["comfy"]["PublisherId"] == "zechengtang"
           assert identity["distribution"] == "registry"
+          assert identity["backend_source"] == "github-release"
+          assert identity["backend_release_tag"] == os.environ["BACKEND_RELEASE_TAG"]
           assert identity["architectures"] == ["sm120", "sm86", "sm89"]
           assert identity["platforms"] == ["linux-x86_64", "windows-x86_64"]
-          assert len(list((package / "wheelhouse").glob("*.whl"))) == 12
+          assert identity["kernel_wheels"] == []
+          assert not (package / "wheelhouse").exists()
           assert len(list((package / "workflows").glob("*.json"))) == 15
-          PY
-          python - <<'PY'
-          from pathlib import Path
-          import zipfile
-          archive = Path("dist/registry/ComfyUI-Spark-H3-0.1.6-registry.zip")
+          archive = Path(f"dist/registry/ComfyUI-Spark-H3-{version}-registry.zip")
           with zipfile.ZipFile(archive) as bundle:
               assert bundle.testzip() is None
               assert "pyproject.toml" in bundle.namelist()
           PY
-          sha256sum dist/registry/ComfyUI-Spark-H3-0.1.6-registry.zip
+          sha256sum "dist/registry/ComfyUI-Spark-H3-${PACKAGE_VERSION}-registry.zip"
 
       - name: Prepare tracked package contents for comfy-cli
         working-directory: dist/registry/ComfyUI-Spark-H3
@@ -117,7 +107,7 @@ jobs:
           git config user.name "Spark-H3 Registry Publisher"
           git config user.email "noreply@users.noreply.github.com"
           git add --force .
-          git commit -m "Prepare Comfy Registry package 0.1.6"
+          git commit -m "Prepare Comfy Registry package ${PACKAGE_VERSION}"
 
       - name: Validate Registry metadata and contents
         working-directory: dist/registry/ComfyUI-Spark-H3
@@ -126,31 +116,29 @@ jobs:
       - name: Save production candidate archive
         uses: actions/upload-artifact@v4
         with:
-          name: spark-h3-registry-0.1.6-candidate
-          path: dist/registry/ComfyUI-Spark-H3-0.1.6-registry.zip
+          name: spark-h3-registry-${{ inputs.version }}-candidate
+          path: dist/registry/ComfyUI-Spark-H3-${{ inputs.version }}-registry.zip
           retention-days: 14
 
-      - name: Confirm Registry version 0.1.6 is unused
+      - name: Confirm Registry version is unused
         run: |
           python - <<'PY'
           import json
+          import os
           import urllib.request
           url = "https://api.comfy.org/nodes/comfyui-spark-h3/versions"
           with urllib.request.urlopen(url, timeout=30) as response:
               versions = json.load(response)
-          if any(item["version"] == "0.1.6" for item in versions):
-              raise RuntimeError("Registry version 0.1.6 already exists")
+          version = os.environ["PACKAGE_VERSION"]
+          if any(item.get("version") == version for item in versions):
+              raise RuntimeError(f"Registry version {version} already exists")
           PY
 
-      - name: Publish Registry version 0.1.6
+      - name: Publish Registry package
         working-directory: dist/registry/ComfyUI-Spark-H3
         env:
           REGISTRY_ACCESS_TOKEN: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
-          COMFY_NODE_CHANGELOG: >-
-            Registry package for Spark-H3 GitHub Release comfyui-v0.1.4. Adds
-            ComfyUI 0.40.x support, sparse_scope target-video/joint-video for
-            Ref2VA, in-node Ref2VA guidance, and configurable producer_chunk.
-            Existing workflows retain their default behavior.
+          COMFY_NODE_CHANGELOG: ${{ inputs.changelog }}
         run: comfy node publish --token "$REGISTRY_ACCESS_TOKEN"
 
       - name: Check Registry version record after publish attempt
@@ -158,10 +146,11 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           import urllib.request
           url = "https://api.comfy.org/nodes/comfyui-spark-h3/versions"
           with urllib.request.urlopen(url, timeout=30) as response:
               versions = json.load(response)
-          matching = [item for item in versions if item.get("version") == "0.1.6"]
+          matching = [item for item in versions if item.get("version") == os.environ["PACKAGE_VERSION"]]
           print(json.dumps(matching, indent=2))
           PY
