@@ -4,7 +4,6 @@ from pathlib import Path
 import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
-from unittest.mock import patch
 
 import torch
 import pytest
@@ -23,7 +22,6 @@ from comfyui_nodes import (
     _RunState,
     _dense_attention_override,
     _dense_block_args,
-    _enable_cu128_cuda_backend,
     _make_spark_layout,
     _make_kj_low_vram_attention_override,
     _make_kj_low_vram_spark_block_patch,
@@ -331,58 +329,6 @@ def test_run_state_uses_comfy_model_evaluation_count_and_resets():
     assert state.controller.evaluation_index == 2 and not state.is_warmup
     state.begin_evaluation({"sigmas": torch.tensor([1.0])})
     assert state.controller.evaluation_index == 0
-
-
-def _fake_comfy_kitchen_import(ck, cuda):
-    """Supply the CU128 probe's imports without replacing global modules."""
-    backends = ModuleType("comfy_kitchen.backends")
-    backends.cuda = cuda
-    original_import = __import__
-
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "comfy_kitchen":
-            return ck
-        if name == "comfy_kitchen.backends":
-            return backends
-        return original_import(name, globals, locals, fromlist, level)
-
-    return fake_import
-
-
-def test_cu128_enables_only_verified_spark_cuda_backend(monkeypatch):
-    ck = ModuleType("comfy_kitchen")
-    state = {"disabled": True}
-    ck.enable_backend = lambda name: state.update(disabled=False)
-    ck.list_backends = lambda: {
-        "cuda": {"available": True, "disabled": state["disabled"]}
-    }
-    cuda = ModuleType("comfy_kitchen.backends.cuda")
-    cuda._C = SimpleNamespace(spark_attn=lambda: None)
-    monkeypatch.setattr(torch.version, "cuda", "12.8")
-    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *_args: (12, 0))
-    monkeypatch.setattr(
-        "comfyui_nodes.metadata.version",
-        lambda _name: "0.2.37+spark.h3.sm120.cu128.1",
-    )
-
-    with patch("builtins.__import__", _fake_comfy_kitchen_import(ck, cuda)):
-        assert _enable_cu128_cuda_backend((12, 0))
-    assert not state["disabled"]
-
-
-def test_cu128_rejects_ordinary_comfy_kitchen(monkeypatch):
-    ck = ModuleType("comfy_kitchen")
-    ck.enable_backend = lambda _name: None
-    ck.list_backends = lambda: {"cuda": {"available": True, "disabled": False}}
-    cuda = ModuleType("comfy_kitchen.backends.cuda")
-    cuda._C = SimpleNamespace(spark_attn=lambda: None)
-    monkeypatch.setattr(torch.version, "cuda", "12.8")
-    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *_args: (12, 0))
-    monkeypatch.setattr("comfyui_nodes.metadata.version", lambda _name: "0.2.37")
-
-    with patch("builtins.__import__", _fake_comfy_kitchen_import(ck, cuda)):
-        with pytest.raises(RuntimeError, match="not a Spark-H3 SM120/CU128 backend"):
-            _enable_cu128_cuda_backend((12, 0))
 
 
 def test_spark_warmup_steps_mode_and_limits():
