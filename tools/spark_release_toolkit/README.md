@@ -26,7 +26,6 @@ full video validation and comparison). Then, from the generated kit:
 
 ```bash
 ./build.sh --python /path/to/comfyui/bin/python
-./validate.sh --python /path/to/comfyui/bin/python --mode audit
 ./validate.sh --python /path/to/comfyui/bin/python --comfyui-root /path/to/ComfyUI --mode full
 /path/to/comfyui/bin/python ./bundle.py
 ```
@@ -42,7 +41,6 @@ CUDA 13.0 Toolkit and Git:
 
 ```powershell
 ./build.ps1 -Python C:\path\to\python.exe
-./validate.ps1 -ComfyUIRoot C:\path\to\ComfyUI -Python C:\path\to\python.exe -Mode audit
 ./validate.ps1 -ComfyUIRoot C:\path\to\ComfyUI -Python C:\path\to\python.exe -Mode full
 & C:\path\to\python.exe ./bundle.py
 ```
@@ -65,6 +63,11 @@ Validation requires `torch.version.cuda == 13.0`, torch 2.12.x, and Triton
 Build preflight requires the CUDA Toolkit used by PyTorch, `nvcc` on `PATH`,
 and the wheel tag to agree on CUDA 13.0, then pins that Toolkit for compilation.
 Use `full` mode to check workflow behavior; `audit` only checks the native wheel.
+`full` includes the wheel audit, and `bundle.py` uses its report by default.
+Run `audit` separately only when a wheel-only check is sufficient; `bundle.py`
+also accepts its report if no `full` report exists. Pass `--audit-report` when
+using a custom results directory. Validating an existing wheel does not require
+`nvcc`, although `cuobjdump` remains necessary for the cubin audit.
 
 The full workflow expects these model files under ComfyUI `models/`:
 `diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors`,

@@ -71,9 +71,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=KIT / "release" /
                         f"ComfyUI-Spark-H3-{PLATFORM.split('-')[0]}-{ARCH}-{CUDA_TAG}.zip")
-    parser.add_argument("--audit-report", type=Path, default=KIT / "results-audit" / "wheel-validation.json")
+    parser.add_argument("--audit-report", type=Path, help="wheel audit report (defaults to results-full, then results-audit)")
     args = parser.parse_args()
-    print(json.dumps(bundle(args.output, args.audit_report), indent=2))
+    audit_report = args.audit_report
+    if audit_report is None:
+        full_report = KIT / "results-full" / "wheel-validation.json"
+        audit_report = full_report if full_report.is_file() else KIT / "results-audit" / "wheel-validation.json"
+    print(json.dumps(bundle(args.output, audit_report), indent=2))
 
 
 if __name__ == "__main__":

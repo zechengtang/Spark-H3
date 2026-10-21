@@ -478,6 +478,11 @@ def inspect_comparison_video(path: Path) -> dict:
     return media
 
 
+def nvcc_details() -> dict | None:
+    compiler = shutil.which("nvcc")
+    return {"path": compiler, "version_output": command(compiler, "--version")} if compiler else None
+
+
 def environment(system_stats: dict, backend_state: dict) -> dict:
     wheel = next((ROOT / "wheelhouse").glob(f"comfy_kitchen-{EXPECTED_BACKEND}-*.whl"))
     extension = find_native_extension()
@@ -498,7 +503,7 @@ def environment(system_stats: dict, backend_state: dict) -> dict:
         "torch_capability": json.loads(command(
             str(PYTHON), "-c", "import torch,json; print(json.dumps(torch.cuda.get_device_capability()))"
         )),
-        "nvcc": command("nvcc", "--version"),
+        "nvcc": nvcc_details(),
         "comfyui": {
             "path": str(COMFY),
             "version": (COMFY / "comfyui_version.py").read_text(encoding="utf-8").split('"')[1],

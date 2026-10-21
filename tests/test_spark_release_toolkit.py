@@ -155,6 +155,16 @@ def test_generated_windows_kits_select_their_own_architecture(tmp_path):
         assert json.loads(warmups.stdout) == {
             "processes": 1, "steps": {"dense": 1, "fidelity": 3, "speed": 1}
         }
+        no_nvcc = subprocess.run(
+            [sys.executable, "-c",
+             "from unittest.mock import patch\n"
+             "import run_lightx2v_three_variants as b\n"
+             "with patch.object(b.shutil, 'which', return_value=None):\n"
+             "    print(b.nvcc_details())\n"],
+            cwd=kit, env=env, capture_output=True, text=True,
+        )
+        assert no_nvcc.returncode == 0, no_nvcc.stderr
+        assert no_nvcc.stdout.strip() == "None"
         runner_tree = ast.parse((kit / "run_lightx2v_three_variants.py").read_text(encoding="utf-8"))
         runner_main = next(
             node for node in runner_tree.body
@@ -249,6 +259,14 @@ def test_generated_linux_kit_uses_linux_wheels_and_entrypoints(tmp_path):
     package = subprocess.run([sys.executable, "bundle.py"], cwd=kit,
                              capture_output=True, text=True)
     assert package.returncode == 0, package.stderr
+    assert json.loads(package.stdout)["wheel_audit"] == str(audit.resolve())
+    full_audit = kit / "results-full" / "wheel-validation.json"
+    full_audit.parent.mkdir()
+    full_audit.write_bytes(audit.read_bytes())
+    package = subprocess.run([sys.executable, "bundle.py"], cwd=kit,
+                             capture_output=True, text=True)
+    assert package.returncode == 0, package.stderr
+    assert json.loads(package.stdout)["wheel_audit"] == str(full_audit.resolve())
     release = kit / "release" / "ComfyUI-Spark-H3-linux-sm120-cu130.zip"
     with zipfile.ZipFile(release) as archive:
         assert archive.testzip() is None
