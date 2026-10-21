@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 
 KIT = Path(__file__).resolve().parent
@@ -16,8 +15,6 @@ if PLATFORM not in ("linux-x86_64", "windows-x86_64"):
 WHEEL_PLATFORM = "win_amd64" if PLATFORM == "windows-x86_64" else "linux_x86_64"
 EXTENSION_SUFFIX = ".pyd" if PLATFORM == "windows-x86_64" else ".so"
 CUDA_TAG = IDENTITY["cuda_tag"]
-EXPERIMENTAL_CUDA_RUNTIME = os.environ.get("SPARK_EXPERIMENTAL_CUDA_RUNTIME") == "1"
-EXPECTED_TORCH_CUDA = os.environ.get("SPARK_EXPECT_TORCH_CUDA") or None
 CAPABILITY = tuple(IDENTITY["capability"])
 ELF_ARCH = "sm_" + ARCH[2:]
 NODE = "MiniMaxH3SparkAttention" + ARCH.upper()
@@ -35,34 +32,6 @@ LORA_NAME = os.environ.get(
 if (not LORA_NAME or Path(LORA_NAME).name != LORA_NAME
         or not LORA_NAME.lower().endswith(".safetensors")):
     raise ValueError("SPARK_LORA_NAME must be a .safetensors filename under ComfyUI models/loras")
-
-
-def runtime_cuda_policy(version: str | None) -> str:
-    """Keep release results strict; allow same-major newer CUDA only for experiments."""
-    if EXPECTED_TORCH_CUDA is not None:
-        if not EXPERIMENTAL_CUDA_RUNTIME:
-            raise RuntimeError("an expected newer PyTorch CUDA version requires experimental validation")
-        if version != EXPECTED_TORCH_CUDA:
-            raise RuntimeError(
-                f"requested PyTorch CUDA {EXPECTED_TORCH_CUDA} test, found {version}; "
-                "select the matching Python environment"
-            )
-    tag = re.fullmatch(r"cu(\d{2})(\d+)", CUDA_TAG)
-    actual = re.fullmatch(r"(\d+)\.(\d+)(?:\.\d+)?", version or "")
-    if tag is None or actual is None:
-        raise RuntimeError(f"cannot compare torch CUDA {version!r} with wheel tag {CUDA_TAG}")
-    expected_version = (int(tag.group(1)), int(tag.group(2)))
-    runtime_version = (int(actual.group(1)), int(actual.group(2)))
-    if runtime_version == expected_version:
-        return "release"
-    if (EXPERIMENTAL_CUDA_RUNTIME and runtime_version[0] == expected_version[0]
-            and runtime_version[1] > expected_version[1]):
-        return "experimental_same_major_newer_minor"
-    raise RuntimeError(
-        f"wheel tag {CUDA_TAG} expects torch CUDA {expected_version[0]}.{expected_version[1]}, "
-        f"found {version}; use --experimental-cuda-runtime only for an explicit "
-        "same-major newer-minor compatibility test"
-    )
 
 
 def wheel_base(wheel_name: str) -> str | None:

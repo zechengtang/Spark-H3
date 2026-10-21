@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from config import ARCH, CAPABILITY, CUDA_TAG, EXPECTED_TORCH_CUDA, EXPERIMENTAL_CUDA_RUNTIME, KIT, PLATFORM, runtime_cuda_policy
+from config import ARCH, CAPABILITY, CUDA_TAG, KIT, PLATFORM
 
 REQUIRED_TRITON_MODULES = (
     "landmark_projection.py",
@@ -72,13 +72,14 @@ def probe_triton() -> dict[str, object]:
             f"install a PyTorch-compatible {'triton-windows' if PLATFORM == 'windows-x86_64' else 'triton'} build before building or validating; "
             "do not patch the planner to use a Torch fallback."
         ) from error
-    cuda_policy = runtime_cuda_policy(torch.version.cuda)
-    if not EXPERIMENTAL_CUDA_RUNTIME and not torch.__version__.startswith("2.12."):
+    if torch.version.cuda != "13.0":
+        raise RuntimeError(f"expected torch CUDA 13.0 ({CUDA_TAG}), found {torch.version.cuda}")
+    if not torch.__version__.startswith("2.12."):
         raise RuntimeError(f"this release kit is pinned to torch 2.12.x, found {torch.__version__}")
     capability = tuple(torch.cuda.get_device_capability())
     if capability != CAPABILITY:
         raise RuntimeError(f"expected {ARCH} GPU {CAPABILITY}, found {capability}")
-    if not EXPERIMENTAL_CUDA_RUNTIME and not triton.__version__.startswith("3.7."):
+    if not triton.__version__.startswith("3.7."):
         raise RuntimeError(
             f"torch 2.12 release kit expects Triton 3.7.x, found {triton.__version__}; "
             "verify the torch/Triton version pairing before proceeding"
@@ -100,7 +101,6 @@ def probe_triton() -> dict[str, object]:
         "python": sys.version.split()[0],
         "torch": torch.__version__,
         "torch_cuda": torch.version.cuda,
-        "cuda_runtime_policy": cuda_policy,
         "capability": capability,
         "triton": triton.__version__,
         "triton_path": str(Path(triton.__file__).resolve()),
@@ -161,15 +161,6 @@ def main() -> None:
     verify_packaged_source()
     planner = require_direct_triton_imports(KIT / "ComfyUI-Spark-H3")
     report = {"architecture": ARCH, "cuda_tag": CUDA_TAG, "planner_sha256": planner, **probe_triton()}
-    report["experimental_cuda_runtime_requested"] = EXPERIMENTAL_CUDA_RUNTIME
-    report["expected_torch_cuda"] = EXPECTED_TORCH_CUDA
-    nvcc = shutil.which("nvcc")
-    report["nvcc"] = {
-        "path": nvcc,
-        "version_output": subprocess.check_output(
-            [nvcc, "--version"], text=True, encoding="utf-8", errors="replace"
-        ).strip() if nvcc else None,
-    }
     if args.require_build_toolkit:
         report["build_toolkit"] = check_build_toolkit()
     args.report.parent.mkdir(parents=True, exist_ok=True)

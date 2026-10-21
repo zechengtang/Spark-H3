@@ -6,9 +6,7 @@ param(
     [string] $Results = "",
     [int] $Port = 8628,
     [ValidateRange(3, 1000)] [int] $Steps = 8,
-    [string] $LoraName = "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
-    [switch] $ExperimentalCudaRuntime,
-    [ValidateSet("13.2", "13.3")] [string] $TestTorchCuda
+    [string] $LoraName = "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,11 +25,6 @@ if ([string]::IsNullOrWhiteSpace($Results)) {
 $Results = [IO.Path]::GetFullPath($Results)
 New-Item -ItemType Directory -Force -Path $Results | Out-Null
 
-$previousCudaMode = [Environment]::GetEnvironmentVariable("SPARK_EXPERIMENTAL_CUDA_RUNTIME", "Process")
-$previousExpectedCuda = [Environment]::GetEnvironmentVariable("SPARK_EXPECT_TORCH_CUDA", "Process")
-$env:SPARK_EXPERIMENTAL_CUDA_RUNTIME = if ($ExperimentalCudaRuntime -or $TestTorchCuda) { "1" } else { "0" }
-$env:SPARK_EXPECT_TORCH_CUDA = $TestTorchCuda
-try {
 & $Python (Join-Path $kit "preflight.py") --report (Join-Path $Results "preflight.json")
 if ($LASTEXITCODE -ne 0) { throw "Triton/GPU preflight failed; no benchmark was run" }
 & $Python (Join-Path $kit "validate_wheels.py") --wheelhouse (Join-Path $kit "wheelhouse") --report (Join-Path $Results "wheel-validation.json")
@@ -78,15 +71,3 @@ $env:SPARK_LORA_NAME = $LoraName
 & $Python (Join-Path $kit "run_lightx2v_three_variants.py")
 if ($LASTEXITCODE -ne 0) { throw "$Mode validation failed; see $Results" }
 Write-Host "PASS $Results"
-} finally {
-    if ($null -eq $previousCudaMode) {
-        Remove-Item Env:SPARK_EXPERIMENTAL_CUDA_RUNTIME -ErrorAction SilentlyContinue
-    } else {
-        $env:SPARK_EXPERIMENTAL_CUDA_RUNTIME = $previousCudaMode
-    }
-    if ($null -eq $previousExpectedCuda) {
-        Remove-Item Env:SPARK_EXPECT_TORCH_CUDA -ErrorAction SilentlyContinue
-    } else {
-        $env:SPARK_EXPECT_TORCH_CUDA = $previousExpectedCuda
-    }
-}

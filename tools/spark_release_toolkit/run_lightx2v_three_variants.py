@@ -24,7 +24,7 @@ from pathlib import Path
 import requests
 import websocket
 
-from config import ARCH, CAPABILITY, ELF_ARCH, NODE, ACTIVATION, RESULTS, WHEEL, PORT as CONFIG_PORT, STEPS, LORA_NAME, PLATFORM, EXTENSION_SUFFIX, EXPECTED_TORCH_CUDA, EXPERIMENTAL_CUDA_RUNTIME, runtime_cuda_policy
+from config import ARCH, CAPABILITY, ELF_ARCH, NODE, ACTIVATION, RESULTS, WHEEL, PORT as CONFIG_PORT, STEPS, LORA_NAME, PLATFORM, EXTENSION_SUFFIX
 
 
 KIT = Path(__file__).resolve().parent
@@ -498,7 +498,6 @@ def environment(system_stats: dict, backend_state: dict) -> dict:
         "torch_capability": json.loads(command(
             str(PYTHON), "-c", "import torch,json; print(json.dumps(torch.cuda.get_device_capability()))"
         )),
-        "nvcc": command("nvcc", "--version"),
         "comfyui": {
             "path": str(COMFY),
             "version": (COMFY / "comfyui_version.py").read_text(encoding="utf-8").split('"')[1],
@@ -547,7 +546,8 @@ def validate_static(state: dict) -> None:
     cuda = state["backends"].get("cuda", {})
     if not cuda.get("available") or cuda.get("disabled"):
         raise RuntimeError(f"CUDA backend is not active: {cuda}")
-    runtime_cuda_policy(command(str(PYTHON), "-c", "import torch; print(torch.version.cuda)"))
+    if command(str(PYTHON), "-c", "import torch; print(torch.version.cuda)") != "13.0":
+        raise RuntimeError("torch.version.cuda is not 13.0")
     capability = command(
         str(PYTHON), "-c", "import torch; print(torch.cuda.get_device_capability())"
     )
@@ -870,8 +870,6 @@ def main() -> None:
             "valid": valid,
             "gpu": command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader").strip(),
             "torch_cuda": command(str(PYTHON), "-c", "import torch; print(torch.version.cuda)"),
-            "validation_mode": "experimental_cuda_runtime" if EXPERIMENTAL_CUDA_RUNTIME else "release",
-            "expected_torch_cuda": EXPECTED_TORCH_CUDA,
             "comfyui_pid": server.pid,
             "process_policy": "reuse_one_server_with_short_warmup_per_variant",
             "architecture": ARCH,

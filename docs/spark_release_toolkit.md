@@ -14,10 +14,11 @@ Windows 上解压后，使用 **同一个 ComfyUI Python** 执行：
 
 ```powershell
 .\build.ps1 -Python C:\path\to\python.exe
-.\validate.ps1 -ComfyUIRoot C:\path\to\ComfyUI -Python C:\path\to\python.exe -Mode audit
 .\validate.ps1 -ComfyUIRoot C:\path\to\ComfyUI -Python C:\path\to\python.exe -Mode full
 & C:\path\to\python.exe .\bundle.py
 ```
+
+`full` 已包含 wheel 审计，`bundle.py` 默认读取 `results-full/wheel-validation.json`。只需要检查 wheel 时可单独运行 `-Mode audit`，此时打包脚本会读取 `results-audit/wheel-validation.json`。若用 `-Results` 指定其他目录，打包时通过 `--audit-report` 指向该目录中的 `wheel-validation.json`。
 
 默认使用 LightX2V v1.0 768p 8-step LoRA。先把对应权重放入 ComfyUI 的 `models/loras/`，再运行：
 
@@ -39,10 +40,8 @@ Windows 上解压后，使用 **同一个 ComfyUI Python** 执行：
 
 前置检查要求 torch CUDA 13.0、目标 GPU 架构和可用的 Triton 3.7 JIT；缺少 Triton 会直接失败。工具还校验规划源码哈希与关键模块的直接 Triton 导入，拒绝把无 Triton 的 Torch 规划回退结果计入发布测速。三变体共用一个 ComfyUI 进程，每个变体正式计时前各跑一次同尺寸 short warmup（Dense/Speed 各 1 步，8 步 Fidelity 为 3 步），warmup 耗时不计入加速比。默认保持 DynamicVRAM 并使用 `--reserve-vram 1.5`；可用 `SPARK_EXTRA_COMFY_ARGS` 改写启动参数。输出保存在工具包内的 `results-*` 目录。
 
-`nvidia-smi` 所显示的 CUDA 版本是驱动支持上限，可以高于 PyTorch 的 `torch.version.cuda=13.0`。已编译 wheel 的验证通常不需要 `nvcc`。如需探索现有 `cu130` wheel 在更新的 CUDA 13.x PyTorch 环境中的表现，Linux 验证命令加 `--experimental-cuda-runtime`，Windows 验证命令加 `-ExperimentalCudaRuntime`。此模式允许同一 CUDA 主版本的更高次版本运行完整原生审计及工作流，报告会记录实际版本并标为实验结果；默认发布验证仍要求 cu130、torch 2.12.x 和 Triton 3.7.x。实验通过后仍需单独决定是否加入发布支持矩阵。
+`nvidia-smi` 所显示的 CUDA 版本是驱动支持上限，可以高于 PyTorch 的 `torch.version.cuda=13.0`。已编译 wheel 的验证不要求 `nvcc`，但 cubin 审计仍需 `cuobjdump`。发布验证要求 PyTorch CUDA 13.0、torch 2.12.x 和 Triton 3.7.x。
 
 编译 `cu130` wheel 时还要求实际 CUDA Toolkit 为 13.0：构建预检核对 PyTorch CUDA 版本、PyTorch 检测到的 Toolkit 路径、`PATH` 上的 `nvcc` 和 `nvcc --version`，并固定编译进程使用该 Toolkit。驱动显示 13.2 不影响构建；若机器只安装了 13.2 Toolkit，构建会在开始前失败。`audit`/`full` 验证已有 wheel 时不执行这项编译器检查。
-
-CUDA 13.2/13.3 实测默认不执行，也不要求准备相应环境。需要测试时，分别使用对应 PyTorch 环境的 Python，Linux 加 `--test-torch-cuda 13.2` 或 `--test-torch-cuda 13.3`，Windows 加 `-TestTorchCuda 13.2` 或 `-TestTorchCuda 13.3`。脚本会核对实际 `torch.version.cuda`，版本不符就失败；`audit` 只检查原生 wheel，确认工作流兼容性还需执行 `full`。实验审计不能用于正式发布打包。
 
 目前已在 Linux 上验证三种架构工具包的生成、源码身份、Python 语法、zip 完整性，并用现有 SM89 Windows wheel 检查归档流程。Windows 原生编译、Triton JIT、cubin 审计和完整 LightX2V 测试仍需在各架构 Windows GPU 上执行。

@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import ast
 import hashlib
 import importlib.util
-import json
 import os
 import subprocess
 import sys
 import types
-import venv
 import zipfile
 from pathlib import Path
 
 import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = ROOT / "tools" / "build_spark_release_toolkit.py"
@@ -25,9 +25,7 @@ def test_build_toolkit_checks_actual_nvcc_not_driver(tmp_path, monkeypatch):
     config = types.ModuleType("config")
     for name, value in {
         "ARCH": "sm120", "CAPABILITY": (12, 0), "CUDA_TAG": "cu130",
-        "EXPECTED_TORCH_CUDA": None, "EXPERIMENTAL_CUDA_RUNTIME": False,
         "KIT": tmp_path, "PLATFORM": "linux-x86_64",
-        "runtime_cuda_policy": lambda version: "release",
     }.items():
         setattr(config, name, value)
     monkeypatch.setitem(sys.modules, "config", config)
@@ -67,6 +65,32 @@ def test_build_toolkit_checks_actual_nvcc_not_driver(tmp_path, monkeypatch):
         preflight.check_build_toolkit()
 
 
+def test_validation_preflight_does_not_probe_nvcc(tmp_path, monkeypatch):
+    config = types.ModuleType("config")
+    for name, value in {
+        "ARCH": "sm120", "CAPABILITY": (12, 0), "CUDA_TAG": "cu130",
+        "KIT": tmp_path, "PLATFORM": "linux-x86_64",
+    }.items():
+        setattr(config, name, value)
+    monkeypatch.setitem(sys.modules, "config", config)
+    spec = importlib.util.spec_from_file_location(
+        "spark_test_validation_preflight", ROOT / "tools" / "spark_release_toolkit" / "preflight.py"
+    )
+    preflight = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preflight)
+    monkeypatch.setattr(preflight, "verify_packaged_source", lambda: None)
+    monkeypatch.setattr(preflight, "require_direct_triton_imports", lambda plugin: {})
+    monkeypatch.setattr(preflight, "probe_triton", lambda: {"jit_probe": "pass"})
+    def reject_compiler_search(name):
+        raise AssertionError(f"validation unexpectedly searched for {name}")
+    monkeypatch.setattr(preflight.shutil, "which", reject_compiler_search)
+    report = tmp_path / "validation-preflight.json"
+    monkeypatch.setattr(sys, "argv", ["preflight.py", "--report", str(report)])
+
+    preflight.main()
+    assert json.loads(report.read_text(encoding="utf-8"))["jit_probe"] == "pass"
+
+
 def test_generated_windows_kits_select_their_own_architecture(tmp_path):
     for arch, capability in (("sm86", [8, 6]), ("sm89", [8, 9]), ("sm120", [12, 0])):
         kit = tmp_path / f"kit-{arch}"
@@ -96,44 +120,8 @@ def test_generated_windows_kits_select_their_own_architecture(tmp_path):
         assert "'0.42' = '0.2.39'" in validate_source
         assert '"0.2.39"' in (kit / "build.ps1").read_text(encoding="utf-8")
         assert "0.38.x/0.39.x/0.40.x" in validate_source
-        assert "ExperimentalCudaRuntime" in validate_source
-        assert "TestTorchCuda" in validate_source
-        check_cuda = (
-            "from config import runtime_cuda_policy; "
-            "print(runtime_cuda_policy('13.0')); print(runtime_cuda_policy('13.2'))"
-        )
-        strict_cuda = subprocess.run(
-            [sys.executable, "-c", check_cuda], cwd=kit,
-            capture_output=True, text=True,
-            env={**os.environ, "SPARK_EXPERIMENTAL_CUDA_RUNTIME": "0"},
-        )
-        assert strict_cuda.returncode != 0
-        experimental_cuda = subprocess.run(
-            [sys.executable, "-c", check_cuda], cwd=kit,
-            capture_output=True, text=True,
-            env={**os.environ, "SPARK_EXPERIMENTAL_CUDA_RUNTIME": "1"},
-        )
-        assert experimental_cuda.returncode == 0, experimental_cuda.stderr
-        assert experimental_cuda.stdout.splitlines() == [
-            "release", "experimental_same_major_newer_minor"
-        ]
-        for requested, actual in (("13.2", "13.2"), ("13.3", "13.3")):
-            exact = subprocess.run(
-                [sys.executable, "-c", f"from config import runtime_cuda_policy; print(runtime_cuda_policy('{actual}'))"],
-                cwd=kit, capture_output=True, text=True,
-                env={**os.environ, "SPARK_EXPERIMENTAL_CUDA_RUNTIME": "1",
-                     "SPARK_EXPECT_TORCH_CUDA": requested},
-            )
-            assert exact.returncode == 0, exact.stderr
-            assert exact.stdout.strip() == "experimental_same_major_newer_minor"
-        mismatch = subprocess.run(
-            [sys.executable, "-c", "from config import runtime_cuda_policy; runtime_cuda_policy('13.0')"],
-            cwd=kit, capture_output=True, text=True,
-            env={**os.environ, "SPARK_EXPERIMENTAL_CUDA_RUNTIME": "1",
-                 "SPARK_EXPECT_TORCH_CUDA": "13.2"},
-        )
-        assert mismatch.returncode != 0
-        assert "requested PyTorch CUDA 13.2 test, found 13.0" in mismatch.stderr
+        assert "ExperimentalCudaRuntime" not in validate_source
+        assert "TestTorchCuda" not in validate_source
         check = subprocess.run(
             [sys.executable, "-c", "from preflight import verify_packaged_source, require_direct_triton_imports; "
              "verify_packaged_source(); require_direct_triton_imports(__import__('pathlib').Path('ComfyUI-Spark-H3'))"],
@@ -249,7 +237,8 @@ def test_generated_linux_kit_uses_linux_wheels_and_entrypoints(tmp_path):
         result = subprocess.run(command, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         if script.startswith("validate"):
-            assert "--test-torch-cuda {13.2,13.3}" in result.stdout
+            assert "--experimental-cuda-runtime" not in result.stdout
+            assert "--test-torch-cuda" not in result.stdout
             assert "--mode {audit,full}" in result.stdout
 
     source = "from config import wheel_base, EXTENSION_SUFFIX; " \
@@ -281,12 +270,19 @@ def test_generated_linux_kit_uses_linux_wheels_and_entrypoints(tmp_path):
     audit.write_text(json.dumps({
         "valid": True, "architecture": "sm120", "platform": "linux-x86_64",
         "wheels": [{"wheel": str(release_wheel),
-                    "sha256": hashlib.sha256(release_wheel.read_bytes()).hexdigest(),
-                    "smoke": {"cuda_runtime_policy": "release"}}],
+                    "sha256": hashlib.sha256(release_wheel.read_bytes()).hexdigest()}],
     }), encoding="utf-8")
     package = subprocess.run([sys.executable, "bundle.py"], cwd=kit,
                              capture_output=True, text=True)
     assert package.returncode == 0, package.stderr
+    assert json.loads(package.stdout)["wheel_audit"] == str(audit.resolve())
+    full_audit = kit / "results-full" / "wheel-validation.json"
+    full_audit.parent.mkdir()
+    full_audit.write_bytes(audit.read_bytes())
+    package = subprocess.run([sys.executable, "bundle.py"], cwd=kit,
+                             capture_output=True, text=True)
+    assert package.returncode == 0, package.stderr
+    assert json.loads(package.stdout)["wheel_audit"] == str(full_audit.resolve())
     release = kit / "release" / "ComfyUI-Spark-H3-linux-sm120-cu130.zip"
     with zipfile.ZipFile(release) as archive:
         assert archive.testzip() is None
@@ -295,157 +291,3 @@ def test_generated_linux_kit_uses_linux_wheels_and_entrypoints(tmp_path):
         assert packaged_identity["platform"] == "linux-x86_64"
     with zipfile.ZipFile(kit.with_suffix(".zip")) as archive:
         assert archive.testzip() is None
-    report = json.loads(audit.read_text(encoding="utf-8"))
-    report["experimental_cuda_runtime_requested"] = True
-    audit.write_text(json.dumps(report), encoding="utf-8")
-    experimental_package = subprocess.run(
-        [sys.executable, "bundle.py"], cwd=kit, capture_output=True, text=True,
-    )
-    assert experimental_package.returncode != 0
-    assert "experimental CUDA runtime audit" in experimental_package.stderr
-
-
-@pytest.fixture
-def linux_kit(tmp_path):
-    kit = tmp_path / "linux-kit"
-    subprocess.run(
-        [
-            sys.executable,
-            str(GENERATOR),
-            "--architecture",
-            "sm120",
-            "--platform",
-            "linux",
-            "--publisher-id",
-            "test-publisher",
-            "--output",
-            str(kit),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return kit
-
-
-@pytest.fixture
-def symlinked_python(tmp_path):
-    environment = tmp_path / "ComfyUI env"
-    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
-    python = environment / (
-        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
-    )
-    if not python.is_symlink():
-        pytest.skip("requires a symlinked virtual environment Python")
-    return python
-
-
-PYTHON_PROBE = """\
-import importlib.util
-import json
-import sys
-from pathlib import Path
-
-Path(__file__).with_suffix('.probe.json').write_text(json.dumps({
-    'prefix': sys.prefix,
-    'pip_available': importlib.util.find_spec('pip') is not None,
-}), encoding='utf-8')
-if '--require-build-toolkit' in sys.argv:
-    report = Path(sys.argv[sys.argv.index('--report') + 1])
-    toolkit = Path(__file__).parent / 'cuda'
-    report.write_text(json.dumps({'build_toolkit': {
-        'toolkit_root': str(toolkit),
-        'compiler': str(toolkit / 'bin/nvcc'),
-    }}), encoding='utf-8')
-"""
-
-
-@pytest.mark.skipif(
-    not sys.platform.startswith("linux"), reason="Linux kit entrypoints"
-)
-@pytest.mark.parametrize("entrypoint", ("build", "validate"))
-@pytest.mark.parametrize("relative", (False, True))
-def test_kit_entrypoints_preserve_virtualenv(
-    linux_kit, symlinked_python, entrypoint, relative
-):
-    kit = linux_kit
-    child = "kernel_builder" if entrypoint == "build" else "validate_wheels"
-    child_path = kit / (
-        f"ComfyUI-Spark-H3/{child}.py" if entrypoint == "build" else f"{child}.py"
-    )
-    (kit / "preflight.py").write_text(PYTHON_PROBE, encoding="utf-8")
-    child_path.write_text(PYTHON_PROBE, encoding="utf-8")
-    python = (
-        os.path.relpath(symlinked_python, kit) if relative else str(symlinked_python)
-    )
-    if entrypoint == "build":
-        wheel = (
-            kit
-            / "wheelhouse/comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-linux_x86_64.whl"
-        )
-        wheel.write_bytes(b"test wheel")
-        command = [
-            str(symlinked_python),
-            "-c",
-            "import build; build.shutil.which = lambda name: 'test-tool'; build.main()",
-            "--python",
-            python,
-            "--kitchen-base",
-            "0.2.37",
-        ]
-    else:
-        command = [
-            str(symlinked_python),
-            str(kit / "validate.py"),
-            "--python",
-            python,
-            "--mode",
-            "audit",
-        ]
-    result = subprocess.run(
-        command, cwd=kit, check=False, capture_output=True, text=True
-    )
-    assert result.returncode == 0, result.stderr
-    for script in (kit / "preflight.py", child_path):
-        probe = json.loads(
-            script.with_suffix(".probe.json").read_text(encoding="utf-8")
-        )
-        assert (
-            Path(probe["prefix"]).resolve() == symlinked_python.parent.parent.resolve()
-        )
-        assert not probe["pip_available"]
-
-
-def test_runner_launches_comfyui_with_virtualenv(linux_kit, symlinked_python):
-    kit = linux_kit
-    (kit / "main.py").write_text(PYTHON_PROBE, encoding="utf-8")
-    env = {
-        **os.environ,
-        "COMFYUI_ROOT": str(kit),
-        "SPARK_WHEEL": str(
-            kit
-            / "wheelhouse/comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-linux_x86_64.whl"
-        ),
-    }
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "import os,subprocess,sys; sys.executable = sys.argv[1]; "
-                "import run_lightx2v_three_variants as bench; "
-                "raise SystemExit(bench.launch_server("
-                "os.environ.copy(), subprocess.DEVNULL).wait(timeout=10))"
-            ),
-            str(symlinked_python),
-        ],
-        cwd=kit,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    probe = json.loads((kit / "main.probe.json").read_text(encoding="utf-8"))
-    assert Path(probe["prefix"]).resolve() == symlinked_python.parent.parent.resolve()
-    assert not probe["pip_available"]

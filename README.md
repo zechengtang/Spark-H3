@@ -181,7 +181,7 @@ Linux and Windows x86_64 packages for SM86, SM89, and SM120.
 See the [ComfyUI guide](comfyui/README.md)
 for workflows and the [installation guide](comfyui/standalone/README.md) for
 package details. Reference-video compression is provided separately by
-[VPack](comfyui/compact_ref2va/README.md).
+[VPack](https://github.com/zechengtang/VPack).
 
 ## 🤝 Acknowledgments
  

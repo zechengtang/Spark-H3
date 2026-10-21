@@ -148,7 +148,7 @@ Diffusers 与 ComfyUI 是两条独立的实现路线。下面分开记录两者�
 当前 v0.1.5 的 Linux 和 Windows x86_64 SM86/SM89/SM120 安装包支持 ComfyUI 0.38.x–0.40.x 和 0.42.x。
 工作流请参阅 [ComfyUI 指南](comfyui/README.md)，
 安装包详情请参阅[安装指南](comfyui/standalone/README.md)。参考视频压缩由独立的
-[VPack](comfyui/compact_ref2va/README.zh-CN.md) 提供。
+[VPack](https://github.com/zechengtang/VPack) 提供。
 
 ## 🤝 致谢
 

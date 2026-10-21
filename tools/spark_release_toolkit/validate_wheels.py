@@ -15,7 +15,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from config import ARCH, CAPABILITY, CUDA_TAG, ELF_ARCH, EXPECTED_TORCH_CUDA, EXPERIMENTAL_CUDA_RUNTIME, LOCAL_VERSION, PLATFORM, EXTENSION_SUFFIX, runtime_cuda_policy, wheel_base
+from config import ARCH, CAPABILITY, CUDA_TAG, ELF_ARCH, LOCAL_VERSION, PLATFORM, EXTENSION_SUFFIX, wheel_base
 
 
 def sha256(path: Path) -> str:
@@ -56,10 +56,9 @@ def child(wheel: Path) -> None:
         version = versions[0]
         if "+" + LOCAL_VERSION not in version:
             raise RuntimeError(f"wrong backend identity: {version}")
-        cuda_policy = runtime_cuda_policy(torch.version.cuda)
-        if torch.cuda.get_device_capability() != CAPABILITY:
+        if torch.version.cuda != "13.0" or torch.cuda.get_device_capability() != CAPABILITY:
             raise RuntimeError(
-                f"expected {ARCH} capability {CAPABILITY}, found {torch.cuda.get_device_capability()}"
+                f"expected CUDA 13.0 / {ARCH}, found {torch.version.cuda} / {torch.cuda.get_device_capability()}"
             )
 
         torch.manual_seed(20261012)
@@ -81,8 +80,6 @@ def child(wheel: Path) -> None:
             "dtype": str(first.dtype),
             "finite": True,
             "repeat_bitwise": True,
-            "torch_cuda": torch.version.cuda,
-            "cuda_runtime_policy": cuda_policy,
         }))
     finally:
         shutil.rmtree(directory, ignore_errors=True)
@@ -134,9 +131,7 @@ def main() -> None:
     if len(found_bases) != len(wheels) or not found_bases <= expected_bases:
         raise RuntimeError(f"duplicate or unsupported comfy-kitchen bases: {found_bases}")
     report = {"valid": True, "architecture": ARCH, "cuda_tag": CUDA_TAG,
-              "platform": PLATFORM, "experimental_cuda_runtime_requested": EXPERIMENTAL_CUDA_RUNTIME,
-              "expected_torch_cuda": EXPECTED_TORCH_CUDA,
-              "wheels": results}
+              "platform": PLATFORM, "wheels": results}
     args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"REPORT {args.report.resolve()}")
 
