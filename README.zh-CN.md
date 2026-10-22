@@ -40,22 +40,13 @@
 > 用于控制 Spark Q/K/V producer 分块。
 > **[查看发布说明并下载](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.4)**
 
-> **VPack v0.1.0：** 独立的 ComfyUI 插件，用于压缩原生 Ref2VA 任务中的参考视频；
+> **VPack v0.1.0：** 独立的 ComfyUI 插件，用于压缩 Ref2VA 任务中的参考视频；
 > 推荐使用默认的 `2/5`。
 > **[VPack GitHub 仓库](https://github.com/zechengtang/VPack)**
 
 > 👉 [Ref2VA 任务加速解决方案](docs/sparse_scope.md#ref2va-任务加速解决方案)
 
 ---
-
-## ✨ Spark-Attn
-
-Spark-Attn 是面向 MiniMax-H3 视频生成的分块稀疏注意力方法，包含两个操作：
-
-- **🧩 重组块（Reblocking）**：将相似的 token 归入同一块，让稀疏注意力选中更相关的交互。
-- **⚖️ 重加权（Reweighting）**：构建 key/value 摘要时，对尾部块中的 token 赋予不同权重，并修正注意力权重总量。
-
-Spark-H3 提供 Spark 注意力算子及其与 MiniMax-H3 推理流程的集成。
 
 <a id="demo"></a>
 
@@ -71,6 +62,15 @@ Spark-H3 提供 Spark 注意力算子及其与 MiniMax-H3 推理流程的集成�
 
 - [Veda / Sol / Spark：主观画质与速度对比（B 站）](https://www.bilibili.com/video/BV1zynA6aEZG/)
 - [Spark-H3 与 VPack 联合用于 Ref2VA 的演示（B 站）](https://www.bilibili.com/video/BV1i6J163EGG/)
+
+## ✨ Spark-Attn
+
+Spark-Attn 是面向 MiniMax-H3 视频生成的分块稀疏注意力方法，包含两个操作：
+
+- **🧩 重组块（Reblocking）**：将相似的 token 归入同一块，让稀疏注意力选中更相关的交互。
+- **⚖️ 重加权（Reweighting）**：构建 key/value 摘要时，对尾部块中的 token 赋予不同权重，并修正注意力权重总量。
+
+Spark-H3 提供 Spark 注意力算子及其与 MiniMax-H3 推理流程的集成。
 
 <a id="quick-start"></a>
 
@@ -111,7 +111,7 @@ Spark-H3 为 ComfyUI 0.38.x–0.40.x 和 0.42.x 提供独立节点。[v0.1.5](ht
 
 安装方法及示例工作流请参阅 [ComfyUI 指南](comfyui/README.md) 或 [中文安装指南](comfyui/INSTALL.zh-CN.md)。
 
-如需压缩原生 Ref2VA 任务中的参考视频，可另行安装独立插件 **[VPack v0.1.0](https://github.com/zechengtang/VPack)**。
+如需压缩 Ref2VA 任务中的参考视频，可另行安装独立插件 **[VPack v0.1.0](https://github.com/zechengtang/VPack)**。
 
 ## 步数约定
 

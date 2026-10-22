@@ -40,24 +40,12 @@
 > **[Release notes and downloads](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.4)**
 
 > **VPack v0.1.0:** A separate ComfyUI plugin that compresses reference
-> videos in native Ref2VA workflows.
+> videos in Ref2VA workflows.
 > **[VPack GitHub repository](https://github.com/zechengtang/VPack)**
 
 > 👉 [Ref2VA 任务加速解决方案](docs/sparse_scope.md#ref2va-任务加速解决方案)
 
 ---
-
-## ✨ Spark-Attn
-
-Spark-Attn is a block sparse attention method for MiniMax-H3 video generation.
-It combines two operations:
-
-- **🧩 Reblocking** groups similar tokens into blocks so sparse attention can
-  select more relevant interactions.
-- **⚖️ Reweighting** assigns different weights to tokens within each tail block
-  when building key/value summaries, with a correction for attention mass.
-
-Spark-H3 provides the Spark attention kernels and MiniMax-H3 inference integration.
 
 <a id="demo"></a>
 
@@ -73,6 +61,18 @@ The animated preview and linked clip cover the final 5.4 seconds, starting at 9 
 
 - [Veda / Sol / Spark: subjective visual quality and speed comparison (Bilibili)](https://www.bilibili.com/video/BV1zynA6aEZG/)
 - [Spark-H3 + VPack on Ref2VA (Bilibili)](https://www.bilibili.com/video/BV1i6J163EGG/)
+
+## ✨ Spark-Attn
+
+Spark-Attn is a block sparse attention method for MiniMax-H3 video generation.
+It combines two operations:
+
+- **🧩 Reblocking** groups similar tokens into blocks so sparse attention can
+  select more relevant interactions.
+- **⚖️ Reweighting** assigns different weights to tokens within each tail block
+  when building key/value summaries, with a correction for attention mass.
+
+Spark-H3 provides the Spark attention kernels and MiniMax-H3 inference integration.
 
 <a id="quick-start"></a>
 
@@ -120,7 +120,7 @@ architecture. ComfyUI and model weights are not included.
 For installation and example workflows, see the **[ComfyUI guide](comfyui/README.md)**
 or **[中文安装指南](comfyui/INSTALL.zh-CN.md)**.
 
-For reference-video compression in native Ref2VA workflows, install the separate
+For reference-video compression in Ref2VA workflows, install the separate
 **[VPack v0.1.0](https://github.com/zechengtang/VPack)** plugin.
 
 ## Step-count convention
