@@ -38,6 +38,7 @@ class H3AccelerationPlugin:
         self._forward_originals: list[tuple[Any, Any]] = []
         self._attention_forward_originals: list[tuple[Any, Any]] = []
         self._vae_dtype: torch.dtype | None = None
+        self.compile_deterministic_effective = False
         self._active = False
 
     def __enter__(self) -> "H3AccelerationPlugin":
@@ -72,7 +73,15 @@ class H3AccelerationPlugin:
         if self.config.compile_reproducibility_fix:
             # Keep Inductor's reduction choices deterministic across worker processes.
             options = dict(torch._inductor.list_mode_options(self.config.compile_mode or "default"))
-            options["deterministic"] = self.config.compile_deterministic
+            # PyTorch 2.8 does not expose the newer Inductor ``deterministic``
+            # option. Preserve the eager attention boundary and all other
+            # reproducibility repairs, but omit only that unsupported option.
+            # Do not map it to torch.use_deterministic_algorithms(): that is a
+            # materially different runtime policy and rejects Spark's CUDA
+            # kthvalue implementation.
+            if "deterministic" in torch._inductor.list_options():
+                options["deterministic"] = self.config.compile_deterministic
+                self.compile_deterministic_effective = self.config.compile_deterministic
         for block in blocks:
             if self.config.compile_reproducibility_fix:
                 attention = getattr(block, "attn", None)

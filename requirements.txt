@@ -11,11 +11,8 @@
 # tighter if you need an exact CUDA build (e.g. torch==2.4.1+cu121).
 torch>=2.4.0
 
-# diffusers is required for the H3 pipeline / modular pipeline. The official
-# docs reference the `minimax-h3` branch of diffusers for the latest class
-# additions; once that lands on PyPI, tighten the upper bound accordingly.
-# Until then, install from source: `pip install "git+https://github.com/huggingface/diffusers.git@minimax-h3"`
-diffusers>=0.32.2
+# Diffusers 0.41.0 includes the MiniMax-H3 pipeline and model classes on PyPI.
+diffusers>=0.41.0
 
 # transformers provides the Qwen3-VL text encoder / processor / tokenizer used
 # by the H3 pipeline. Newer is generally better here; keep >=4.45 to get

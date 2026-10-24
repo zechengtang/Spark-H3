@@ -35,6 +35,7 @@ def test_compile_default_installs_and_restores_per_block(monkeypatch):
     monkeypatch.setattr(torch, "compile", fake_compile)
     monkeypatch.setattr(torch.compiler, "disable", fake_disable)
     monkeypatch.setattr(torch._inductor, "list_mode_options", lambda mode: {})
+    monkeypatch.setattr(torch._inductor, "list_options", lambda: ["deterministic"])
 
     config = H3AccelerationConfig()
     assert config.torch_compile is True
@@ -42,12 +43,40 @@ def test_compile_default_installs_and_restores_per_block(monkeypatch):
     assert config.vae_fp16 is False
     with install_h3_acceleration(pipe, config) as plugin:
         assert plugin.config is config
+        assert plugin.compile_deterministic_effective is True
         assert len(compile_calls) == len(disable_calls) == 2
         assert all(call["options"]["deterministic"] for call in compile_calls)
         assert all("forward" in block.__dict__ for block in blocks)
         assert all("forward" in block.attn.__dict__ for block in blocks)
     assert all("forward" not in block.__dict__ for block in blocks)
     assert all("forward" not in block.attn.__dict__ for block in blocks)
+
+
+def test_pytorch_28_omits_only_unsupported_deterministic_option(monkeypatch):
+    block = _Block()
+    pipe = SimpleNamespace(transformer=SimpleNamespace(transformer_blocks=[block]))
+    compile_calls = []
+    disable_calls = []
+
+    def fake_compile(fn, **kwargs):
+        compile_calls.append(kwargs)
+        return lambda *args, **kw: fn(*args, **kw)
+
+    def fake_disable(fn):
+        disable_calls.append(fn)
+        return fn
+
+    monkeypatch.setattr(torch, "compile", fake_compile)
+    monkeypatch.setattr(torch.compiler, "disable", fake_disable)
+    monkeypatch.setattr(torch._inductor, "list_mode_options", lambda mode: {})
+    monkeypatch.setattr(torch._inductor, "list_options", lambda: ["max_autotune"])
+
+    with install_h3_acceleration(pipe, H3AccelerationConfig()) as plugin:
+        assert plugin.compile_deterministic_effective is False
+        assert len(disable_calls) == 1
+        assert compile_calls == [{"options": {}, "dynamic": None}]
+        assert "forward" in block.attn.__dict__
+    assert "forward" not in block.attn.__dict__
 
 
 def test_reproducibility_fix_can_restore_legacy_whole_block_compile(monkeypatch):

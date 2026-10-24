@@ -13,7 +13,7 @@ dependencies = ["torch>=2.4"]
 [project.optional-dependencies]
 cuda = ["triton>=3.2", "nvidia-cutlass-dsl>=4.4", "cuda-python>=12", "apache-tvm-ffi"]
 test = ["pytest>=8"]
-lbh = ["diffusers>=0.36.0", "huggingface-hub>=0.28", "safetensors>=0.4"]
+lbh = ["diffusers>=0.41.0", "huggingface-hub>=0.28", "safetensors>=0.4"]
 
 [dependency-groups]
 dev = [
