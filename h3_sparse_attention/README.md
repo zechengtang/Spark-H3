@@ -22,9 +22,8 @@ backend. Spark-H3's Diffusers integration contains architecture dispatch for
 SM80, SM86, SM89, SM90, SM100, and SM120 and raises before reblocking on every other
 architecture. Production kernel support is complete for SM80, SM86, and SM120.
 SM86 and SM89 use the SM80-style CuTe `cp.async` kernel; SM86 has been validated
-on an RTX 3090 and SM89 on an RTX 4090 with fused Top-K and packed routes. SM90
-and SM100 remain development targets until compatible GPU resources become
-available for implementation and validation. Spark requires CUDA and Triton
+on an RTX 3090 and SM89 on an RTX 4090 with fused Top-K and packed routes. SM90 uses a Hopper WGMMA/TMA implementation with packed external Top-K routing.
+SM100 remains a development target. Spark requires CUDA and Triton
 for its supported execution paths.
 Sol-Attn requires contiguous BF16 `[batch, tokens, heads, 128]`
 tensors. These are forward/inference kernels.
@@ -136,8 +135,8 @@ Default Spark settings match the source:
   `packed_external_no_route_qk` execution. This exports the packed route once
   and avoids recomputing route QK inside the attention kernel. Set
   `sol_route_topk_execution="threshold"` explicitly for the historical
-  compiled Table 4 path. The packed route is implemented on SM80, SM89 and SM120;
-  SM90 and SM100 resolve this default to `threshold` and report that fallback
+  compiled Table 4 path. The packed route is implemented on SM80, SM86, SM89, SM90 and SM120;
+  SM100 resolves this default to `threshold` and reports that fallback
   in the plugin summary. The slower legacy `packed_external` execution was
   removed after dual-SM120 verification showed bitwise-identical output; old
   configurations receive a migration error directing them to the no-QK mode.
@@ -228,7 +227,7 @@ automatically clears the default target-block setting; specifying both is an err
 
 
 Plain Sol on SM80/SM89 retains pointer-based Triton kernels. Spark BF16 on SM80,
-SM89 and SM120 uses a CuTe fused virtual-query mainloop automatically above 8192
+SM89, SM90 and SM120 uses a CuTe fused virtual-query mainloop automatically above 8192
 packed tokens; smaller inputs use the streamed exact/skipped implementation.
 The SM80/SM89 mainloop follows the SM120 structure: CTA-local native-threshold or
 fixed-budget fused Top-K routing, warp exact-index compaction, two-stage
@@ -353,3 +352,29 @@ contains shared Hilbert-order and metric-factor utilities, not the clustering
 method. Exact-branch kernels are extracted from the source compensation modules
 without importing their compensation methods.
 See `sol_attn/THIRD_PARTY_NOTICES.md` and its included license for kernel notices.
+
+## H20 / SM90
+
+H20 (compute capability 9.0) selects the Hopper WGMMA/TMA backend automatically.
+The default `packed_external_no_route_qk` execution builds a packed Top-K route
+and reads its bits directly in the fused virtual-query kernel, without a dense
+route expansion or centroid QK WGMMA. The packed path loads the useful AK tile
+through the K pipeline, skipping the unused KC transfer while preserving K/V
+pipeline phases. Exact tokens and conditioned summary
+blocks share one FP32 online softmax and output accumulator.
+
+Use BF16 contiguous `[batch, tokens, heads, 128]` inputs. Threshold, dense
+external routes, query prefixes, sink blocks and explicit local block radii are
+also supported. CTA-local Top-K (`sol_route_topk_execution="fused"`) is not yet
+implemented on SM90; use the default packed execution or `threshold`.
+
+The GPU regression tests are in `tests/test_spark_reweight_sm90_sm100.py` and
+`tests/test_spark_route_backends_sm90_sm100.py`. The preprocessing module needs
+Triton's `triton.tools.tensor_descriptor` API (Triton 3.4 was used for H20 tests).
+An earlier H20 validation used PyTorch 2.5.1+cu124, Triton 3.4.0, CUTLASS DSL
+4.8.1 and cuda-python 13.4.4: 38 tests passed and 4 architecture-specific cases
+skipped. Triton 3.4.0 was loaded from an isolated target directory for those
+operator tests. The current PyTorch 2.8.0+cu126 H20 environment and its 26-pass
+targeted SM90 suite are recorded in the
+[cvpr27_env environment snapshot](../docs/environments/cvpr27_env.md).
+These tests validate operators, not end-to-end video generation or throughput.

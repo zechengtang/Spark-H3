@@ -31,6 +31,7 @@ STEPS = 20
 HEIGHT = 768
 WIDTH = 1344
 SEED = 42
+FRAME_COUNTS = {5: 124, 10: 243, 15: 345}
 
 
 def result_path(seconds: int, tag: str, route_execution: str) -> Path:
@@ -39,7 +40,7 @@ def result_path(seconds: int, tag: str, route_execution: str) -> Path:
     return (
         Path(__file__).resolve().parents[1]
         / "reports"
-        / f"sm80_fused{route_suffix}_dense_vs_spark10_{seconds}s768p_seed42{suffix}.json"
+        / f"sm80_fused{route_suffix}_dense_vs_spark10_{seconds}s_{FRAME_COUNTS[seconds]}f768p_seed42{suffix}.json"
     )
 
 
@@ -141,7 +142,8 @@ def run(
         "cuda_profile": profile_summary,
     }
     if summary is not None:
-        assert summary["sol_backend"] == "sm80_fused_virtual_query", summary
+        capability = torch.cuda.get_device_capability()
+        assert summary["sol_backend"] == f"sm{capability[0]}{capability[1]}_fused_virtual_query", summary
         calls = summary["processor_calls"]
         expected_evaluations = inference_steps - 1
         assert summary["completed_evaluations"] == expected_evaluations, summary
@@ -191,7 +193,9 @@ def main():
     # 15.0 * 24 = 360 rounds to 362, beyond the pipeline's 360-frame cap.
     # MiniMax-H3's established "15s" benchmark therefore uses the longest
     # supported 17*n+5 sequence: 345 frames (14.375 seconds at 24 fps).
-    frames = {5: 120, 10: 240, 15: 345}[args.seconds]
+    # Pass the VAE-supported frame count directly, so the recorded request
+    # and the denoised geometry are the same for every benchmark method.
+    frames = FRAME_COUNTS[args.seconds]
     if args.reuse_dense or args.reuse_dense_report is not None:
         reuse_file = args.reuse_dense_report or result_file
         if not reuse_file.exists() and args.route_execution == "fused":
@@ -201,6 +205,11 @@ def main():
             if previous.get("duration_seconds") != args.seconds:
                 raise ValueError(
                     f"dense reuse duration mismatch in {reuse_file}"
+                )
+            if previous.get("requested_frames") != frames:
+                raise ValueError(
+                    f"dense reuse frame-count mismatch in {reuse_file}: "
+                    f"expected {frames}, got {previous.get('requested_frames')}"
                 )
             previous_dense = next(
                 row for row in previous["runs"]

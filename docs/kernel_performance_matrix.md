@@ -5,14 +5,21 @@ architectures and inference profiles. Each duration cell reports **speedup**
 followed by `(mean Dense DiT time -> mean Spark DiT time)`. Speedups are rounded
 to two decimal places and times to one decimal place after aggregation.
 
-| GPU | SM | Model / profile | DiT evals | Warmup steps | Dense layers | Kernel / route | Commit | 5s / 120f | 10s / 240f | 14.4s / 345f |
+| GPU | SM | Model / profile | DiT evals | Warmup steps | Dense layers | Kernel / route | Commit | 5s / 124f actual | 10s / 243f actual | 14.4s / 345f |
 |---|---:|---|---:|---:|---:|---|---|---:|---:|---:|
 | A800-SXM4-80GB | 80 | MiniMax-H3 native | 19 | 4 | 1 | fused virtual-query / legacy+threshold / Top-K 10% | `1185195` | **1.41x** (326.3s -> 231.4s) | **1.70x** (988.0s -> 581.5s) | **1.84x** (1841.9s -> 1003.0s) |
 | RTX PRO 6000 Blackwell Server Edition | 120 | MiniMax-H3 native | 19 | 4 | 1 | fused virtual-query / legacy+threshold / Top-K 10% | `57d401b` + dynamic-cache working tree | **1.42x** (197.8s -> 139.5s) | **1.72x** (583.9s -> 338.7s) | **1.87x** (1070.1s -> 571.8s) |
 
 ## Benchmark profile
 
-- Resolution: 1344x768; durations: 120, 240, and 345 frames.
+- Resolution: 1344x768. The 5s and 10s labels request 120 and 240 frames
+  at 24 fps; MiniMax-H3's `17 * n + 5` VAE constraint rounds these **up**
+  to 124 and 243 frames before denoising (about 5.17s and 10.13s). The
+  15s label uses the longest supported count, 345 frames (14.375s); it is
+  not an exact 15-second workload. Timings cover these actual aligned shapes.
+  Future runs of `benchmark_sm80_dense_vs_spark10_10s768p.py` submit the
+  aligned 124/243 frame counts directly; the displayed historical rows retain
+  their original 120/240 frame request metadata.
 - Precision and seed: BF16, seed 42.
 - MiniMax-H3 native requests 20 inference steps and executes 19 transformer/DiT
   evaluations. The table records actual DiT evaluations so that profiles whose
