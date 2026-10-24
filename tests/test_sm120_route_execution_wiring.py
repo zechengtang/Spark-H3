@@ -16,11 +16,13 @@ from h3_sparse_attention.processor import _Controller
         ("packed_external_no_route_qk", 0.0, True, True),
     ],
 )
-@pytest.mark.parametrize("capability", [(8, 0), (8, 6), (8, 9), (12, 0)])
+@pytest.mark.parametrize("capability", [(8, 0), (8, 6), (8, 9), (9, 0), (12, 0)])
 def test_sm120_route_execution_reaches_fused_kernel_contract(
     monkeypatch, execution, expected_ratio, expected_skip, expects_route, capability
 ):
     """The production dispatcher must preserve each supported route contract."""
+    if capability == (9, 0) and execution == "fused":
+        pytest.skip("SM90 uses external Top-K routing")
     from h3_sparse_attention import rope_sol_kernel, sol_numerator_virtual_q
     from h3_sparse_attention import sol_topk_cutoff, spark_integration
 

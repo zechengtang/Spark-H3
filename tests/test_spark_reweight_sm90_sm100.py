@@ -149,3 +149,36 @@ def test_fused_virtual_query_matches_fallback(monkeypatch, mode):
     # tolerances are wider than the SDPA parity tests and may need
     # calibration on real hardware.
     torch.testing.assert_close(fused.float(), fallback.float(), atol=0.02, rtol=0.03)
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.cuda.get_device_capability(0) != (9, 0),
+    reason="Hopper packed route kernel requires SM90",
+)
+@pytest.mark.parametrize("tokens,query_tokens", [(576, 512), (4161, 4160)])
+@pytest.mark.parametrize("local_radius", [-1, 1])
+def test_sm90_packed_route_matches_dense(monkeypatch, tokens, query_tokens, local_radius):
+    """Check word boundaries, multiple route groups, prefix queries and a KV tail."""
+    import h3_sparse_attention.sol_numerator_virtual_q as rw
+    from h3_sparse_attention.sol_topk_cutoff import gemm_topk_packed_route
+
+    monkeypatch.setenv("H3_SPARK_REWEIGHT_FUSED", "1")
+    q, k, v, kc, vs = _virtual_q_inputs(b=1, t=tokens, h=2)
+    ranges, mapping = _topology(tokens)
+    packed, _ = gemm_topk_packed_route(
+        q, kc, video_tokens=query_tokens, topk_ratio=0.25, query_tokens=query_tokens,
+    )
+    dense = rw.unpack_packed_route(packed, kc.shape[1])
+    kwargs = dict(
+        virtual_ranges=ranges, leaf_to_virtual=mapping,
+        key_centroids=kc, value_sums=vs, sink_start=query_tokens,
+        sink_tokens=tokens-query_tokens, force_local_blocks=local_radius,
+        _query_tokens=query_tokens,
+    )
+    expected = rw.virtual_q_attention(q, k, v, route=dense, **kwargs)
+    actual = rw.virtual_q_attention(
+        q, k, v, route=packed, skip_external_route_qk=True, **kwargs,
+    )
+    torch.testing.assert_close(
+        actual[:, :query_tokens], expected[:, :query_tokens], atol=0, rtol=0,
+    )

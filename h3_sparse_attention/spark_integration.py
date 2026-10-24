@@ -1293,6 +1293,7 @@ def _effective_topk_execution(requested, capability):
         (8, 0),
         (8, 6),
         (8, 9),
+        (9, 0),
         (12, 0),
     ):
         return "threshold"
@@ -1400,7 +1401,7 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
         and not partial_video
         and execution == "packed_external_no_route_qk"
         and cfg.sol_route_topk_cutoff_mode == "gemm_radix"
-        and capability in ((8, 0), (8, 6), (8, 9), (12, 0))
+        and capability in ((8, 0), (8, 6), (8, 9), (9, 0), (12, 0))
         and _query_tokens is not None
         and virtual_query_data is not None
         and virtual_q_backend(q).endswith("fused_virtual_query")

@@ -5,17 +5,17 @@
 Port of h3_sparse_attention/spark_reweight_sm120.py onto the WGMMA/TMA
 SolAttnMainloopSm90 skeleton.  Native KC routing, the bitmask exact-block
 stream (sol_attn/sm90/exact.py), and the Phase-1 route-mask decision logic
-(SolAttnMainloopSm90.sol_attn_build_route_mask_from_acc) are reused as-is.
+(SolAttnMainloopSm90.sol_attn_build_route_mask_from_acc) also support packed external route words.
 The approximate path runs a second QK WGMMA against query-parent conditioned
 AK into a fresh accumulator, consumes parent-conditioned VC means (no block
 length correction), and folds the per-parent virtual log mass into the route
 column scratch.  Approximate and exact branches share one online softmax and
-one output accumulator.
+one output accumulator. In packed external mode, the route QK WGMMA is
+omitted and the useful AK tile is loaded on the K pipeline in place of KC,
+preserving the existing K/V pipeline phase discipline.
 
-AK shares the single K smem stage but rides a dedicated one-stage TMA
-pipeline with its own mbarriers: the shared K/V producer state advances once
-per V load, so an extra K-phase per route group would desynchronize both
-pipelines' parity discipline.  The K stage is reused for the first exact
+AK shares the single K smem stage and normally rides a dedicated one-stage
+TMA pipeline with its own mbarriers. The K stage is reused for the first exact
 block only after the AK WGMMA's warpgroup wait, which guarantees every warp
 finished reading AK.  WGMMA accumulators are register-resident and the route
 accumulator is dead once the mask is built, so the second QK accumulator
@@ -23,11 +23,9 @@ never overlaps it; peak register pressure matches the stock mainloop and
 keeps sol_attn_mma_regs_override=128.
 """
 
-from __future__ import annotations
-
 from functools import partial
 from types import SimpleNamespace
-from typing import Callable
+from typing import Callable, Optional
 
 import cuda.bindings.driver as cuda
 import cutlass
@@ -63,13 +61,22 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
         tokens: int | None = None,
         *,
         external_route: bool = False,
+        packed_external_route: bool = False,
+        skip_external_route_qk: bool = False,
         hybrid_route: bool = False,
         export_route: bool = False,
         force_local_blocks: bool = True,
         prefetch_approx_k: bool = True,
         shared_log_mass: bool = True,
         debug_route_trace: bool = False,
+        reuse_k_pipeline_for_ak: bool = True,
     ):
+        if packed_external_route != skip_external_route_qk:
+            raise ValueError("packed routes require route-QK-free execution")
+        if packed_external_route and (not external_route or hybrid_route or export_route):
+            raise ValueError("packed routes require external-only routing without export")
+        self.skip_external_route_qk = skip_external_route_qk
+        self.reuse_k_pipeline_for_ak = reuse_k_pipeline_for_ak and packed_external_route
         if tokens is None:
             assume_lane_group_reduce = False
             assume_full_k_exact = False
@@ -117,6 +124,7 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
             sol_attn_tail16_lane_group_route_reduce=tail16_lane_group_reduce,
             sol_attn_num_splits=1,
             external_route=external_route,
+            packed_external_route=packed_external_route,
             hybrid_route=hybrid_route,
             exact_only=False,
             export_route=export_route,
@@ -224,6 +232,8 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
         self.num_wg_mma = self.num_mma_threads // self.num_threads_per_warp_group
         assert self.num_wg_mma == 1
         self.num_threads = self.num_threads_per_warp_group
+        self.num_producer_threads = 32
+        self.num_Q_load_threads = self.num_threads_per_warp_group
         self.num_epilogue_threads = self.num_mma_threads
         self.num_mma_regs, self.num_producer_regs = 256, 56
         if const_expr(self.sol_attn_mma_regs_override is not None):
@@ -375,7 +385,7 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
         tma_atom_AK: cute.CopyAtom,
         tma_atom_O: cute.CopyAtom,
         softmax_scale_log2: Float32,
-        softmax_scale: Float32,
+        softmax_scale: Optional[Float32],
         sink_range: Int32,
         q_block_start: Int32,
         parent_start: Int32,
@@ -562,7 +572,7 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
         route_mask: cute.Tensor,
         route_sums: cute.Tensor,
         softmax_scale_log2: Float32,
-        softmax_scale: Float32,
+        softmax_scale: Optional[Float32],
         sink_range: Int32,
         block_info: BlockInfo,
         q_block_start: Int32,
@@ -629,10 +639,11 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
             tma_atom_VC, 0, cute.make_layout(1), gVC, sV
         )
         tma_load_VC_fn = copy_utils.tma_producer_copy_fn(tma_load_VC_fn, pipeline_v)
-        tma_load_AK_fn, _, _ = copy_utils.tma_get_copy_fn(
+        tma_load_AK_copy, _, _ = copy_utils.tma_get_copy_fn(
             tma_atom_AK, 0, cute.make_layout(1), gAK, sK
         )
-        tma_load_AK_fn = copy_utils.tma_producer_copy_fn(tma_load_AK_fn, pipeline_ak)
+        tma_load_AK_fn = copy_utils.tma_producer_copy_fn(tma_load_AK_copy, pipeline_ak)
+        tma_load_AK_k_fn = copy_utils.tma_producer_copy_fn(tma_load_AK_copy, pipeline_k)
 
         if warp_idx == Int32(0):
             pipeline_q.producer_acquire_w_index_phase(0, q_producer_phase)
@@ -738,10 +749,10 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
             if warp_idx == Int32(0):
                 if group_iter == Int32(0):
                     pipeline_k.producer_acquire(kv_producer_state)
-                    tma_load_KC_fn(
-                        src_idx=route_tile,
-                        producer_state=kv_producer_state,
-                    )
+                    if const_expr(self.reuse_k_pipeline_for_ak):
+                        tma_load_AK_k_fn(src_idx=route_tile, producer_state=kv_producer_state)
+                    else:
+                        tma_load_KC_fn(src_idx=route_tile, producer_state=kv_producer_state)
                 else:
                     previous_group_had_exact = (
                         (route_mask[0] != Int32(0))
@@ -751,10 +762,10 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
                     )
                     if not previous_group_had_exact:
                         pipeline_k.producer_acquire(kv_producer_state)
-                        tma_load_KC_fn(
-                            src_idx=route_tile,
-                            producer_state=kv_producer_state,
-                        )
+                        if const_expr(self.reuse_k_pipeline_for_ak):
+                            tma_load_AK_k_fn(src_idx=route_tile, producer_state=kv_producer_state)
+                        else:
+                            tma_load_KC_fn(src_idx=route_tile, producer_state=kv_producer_state)
                 pipeline_v.producer_acquire(kv_producer_state)
                 tma_load_VC_fn(
                     src_idx=route_tile,
@@ -762,14 +773,21 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
                 )
                 kv_producer_state.advance()
 
-            pipeline_k.consumer_wait(
-                kv_consumer_state,
-                pipeline_k.consumer_try_wait(kv_consumer_state),
-            )
-            acc_S = mma_qk_fn(B_idx=kv_consumer_state.index, wg_wait=-1)
-            warpgroup.wait_group(0)
-            pipeline_k.consumer_release(kv_consumer_state)
-            if const_expr(self.prefetch_approx_k):
+            if const_expr(not self.reuse_k_pipeline_for_ak):
+                pipeline_k.consumer_wait(
+                    kv_consumer_state,
+                    pipeline_k.consumer_try_wait(kv_consumer_state),
+                )
+            if const_expr(self.skip_external_route_qk):
+                acc_S = cute.make_rmem_tensor(
+                    tiled_mma_qk.partition_shape_C((self.tile_m, self.tile_n)), Float32
+                )
+            else:
+                acc_S = mma_qk_fn(B_idx=kv_consumer_state.index, wg_wait=-1)
+                warpgroup.wait_group(0)
+            if const_expr(not self.reuse_k_pipeline_for_ak):
+                pipeline_k.consumer_release(kv_consumer_state)
+            if const_expr(self.prefetch_approx_k and not self.reuse_k_pipeline_for_ak):
                 # Speculative AK into the freed K stage while the CTA reduces
                 # and compacts routes; drained below for all-exact groups.
                 if warp_idx == Int32(0):
@@ -914,22 +932,31 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
                 pipeline_v.consumer_try_wait(kv_consumer_state),
             )
             if route_has_approx:
-                if const_expr(not self.prefetch_approx_k):
-                    if warp_idx == Int32(0):
-                        pipeline_ak.producer_acquire(ak_producer_state)
-                        tma_load_AK_fn(
-                            src_idx=route_tile,
-                            producer_state=ak_producer_state,
-                        )
-                        ak_producer_state.advance()
-                pipeline_ak.consumer_wait(
-                    ak_consumer_state,
-                    pipeline_ak.consumer_try_wait(ak_consumer_state),
-                )
-                acc_A = mma_qk_fn(B_idx=kv_consumer_state.index, wg_wait=-1)
-                warpgroup.wait_group(0)
-                pipeline_ak.consumer_release(ak_consumer_state)
-                ak_consumer_state.advance()
+                if const_expr(self.reuse_k_pipeline_for_ak):
+                    pipeline_k.consumer_wait(
+                        kv_consumer_state,
+                        pipeline_k.consumer_try_wait(kv_consumer_state),
+                    )
+                    acc_A = mma_qk_fn(B_idx=kv_consumer_state.index, wg_wait=-1)
+                    warpgroup.wait_group(0)
+                    pipeline_k.consumer_release(kv_consumer_state)
+                else:
+                    if const_expr(not self.prefetch_approx_k):
+                        if warp_idx == Int32(0):
+                            pipeline_ak.producer_acquire(ak_producer_state)
+                            tma_load_AK_fn(
+                                src_idx=route_tile,
+                                producer_state=ak_producer_state,
+                            )
+                            ak_producer_state.advance()
+                    pipeline_ak.consumer_wait(
+                        ak_consumer_state,
+                        pipeline_ak.consumer_try_wait(ak_consumer_state),
+                    )
+                    acc_A = mma_qk_fn(B_idx=kv_consumer_state.index, wg_wait=-1)
+                    warpgroup.wait_group(0)
+                    pipeline_ak.consumer_release(ak_consumer_state)
+                    ak_consumer_state.advance()
                 # Refill the freed K stage with the first exact block so the
                 # transfer overlaps the approximate softmax and PV below.
                 if first_exact_exists and warp_idx == Int32(0):
@@ -994,7 +1021,13 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
                 warpgroup.wait_group(0)
                 O_should_accumulate = True
             else:
-                if const_expr(self.prefetch_approx_k):
+                if const_expr(self.reuse_k_pipeline_for_ak):
+                    pipeline_k.consumer_wait(
+                        kv_consumer_state,
+                        pipeline_k.consumer_try_wait(kv_consumer_state),
+                    )
+                    pipeline_k.consumer_release(kv_consumer_state)
+                elif const_expr(self.prefetch_approx_k):
                     pipeline_ak.consumer_wait(
                         ak_consumer_state,
                         pipeline_ak.consumer_try_wait(ak_consumer_state),
@@ -1053,7 +1086,7 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
                     first_exact_n_block,
                     first_exact_exists,
                     next_route_tile,
-                    tma_load_KC_fn,
+                    tma_load_AK_k_fn if const_expr(self.reuse_k_pipeline_for_ak) else tma_load_KC_fn,
                 )
             else:
                 (
@@ -1090,7 +1123,7 @@ class SparkReweightForwardSm90(SolAttnMainloopSm90):
                     first_exact_n_block,
                     first_exact_exists,
                     next_route_tile,
-                    tma_load_KC_fn,
+                    tma_load_AK_k_fn if const_expr(self.reuse_k_pipeline_for_ak) else tma_load_KC_fn,
                 )
 
         pipeline_q.consumer_release_w_index(0)

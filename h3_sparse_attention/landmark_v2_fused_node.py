@@ -37,7 +37,7 @@ def _fused_midpoint_directions_kernel(
     source, global_indices, directions,
     N: tl.constexpr, LANDMARKS: tl.constexpr,
     INTERNAL: tl.constexpr, SPLIT_TREE: tl.constexpr,
-    FP8: tl.constexpr,
+    SLOTS: tl.constexpr, FP8: tl.constexpr,
 ):
     """Load midpoint landmarks and build the complete proxy tree in one CTA."""
     parent = tl.program_id(0)
@@ -60,14 +60,25 @@ def _fused_midpoint_directions_kernel(
         libdevice.sqrt_rn(tl.sum(center * center, axis=1)), 1.0e-12
     )[:, None]
     distance = 1.0 - tl.dot(unit, tl.trans(unit), input_precision="ieee")
-    weight_nodes = (length.to(tl.int32),)
+    slot_rows = tl.arange(0, SLOTS)
+    weight_nodes = tl.where(
+        (slot_rows == 0)[:, None], length.to(tl.int32)[None, :], 0
+    )
     for node in tl.static_range(INTERNAL):
         direction, left_weight, right_weight = _proxy_split(
             center, unit, distance,
-            weight_nodes[SPLIT_TREE[node][0]],
+            tl.sum(tl.where((slot_rows == SPLIT_TREE[node][0])[:, None],
+                            weight_nodes, 0), axis=0),
             SPLIT_TREE[node][1], SPLIT_TREE[node][2], LANDMARKS, 2,
         )
-        weight_nodes += (left_weight, right_weight)
+        weight_nodes = tl.where(
+            (slot_rows == 2 * node + 1)[:, None], left_weight[None, :],
+            weight_nodes,
+        )
+        weight_nodes = tl.where(
+            (slot_rows == 2 * node + 2)[:, None], right_weight[None, :],
+            weight_nodes,
+        )
         tl.store(
             directions + (parent * INTERNAL + node) * 128 + dims,
             direction,
@@ -103,7 +114,7 @@ def fused_midpoint_directions(
     _fused_midpoint_directions_kernel[(parents,)](
         source, global_indices.contiguous(), output,
         N=n, LANDMARKS=landmarks, INTERNAL=len(topology),
-        SPLIT_TREE=topology, FP8=fp8,
+        SPLIT_TREE=topology, SLOTS=triton.next_power_of_2(2 * len(topology) + 1), FP8=fp8,
         num_warps=2 if torch.cuda.get_device_capability(source.device) == (12, 0) else 4,
     )
     return output
@@ -176,7 +187,7 @@ def _proxy_split(center, unit, distance, weight, left_cap: tl.constexpr,
 def _fused_proxy_directions_kernel(
     centers, root_weight, directions,
     LANDMARKS: tl.constexpr, INTERNAL: tl.constexpr,
-    SPLIT_TREE: tl.constexpr,
+    SPLIT_TREE: tl.constexpr, SLOTS: tl.constexpr,
 ):
     parent = tl.program_id(0)
     landmark = tl.arange(0, LANDMARKS)
@@ -191,14 +202,24 @@ def _fused_proxy_directions_kernel(
     # bmm can change the farthest landmark pair even when its numeric error is
     # small, which then changes an entire root branch.
     distance = 1.0 - tl.dot(unit, tl.trans(unit), input_precision="ieee")
-    weight_nodes = (tl.load(root_weight + landmark).to(tl.int32),)
+    slot_rows = tl.arange(0, SLOTS)
+    root = tl.load(root_weight + landmark).to(tl.int32)
+    weight_nodes = tl.where((slot_rows == 0)[:, None], root[None, :], 0)
     for node in tl.static_range(INTERNAL):
         direction, left_weight, right_weight = _proxy_split(
             center, unit, distance,
-            weight_nodes[SPLIT_TREE[node][0]],
+            tl.sum(tl.where((slot_rows == SPLIT_TREE[node][0])[:, None],
+                            weight_nodes, 0), axis=0),
             SPLIT_TREE[node][1], SPLIT_TREE[node][2], LANDMARKS, 2,
         )
-        weight_nodes += (left_weight, right_weight)
+        weight_nodes = tl.where(
+            (slot_rows == 2 * node + 1)[:, None], left_weight[None, :],
+            weight_nodes,
+        )
+        weight_nodes = tl.where(
+            (slot_rows == 2 * node + 2)[:, None], right_weight[None, :],
+            weight_nodes,
+        )
         tl.store(
             directions + (parent * INTERNAL + node) * 128 + dims,
             direction,
@@ -227,6 +248,7 @@ def fused_proxy_directions(
     _fused_proxy_directions_kernel[(centers.shape[0],)](
         centers, weights[0], output,
         LANDMARKS=32, INTERNAL=len(topology), SPLIT_TREE=topology,
+        SLOTS=triton.next_power_of_2(2 * len(topology) + 1),
         num_warps=2 if torch.cuda.get_device_capability(centers.device) == (12, 0) else 4,
     )
     return output
@@ -290,13 +312,19 @@ def _fused_node_split_kernel(
     weight = length.to(tl.int32)
     # Fit the landmarks once. A branch's proxy weights stop at one child;
     # only internal branches get directions and enter subsequent depths.
-    weight_nodes = (weight,)
+    slot_rows = tl.arange(0, 32)
+    weight_nodes = tl.where((slot_rows == 0)[:, None], weight[None, :], 0)
     columns = tl.arange(0, 16)
     directions = tl.full((16,128),0.0,tl.float32)
     for node in tl.static_range(INTERNAL):
         direction, lw, rw = _proxy_split(center,unit,distance,
-            weight_nodes[SPLIT_TREE[node][0]],SPLIT_TREE[node][1],SPLIT_TREE[node][2],LANDMARKS,2)
-        weight_nodes += (lw,rw)
+            tl.sum(tl.where((slot_rows == SPLIT_TREE[node][0])[:, None],
+                            weight_nodes, 0), axis=0),
+            SPLIT_TREE[node][1],SPLIT_TREE[node][2],LANDMARKS,2)
+        weight_nodes = tl.where((slot_rows == 2 * node + 1)[:, None],
+                                lw[None, :], weight_nodes)
+        weight_nodes = tl.where((slot_rows == 2 * node + 2)[:, None],
+                                rw[None, :], weight_nodes)
         directions = tl.where((columns == node)[:,None],direction[None,:],directions)
 
     # 3. Cosine proxy scores for every token, tile by tile.
@@ -382,6 +410,7 @@ def _default_rows_per_step(n: int) -> int:
     return 1
 
 
+@torch._dynamo.disable
 def fused_node_split(
     source: torch.Tensor,
     global_indices: torch.Tensor,

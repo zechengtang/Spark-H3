@@ -63,6 +63,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         sol_attn_tail16_lane_group_route_reduce: bool = False,
         sol_attn_num_splits: int = 1,
         external_route: bool = False,
+        packed_external_route: bool = False,
         hybrid_route: bool = False,
         exact_only: bool = False,
         export_route: bool = False,
@@ -106,6 +107,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
         self.sol_attn_approx_colmask = False
         self.sol_attn_packed_route_reduction = False
         self.sol_attn_num_splits = sol_attn_num_splits
+        self.packed_external_route = packed_external_route
         self.external_route = external_route
         self.hybrid_route = hybrid_route
         self.exact_only = exact_only
@@ -493,28 +495,33 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                     if lane == Int32(0):
                         route_sums[warp_in_mma, off] = warp_sum
 
-        if const_expr(self.sol_attn_route_sum_arrive_overlap and self.sol_attn_warp_route_mask):
-            if warp_in_mma == Int32(0):
+        # External routes never consume the route-QK partials.  The later
+        # route-mask barrier still publishes warp 0's mask to the full CTA.
+        if const_expr(not self.external_route):
+            if const_expr(self.sol_attn_route_sum_arrive_overlap and self.sol_attn_warp_route_mask):
+                if warp_in_mma == Int32(0):
+                    cute.arch.barrier(
+                        barrier_id=SOL_ATTN_ROUTE_SUM_BARRIER_ID,
+                        number_of_threads=self.num_mma_threads,
+                    )
+                else:
+                    cute.arch.barrier_arrive(
+                        barrier_id=SOL_ATTN_ROUTE_SUM_BARRIER_ID,
+                        number_of_threads=self.num_mma_threads,
+                    )
+            else:
                 cute.arch.barrier(
                     barrier_id=SOL_ATTN_ROUTE_SUM_BARRIER_ID,
                     number_of_threads=self.num_mma_threads,
                 )
-            else:
-                cute.arch.barrier_arrive(
-                    barrier_id=SOL_ATTN_ROUTE_SUM_BARRIER_ID,
-                    number_of_threads=self.num_mma_threads,
-                )
-        else:
-            cute.arch.barrier(
-                barrier_id=SOL_ATTN_ROUTE_SUM_BARRIER_ID,
-                number_of_threads=self.num_mma_threads,
-            )
 
         mask0 = Int32(0)
         mask1 = Int32(0)
         mask2 = Int32(0)
         mask3 = Int32(0)
-        thresh = Float32(mGlobalThresh[m_block, head_idx, batch_idx])
+        thresh = Float32(0)
+        if const_expr(not self.external_route):
+            thresh = Float32(mGlobalThresh[m_block, head_idx, batch_idx])
         if const_expr(self.sol_attn_warp_route_mask):
             route_mask_words = self.sol_attn_group_words
             if const_expr(route_mask_words_override != 0):
@@ -586,14 +593,25 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                         exact = False
                         if valid:
                             if const_expr(self.external_route):
-                                exact = Int32(
-                                    mRouteMask[
-                                        m_block,
-                                        head_idx,
-                                        batch_idx,
-                                        group_start_n_block + off,
-                                    ]
-                                ) != Int32(0)
+                                if const_expr(self.packed_external_route):
+                                    route_column = group_start_n_block + off
+                                    bits = Int32(
+                                        mRouteMask[
+                                            m_block, head_idx, batch_idx, route_column // Int32(32)
+                                        ]
+                                    )
+                                    exact = (
+                                        (bits >> (route_column % Int32(32))) & Int32(1)
+                                    ) != Int32(0)
+                                else:
+                                    exact = Int32(
+                                        mRouteMask[
+                                            m_block,
+                                            head_idx,
+                                            batch_idx,
+                                            group_start_n_block + off,
+                                        ]
+                                    ) != Int32(0)
                             else:
                                 col_sum = (
                                     Float32(route_sums[0, route_col])
@@ -614,14 +632,25 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                                     exact = (col_mean > thresh) and valid
                                 if const_expr(self.hybrid_route):
                                     if thresh != thresh:
-                                        exact = Int32(
-                                            mRouteMask[
-                                                m_block,
-                                                head_idx,
-                                                batch_idx,
-                                                group_start_n_block + off,
-                                            ]
-                                        ) != Int32(0)
+                                        if const_expr(self.packed_external_route):
+                                            route_column = group_start_n_block + off
+                                            bits = Int32(
+                                                mRouteMask[
+                                                    m_block, head_idx, batch_idx, route_column // Int32(32)
+                                                ]
+                                            )
+                                            exact = (
+                                                (bits >> (route_column % Int32(32))) & Int32(1)
+                                            ) != Int32(0)
+                                        else:
+                                            exact = Int32(
+                                                mRouteMask[
+                                                    m_block,
+                                                    head_idx,
+                                                    batch_idx,
+                                                    group_start_n_block + off,
+                                                ]
+                                            ) != Int32(0)
                             if const_expr(self.local_block_radius == 0):
                                 exact = exact or (
                                     m_block == group_start_n_block + off
@@ -701,14 +730,25 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                     )
                 if valid:
                     if const_expr(self.external_route):
-                        exact = Int32(
-                            mRouteMask[
-                                m_block,
-                                head_idx,
-                                batch_idx,
-                                group_start_n_block + Int32(off),
-                            ]
-                        ) != Int32(0)
+                        if const_expr(self.packed_external_route):
+                            route_column = group_start_n_block + Int32(off)
+                            bits = Int32(
+                                mRouteMask[
+                                    m_block, head_idx, batch_idx, route_column // Int32(32)
+                                ]
+                            )
+                            exact = (
+                                (bits >> (route_column % Int32(32))) & Int32(1)
+                            ) != Int32(0)
+                        else:
+                            exact = Int32(
+                                mRouteMask[
+                                    m_block,
+                                    head_idx,
+                                    batch_idx,
+                                    group_start_n_block + Int32(off),
+                                ]
+                            ) != Int32(0)
                     else:
                         col_mean = col_sum * softmax_scale_log2 / q_len
                         if const_expr(self.local_block_radius == 1):
@@ -723,14 +763,25 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                             exact = (col_mean > thresh) and valid
                         if const_expr(self.hybrid_route):
                             if thresh != thresh:
-                                exact = Int32(
-                                    mRouteMask[
-                                        m_block,
-                                        head_idx,
-                                        batch_idx,
-                                        group_start_n_block + Int32(off),
-                                    ]
-                                ) != Int32(0)
+                                if const_expr(self.packed_external_route):
+                                    route_column = group_start_n_block + Int32(off)
+                                    bits = Int32(
+                                        mRouteMask[
+                                            m_block, head_idx, batch_idx, route_column // Int32(32)
+                                        ]
+                                    )
+                                    exact = (
+                                        (bits >> (route_column % Int32(32))) & Int32(1)
+                                    ) != Int32(0)
+                                else:
+                                    exact = Int32(
+                                        mRouteMask[
+                                            m_block,
+                                            head_idx,
+                                            batch_idx,
+                                            group_start_n_block + Int32(off),
+                                        ]
+                                    ) != Int32(0)
                     if const_expr(self.local_block_radius == 0):
                         exact = exact or (
                             m_block == group_start_n_block + Int32(off)
@@ -1933,7 +1984,7 @@ class SolAttnMainloopSm90(FlashAttentionForwardBase):
                         mGlobalThresh,
                         softmax_scale_log2,
                         sink_range,
-                        False,
+                        assume_full_route_group=False,
                         route_mask_words_override=2,
                         mRouteMask=mRouteMask,
                     )

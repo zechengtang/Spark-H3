@@ -116,7 +116,7 @@ def _sol_topk_threshold_attn_cute(
         )
         tensors = [q, k, v, output, key_centroids, value_sums, threshold, lse]
         args = [to_cute_tensor(tensor) for tensor in tensors]
-        route_arg = to_cute_tensor(route_argument)
+        route_arg = None if route_mask is None else to_cute_tensor(route_mask)
         if compiled is None:
             operator = make_kernel(
                 tokens,

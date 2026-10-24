@@ -741,6 +741,8 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         from .spark_reweight_sm100 import SparkReweightForwardSm100 as FusedKernel
     else:
         from .spark_reweight_sm120 import SparkReweightForwardSm120 as FusedKernel
+    if capability == (9,0) and fused_topk_ratio:
+        raise NotImplementedError("SM90 CTA-local Top-K is unavailable; use packed_external_no_route_qk or threshold")
     # A cache hit skips constructing the kernel object, so keep SM80's ratio
     # validation before looking up a runtime-ratio specialization.
     if capability in ((8,0), (8,6), (8,9)) and not 0.0 <= fused_topk_ratio <= 1.0:
@@ -768,10 +770,17 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         raise ValueError('route-QK-free path requires a packed external route')
     external=threshold is None and route is not None
     hybrid=threshold is not None and route is not None
-    if packed_external and capability not in ((8,0), (8,6), (8,9), (12,0)):
+    if packed_external and capability not in ((8,0), (8,6), (8,9), (9,0), (12,0)):
         raise NotImplementedError(
-            "packed external routes currently require SM80, SM86, SM89 or SM120"
+            "packed external routes currently require SM80, SM86, SM89, SM90 or SM120"
         )
+    if packed_external and (
+        route.device != q.device
+        or route.shape[0] != b or route.shape[2] != h
+        or route.shape[3] != triton.cdiv(n,32)
+        or not triton.cdiv(query_tokens,64) <= route.shape[1] <= n
+    ):
+        raise ValueError("packed route must match [B, query_blocks, H, ceil(key_blocks/32)] on Q device")
     if packed_external and not skip_external_route_qk:
         raise ValueError("packed external routes require route-QK-free execution")
     if packed_external and export_route:
@@ -892,6 +901,10 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         capability == (12,0)
         and os.environ.get("H3_SM120_RUNTIME_TOPK_RATIO", "1") != "0"
     )
+    sm90_reuse_k_pipeline_for_ak = (
+        capability == (9,0) and packed_external
+        and os.environ.get("H3_SM90_REUSE_K_PIPELINE_FOR_AK", "1") != "0"
+    )
     cache_topk_ratio = (
         bool(fused_topk_ratio)
         if runtime_sm80_topk_ratio or runtime_sm120_topk_ratio
@@ -902,7 +915,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
         if type(force_local_blocks) is int
         else ("legacy", force_local_blocks)
     )
-    key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,local_policy_key,runtime_sm80_topk_ratio,runtime_sm120_topk_ratio,cache_topk_ratio,sm80_prefetch_summary,sm80_skip_final_tile_barrier,
+    key=(q.device.index,capability,external,packed_external,skip_external_route_qk,hybrid,export_route,local_policy_key,runtime_sm80_topk_ratio,runtime_sm120_topk_ratio,sm90_reuse_k_pipeline_for_ak,cache_topk_ratio,sm80_prefetch_summary,sm80_skip_final_tile_barrier,
          static_video_tokens,query_tokens,active_parents,chunk,head_chunk,
          tuple(_dynamic_tensor_cache_signature(x) for x in tensors))
     compiled=_FUSED_COMPILED.get(key)
@@ -941,7 +954,7 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
                                     prefetch_summary=sm80_prefetch_summary,
                                     skip_final_tile_barrier=sm80_skip_final_tile_barrier)
                         if capability in ((8,0), (8,6), (8,9)) else
-                        FusedKernel(t,external_route=external,hybrid_route=hybrid,export_route=export_route,force_local_blocks=force_local_blocks)
+                        FusedKernel(t,external_route=external,packed_external_route=packed_external,skip_external_route_qk=skip_external_route_qk,hybrid_route=hybrid,export_route=export_route,force_local_blocks=force_local_blocks,reuse_k_pipeline_for_ak=sm90_reuse_k_pipeline_for_ak)
                         if capability==(9,0) else
                         FusedKernel(external_route=external,packed_external_route=packed_external,
                                     skip_external_route_qk=skip_external_route_qk,

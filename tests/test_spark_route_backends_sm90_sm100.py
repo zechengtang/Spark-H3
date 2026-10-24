@@ -296,7 +296,7 @@ def test_vaware_export_route_recovers_threshold_decision(force_local_blocks):
     sink_tokens = 64
     out, _, actual = exact_attention(
         q, k, v, kc, vs, threshold=threshold, sink_tokens=sink_tokens,
-        force_local_blocks=force_local_blocks,
+        exact_only=False, force_local_blocks=force_local_blocks,
     )
     ref = _torch_mixed_reference(
         q, k, v, kc, vs, threshold, None,

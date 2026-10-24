@@ -152,3 +152,37 @@ def test_terminal_fp16_normalizes_before_cast_and_replays_graph():
         perm,inv=plan.run(samples*scale)
         assert torch.equal(perm,expected)
         assert torch.equal(perm.gather(1,inv),torch.arange(n,device='cuda').expand_as(perm))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
+def test_fused_sixteen_child_node_covers_every_token():
+    """The production fanout must compile and produce a permutation."""
+    from h3_sparse_attention.landmark_v2_fused_node import fused_node_split
+
+    n = 512
+    source = torch.randn(n, 128, device='cuda', dtype=torch.bfloat16)
+    ids = torch.arange(n, device='cuda', dtype=torch.long).unsqueeze(0)
+    row_batch = torch.zeros(1, device='cuda', dtype=torch.long)
+    output = fused_node_split(
+        source, ids, row_batch, n, (32,) * 16, midpoint=True, mode='fp16'
+    )
+    torch.testing.assert_close(output[0].sort().values, ids[0], atol=0, rtol=0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
+def test_fused_node_under_torch_compile_uses_complete_topology():
+    """Dynamo must not turn the constexpr split tree into an empty tuple."""
+    from h3_sparse_attention.landmark_v2_fused_node import fused_node_split
+
+    n = 256
+    source = torch.randn(n, 128, device='cuda', dtype=torch.bfloat16)
+    ids = torch.arange(n, device='cuda', dtype=torch.long).unsqueeze(0)
+    row_batch = torch.zeros(1, device='cuda', dtype=torch.long)
+
+    @torch.compile
+    def run(values, indices, rows):
+        return fused_node_split(values, indices, rows, n, (64,) * 4,
+                                landmarks=32)
+
+    output = run(source, ids, row_batch)
+    torch.testing.assert_close(output[0].sort().values, ids[0], atol=0, rtol=0)

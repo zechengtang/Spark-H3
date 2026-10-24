@@ -31,7 +31,7 @@ def test_route_qk_free_default_falls_back_outside_supported_gpus():
     assert _effective_topk_execution(requested, (8, 0)) == requested
     assert _effective_topk_execution(requested, (8, 6)) == requested
     assert _effective_topk_execution(requested, (8, 9)) == requested
-    assert _effective_topk_execution(requested, (9, 0)) == "threshold"
+    assert _effective_topk_execution(requested, (9, 0)) == requested
     assert _effective_topk_execution("threshold", (12, 0)) == "threshold"
 
 
