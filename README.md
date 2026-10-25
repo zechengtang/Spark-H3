@@ -30,14 +30,30 @@
 
 </div>
 
+> [!WARNING]
+> **Compatibility and release schedule notice (October 25, 2026)**
+>
+> We have recently received community reports indicating that newer
+> `comfy-kitchen` implementations may cause performance regressions with
+> certain hardware configurations or workflows. The issue is still under
+> investigation, and its impact may vary by environment.
+>
+> Until the cause is confirmed and resolved, we recommend installing or
+> continuing to use the validated and currently more stable **ComfyUI 0.38.x**
+> release, and exercising caution when upgrading. See this
+> **[community report and comparison video](https://www.bilibili.com/video/BV1RaHK6cEHt/)**
+> for additional context.
+>
+> Consequently, the new release originally planned for **October 27, 2026**
+> has been postponed. We will prioritize investigating the `comfy-kitchen`
+> issue and resume the release after compatibility and performance have been
+> verified. Further updates will be posted in this repository. Thank you for
+> your understanding and feedback.
+
 > **ComfyUI v0.1.5:** Adds support for ComfyUI 0.42.x (comfy-kitchen 0.2.39),
 > with Linux and Windows packages for SM86, SM89, and SM120. Each package
 > also includes wheels for ComfyUI 0.38.x–0.40.x.
 > **[Release notes and downloads](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.5)**
-
-> **ComfyUI v0.1.4:** Adds ComfyUI 0.40.x support and
-> `sparse_scope=joint-video` for video-conditioned Ref2VA.
-> **[Release notes and downloads](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.4)**
 
 > **VPack v0.1.0:** A separate ComfyUI plugin that compresses reference
 > videos in Ref2VA workflows.

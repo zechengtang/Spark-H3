@@ -30,15 +30,24 @@
 
 </div>
 
+> [!WARNING]
+> **兼容性与更新计划提醒（2026-10-25）**
+>
+> 近期我们收到社区用户反馈：新版 `comfy-kitchen` 的实现可能在部分硬件和工作流中
+> 引起性能下降。目前相关问题仍在排查，实际影响可能因运行环境而异。
+>
+> 在问题得到进一步确认和解决前，建议用户暂时安装或继续使用经过验证、运行较稳定的
+> **ComfyUI 0.38.x**，并谨慎升级至更新版本。相关现象与测试可参考这段
+> **[社区反馈视频](https://www.bilibili.com/video/BV1RaHK6cEHt/)**。
+>
+> 受此影响，原计划于 **2026 年 10 月 27 日**发布的新版本将暂时推迟。我们会优先配合
+> 排查 `comfy-kitchen` 的相关问题，待兼容性和性能表现确认稳定后，再恢复版本发布。
+> 后续进展将在本项目中及时同步，感谢大家的理解与反馈。
+
 > **ComfyUI v0.1.5：** 新增对 ComfyUI 0.42.x（comfy-kitchen 0.2.39）的支持，
 > 提供 Linux 和 Windows 的 SM86、SM89、SM120 安装包；每包也包含适配
 > ComfyUI 0.38.x–0.40.x 的 wheel。
 > **[查看发布说明并下载](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.5)**
-
-> **ComfyUI v0.1.4：** 新增 ComfyUI 0.40.x 支持，并为带视频条件的
-> Ref2VA 提供 `sparse_scope=joint-video`，同时新增可选的 `producer_chunk`
-> 用于控制 Spark Q/K/V producer 分块。
-> **[查看发布说明并下载](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.4)**
 
 > **VPack v0.1.0：** 独立的 ComfyUI 插件，用于压缩 Ref2VA 任务中的参考视频；
 > 推荐使用默认的 `2/5`。
