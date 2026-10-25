@@ -16,14 +16,14 @@ def test_block_tail_configuration_is_opt_in():
         H3SparseAttentionConfig.spark(20, sol_tail_granularity="invalid")
     with pytest.raises(ValueError, match="virtual query summaries"):
         H3SparseAttentionConfig.sol(20, sol_tail_granularity="block")
-    with pytest.raises(ValueError, match="threshold or packed_external_no_route_qk"):
+    with pytest.raises(ValueError, match="fused.*disabled"):
         H3SparseAttentionConfig.spark(
             20, sol_tail_granularity="block", sol_route_topk_execution="fused"
         )
     assert H3SparseAttentionConfig.spark(
         20, sol_tail_granularity="block8x8"
     ).sol_tail_granularity == "block8x8"
-    with pytest.raises(ValueError, match="threshold or packed_external_no_route_qk"):
+    with pytest.raises(ValueError, match="fused.*disabled"):
         H3SparseAttentionConfig.spark(
             20, sol_tail_granularity="block8x8", sol_route_topk_execution="fused"
         )

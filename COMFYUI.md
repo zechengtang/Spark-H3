@@ -183,8 +183,11 @@ and no permanently dense transformer blocks. Set `steps` to the
 number of model evaluations made by the sampler (normally the sampler's step
 count). Minimum-token and dense-layer gating use the same
 policy object as ComfyUI's official sparse node.
-The public Spark node uses the full reweight path and a dense video tail;
-research ablation and tail-mode controls are not exposed in the node UI.
+The public Spark node uses the full Reblock plus global-anchor Reweight path.
+Component ablations remain internal and are not exposed in the node UI.
+Reweighting uses one global target-video representative per head; target-189
+and other multi-anchor topologies are not exposed. The video tail remains
+dense; research tail-mode controls are not exposed in the node UI.
 The default `reblock_layout=q_reuse_k` builds the K-side landmark layout once
 and aliases that permutation for Q, matching Spark's `q_from_k` mode while
 avoiding the query-side M2 transform, tree plan, and duplicate index storage.

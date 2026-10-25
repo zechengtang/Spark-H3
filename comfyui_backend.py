@@ -72,8 +72,13 @@ class ComfySparkConfig:
             raise ValueError("tail_granularity must be 'block' or 'query'")
         if self.global_anchor_dtype not in ("float32", "bfloat16"):
             raise ValueError("global_anchor_dtype must be 'float32' or 'bfloat16'")
-        if self.landmark_tree_v2_midpoint_direction_mode not in ("legacy", "fused"):
-            raise ValueError("landmark_tree_v2_midpoint_direction_mode must be 'legacy' or 'fused'")
+        if self.landmark_tree_v2_midpoint_direction_mode == "fused":
+            raise ValueError(
+                "landmark_tree_v2_midpoint_direction_mode='fused' is disabled; "
+                "Spark is fixed to 'legacy'"
+            )
+        if self.landmark_tree_v2_midpoint_direction_mode != "legacy":
+            raise ValueError("landmark_tree_v2_midpoint_direction_mode must be 'legacy'")
         if self.landmark_tree_v2_layout_reuse not in ("independent", "q_from_k"):
             raise ValueError(
                 "landmark_tree_v2_layout_reuse must be 'independent' or 'q_from_k'"
@@ -85,7 +90,8 @@ class ComfySparkConfig:
 class ComfySparkController:
     def __init__(self, config: ComfySparkConfig):
         self.config = config
-        self.topk_only = False
+        self.reblock_enabled = True
+        self.reweight_enabled = True
         self.direct_output = False
         self.reblock_reuse_layers = 1
         self.reblock_reuse_start_layer = 1
@@ -169,7 +175,7 @@ def comfy_kitchen_spark_attention(
     if not q.is_contiguous() or not k.is_contiguous() or not v.is_contiguous():
         raise RuntimeError("ComfyUI Spark requires contiguous Q/K/V")
 
-    if controller.topk_only:
+    if not controller.reblock_enabled:
         query_permutation = query_inverse = key_permutation = None
     else:
         try:
@@ -235,7 +241,7 @@ def comfy_kitchen_spark_attention(
         key_permutation=key_permutation,
         query_inverse=query_inverse,
         force_local_blocks=controller.config.force_local_blocks,
-        reweight=not controller.topk_only,
+        reweight=controller.reweight_enabled,
         video_start=layout.video_start if direct_output else 0,
     )
     _profile_end(controller, sample)

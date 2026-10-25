@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Warmed H20 DiT benchmark using the same profile as the performance matrix.
 
-Run separately for threshold (historical SM120 comparison) and
-packed_external_no_route_qk (the current production default). Conditioning is
-prepared once outside timing and reused by both methods.
+The benchmark uses the production packed_external_no_route_qk policy.
+Conditioning is prepared once outside timing and reused by both methods.
 """
 from __future__ import annotations
 
@@ -74,7 +73,11 @@ def main():
     parser.add_argument('--conditioning', type=Path, required=True)
     parser.add_argument('--prepare-conditioning', action='store_true')
     parser.add_argument('--prompt', default='A cinematic shot of a small wooden fishing boat drifting across a calm lake at sunrise. Golden sunlight illuminates the mist above the water, mountains in the distance, gentle ripples and birdsong.')
-    parser.add_argument('--route-execution', choices=('threshold', 'packed_external_no_route_qk'), default='packed_external_no_route_qk')
+    parser.add_argument(
+        '--route-execution',
+        choices=('packed_external_no_route_qk',),
+        default='packed_external_no_route_qk',
+    )
     parser.add_argument('--repeats', type=int, default=2)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
@@ -100,7 +103,7 @@ def main():
         'resolution': [1344, 768], 'requested_frames': 243,
         'requested_steps': 20, 'transformer_evaluations': 19,
         'topk_ratio': 0.10, 'dense_warmup_evaluations': 4, 'dense_layers': 1,
-        'landmark_direction': 'legacy', 'virtual_query_levels_up': 99,
+        'landmark_direction': 'legacy', 'anchor_policy': 'global',
         'route_execution': args.route_execution, 'torch_compile': True,
         'compile_reproducibility_fix': False,
         'load_seconds': load_seconds, 'seed': 42,

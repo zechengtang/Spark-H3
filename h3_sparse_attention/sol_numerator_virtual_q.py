@@ -742,7 +742,9 @@ def _fused_virtual(q,k,v,a,virtual_ranges,leaf_to_virtual,kc,threshold,route,
     else:
         from .spark_reweight_sm120 import SparkReweightForwardSm120 as FusedKernel
     if capability == (9,0) and fused_topk_ratio:
-        raise NotImplementedError("SM90 CTA-local Top-K is unavailable; use packed_external_no_route_qk or threshold")
+        raise NotImplementedError(
+            "SM90 CTA-local Top-K is unavailable; use packed_external_no_route_qk"
+        )
     # A cache hit skips constructing the kernel object, so keep SM80's ratio
     # validation before looking up a runtime-ratio specialization.
     if capability in ((8,0), (8,6), (8,9)) and not 0.0 <= fused_topk_ratio <= 1.0:

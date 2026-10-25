@@ -123,6 +123,43 @@ def test_topk_video_prefix_uses_packed_route_default():
     assert not any(key.startswith("route_qk_free_fallback:") for key in controller.counts)
 
 
+@pytest.mark.parametrize("mode", ["topk_only", "reweight_only"])
+def test_fixed_layout_modes_use_one_global_anchor(monkeypatch, mode):
+    from types import SimpleNamespace
+    import h3_sparse_attention.processor as proc
+    import h3_sparse_attention.spark_integration as integration
+
+    torch.manual_seed(926)
+    video, total, heads = 128, 137, 1
+    q, k, v = [
+        torch.randn(1, total, heads, 128, device="cuda", dtype=torch.bfloat16)
+        for _ in range(3)
+    ]
+    layout = SimpleNamespace(
+        video_tokens=video, sequence_length=total, grid=(1, 1, video)
+    )
+    cfg = proc.H3SparseAttentionConfig.spark(
+        20, mode=mode, sol_min_tokens=0, sol_log_density=False
+    )
+    controller = proc._Controller(cfg)
+    captured = {}
+
+    def fake_topk(controller, q, k, v, layout, virtual_query_data=None, _query_tokens=None):
+        captured["data"] = virtual_query_data
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(integration, "_spark_topk_attention", fake_topk)
+    integration.spark_attention_bthd(controller, q, k, v, layout, 0)
+    ranges, mapping, anchors = captured["data"]
+    assert ranges.tolist() == [[0, 128], [128, 137]]
+    assert mapping.tolist() == [0, 0, 1]
+    assert anchors.shape == (1, 2, heads, 128)
+    assert controller.sol_virtual_query_layout["global_video_representative"]
+    assert controller.sol_virtual_query_layout["anchor_policy"] == "global"
+    assert controller.counts["sol_identity_virtual_query_calls"] == 1
+    assert controller.counts["sol_identity_reweight_calls"] == int(mode == "reweight_only")
+
+
 @pytest.mark.parametrize('tail_mode',["dense","pad"])
 @pytest.mark.parametrize('reblock',[False,True])
 def test_nonvirtual_topk_uses_exclusive_video_query_prefix(monkeypatch,reblock,tail_mode):

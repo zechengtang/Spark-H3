@@ -447,6 +447,9 @@ def test_dense_backend_is_scoped_to_dense_block_call():
 
 def test_spark_ablation_modes_are_orthogonal():
     full = _RunState.create(20, 0.2, 0.1, "full").controller
+    topk_only = _RunState.create(20, 0.2, 0.1, "topk_only").controller
+    reblock_only = _RunState.create(20, 0.2, 0.1, "reblock_only").controller
+    reweight_only = _RunState.create(20, 0.2, 0.1, "reweight_only").controller
     optimized = _RunState.create(20, 0.2, 0.1, "full_group841").controller
     reuse = _RunState.create(20, 0.2, 0.1, "full_reuse2").controller
 
@@ -472,6 +475,10 @@ def test_spark_ablation_modes_are_orthogonal():
     assert optimized.config.landmark_tree_v2_group_size == (8, 4, 1)
     assert reuse.reblock_reuse_layers == 2
     assert reuse.config.landmark_tree_v2_group_size == 1
+    assert (full.reblock_enabled, full.reweight_enabled) == (True, True)
+    assert (topk_only.reblock_enabled, topk_only.reweight_enabled) == (False, False)
+    assert (reblock_only.reblock_enabled, reblock_only.reweight_enabled) == (True, False)
+    assert (reweight_only.reblock_enabled, reweight_only.reweight_enabled) == (False, True)
     assert full.config.video_tail_mode == "dense"
     assert full.config.landmark_tree_v2_midpoint_direction_mode == "legacy"
     assert "midpoint_direction_mode" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
@@ -483,11 +490,11 @@ def test_spark_ablation_modes_are_orthogonal():
     assert reblock_layout[0] == ["q_reuse_k", "independent"]
     assert reblock_layout[1]["default"] == "q_reuse_k"
     assert "reblock_layout" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
-    fused_midpoint = _RunState.create(20, 0.2, 0.1, midpoint_direction_mode="fused")
-    assert fused_midpoint.controller.config.landmark_tree_v2_midpoint_direction_mode == "fused"
+    with pytest.raises(ValueError, match="fused.*disabled"):
+        _RunState.create(20, 0.2, 0.1, midpoint_direction_mode="fused")
     with pytest.raises(ValueError, match="midpoint_direction_mode"):
         _RunState.create(20, 0.2, 0.1, midpoint_direction_mode="invalid")
-    for legacy in ("full_target189", "topk10_base", "reblock_only", "reweight_only"):
+    for legacy in ("full_target189", "topk10_base"):
         with pytest.raises(ValueError, match="only comfy-kitchen global modes"):
             _RunState.create(20, 0.2, 0.1, legacy)
     with pytest.raises(ValueError, match="topk_mode"):
@@ -775,7 +782,8 @@ def test_target_scope_keeps_backend_direct_output_path(monkeypatch):
         video_start=video_start,
     )
     controller = ComfySparkController(ComfySparkConfig())
-    controller.topk_only = True
+    controller.reblock_enabled = False
+    controller.reweight_enabled = False
     controller.direct_output = True
 
     comfy_kitchen_spark_attention(controller, q, q, q, layout, layer=1)

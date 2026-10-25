@@ -13,10 +13,16 @@ from h3_sparse_attention.spark_reweight_sm80 import SparkReweightForwardSm80
 
 def test_route_qk_free_selector_is_default():
     baseline = H3SparseAttentionConfig.spark(20)
-    optimized = H3SparseAttentionConfig.spark(20, sol_route_topk_execution="threshold")
     assert baseline.sol_route_topk_execution == "packed_external_no_route_qk"
-    assert optimized.sol_route_topk_execution == "threshold"
-    assert optimized.landmark_tree_v2_children == baseline.landmark_tree_v2_children == 16
+    assert baseline.landmark_tree_v2_children == 16
+    with pytest.raises(ValueError, match="threshold.*disabled"):
+        H3SparseAttentionConfig.spark(
+            20, sol_route_topk_execution="threshold"
+        )
+    with pytest.raises(ValueError, match="fused.*disabled"):
+        H3SparseAttentionConfig.spark(
+            20, sol_route_topk_execution="fused"
+        )
     with pytest.raises(ValueError, match="bitwise-equivalent but slower"):
         H3SparseAttentionConfig.spark(
             20, sol_route_topk_execution="packed_external"
@@ -32,7 +38,12 @@ def test_route_qk_free_default_falls_back_outside_supported_gpus():
     assert _effective_topk_execution(requested, (8, 6)) == requested
     assert _effective_topk_execution(requested, (8, 9)) == requested
     assert _effective_topk_execution(requested, (9, 0)) == requested
-    assert _effective_topk_execution("threshold", (12, 0)) == "threshold"
+    with pytest.raises(ValueError, match="threshold.*disabled"):
+        _effective_topk_execution("threshold", (12, 0))
+    with pytest.raises(ValueError, match="fused.*disabled"):
+        _effective_topk_execution("fused", (12, 0))
+    with pytest.raises(RuntimeError, match="alternate Top-K route modes are disabled"):
+        _effective_topk_execution(requested, (10, 0))
 
 
 def test_route_qk_free_kernel_disables_centroid_handoff():

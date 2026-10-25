@@ -24,13 +24,16 @@ JOBS = {
     6: (15, "gpu6"),
     7: (10, "gpu7"),
 }
+FRAME_COUNTS = {5: 124, 10: 243, 15: 345}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpus", default="0,1,2,3,4,5,6,7")
     parser.add_argument(
-        "--route-execution", choices=("threshold", "fused"), default="threshold"
+        "--route-execution",
+        choices=("packed_external_no_route_qk",),
+        default="packed_external_no_route_qk",
     )
     parser.add_argument("--reuse-dense", action="store_true")
     parser.add_argument(
@@ -68,10 +71,10 @@ def main() -> int:
                 args.route_execution,
             ]
         if args.reuse_dense:
-            route_suffix = "_cta_topk" if args.route_execution == "fused" else ""
             dense_report = (
                 ROOT / "reports"
-                / f"sm80_fused{route_suffix}_dense_vs_spark10_{seconds}s768p_seed42_{tag}.json"
+                / f"sm80_fused_packed_route_dense_vs_spark10_"
+                  f"{seconds}s_{FRAME_COUNTS[seconds]}f768p_seed42_{tag}.json"
             )
             command.extend(("--reuse-dense-report", str(dense_report)))
         process = subprocess.Popen(

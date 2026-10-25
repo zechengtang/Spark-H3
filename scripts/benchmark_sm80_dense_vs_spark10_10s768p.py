@@ -36,7 +36,9 @@ FRAME_COUNTS = {5: 124, 10: 243, 15: 345}
 
 def result_path(seconds: int, tag: str, route_execution: str) -> Path:
     suffix = f"_{tag}" if tag else ""
-    route_suffix = "_cta_topk" if route_execution == "fused" else ""
+    if route_execution != "packed_external_no_route_qk":
+        raise ValueError("only packed_external_no_route_qk is enabled")
+    route_suffix = "_packed_route"
     return (
         Path(__file__).resolve().parents[1]
         / "reports"
@@ -183,7 +185,9 @@ def main():
     parser.add_argument("--seconds", type=int, choices=(5, 10, 15), default=10)
     parser.add_argument("--tag", default="")
     parser.add_argument(
-        "--route-execution", choices=("threshold", "fused"), default="threshold"
+        "--route-execution",
+        choices=("packed_external_no_route_qk",),
+        default="packed_external_no_route_qk",
     )
     args = parser.parse_args()
     if torch.cuda.get_device_capability() != (8, 0):
@@ -198,8 +202,6 @@ def main():
     frames = FRAME_COUNTS[args.seconds]
     if args.reuse_dense or args.reuse_dense_report is not None:
         reuse_file = args.reuse_dense_report or result_file
-        if not reuse_file.exists() and args.route_execution == "fused":
-            reuse_file = result_path(args.seconds, args.tag, "threshold")
         if reuse_file.exists():
             previous = json.loads(reuse_file.read_text())
             if previous.get("duration_seconds") != args.seconds:

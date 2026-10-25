@@ -10,7 +10,8 @@ scheduling, ``root_fanout=None`` and ``final_fanout=None`` both inherit
 or final round. ``max_children`` remains a compatibility alias.
 The result includes the permutation and inverse permutation.
 
-``spark_reweight(a, k, v)`` consumes query representatives ``a[B,P,H,D]``
+``spark_reweight(a, k, v)`` is the low-level tensor primitive and consumes
+query representatives ``a[B,P,H,D]``
 and keys/values ``k,v[B,T,H,D]``. It returns query-conditioned weighted
 keys, weighted values, and the log-mass correction ``(ak, av, lm)``.
 It does not build query representatives, select routes, compute the exact
@@ -18,9 +19,9 @@ attention branch, or merge attention outputs.
 
 The two tensor functions are direct aliases, not wrappers.
 `install_h3_spark_attn` is the model-level context-manager installer; its
-configuration defaults to power-of-two fanout-16 reblock without temporal grouping
-and one global query representative per head. Target-189 remains an explicit
-compatibility ablation.
+configuration exposes four reblock/reweight component modes. Model-level
+reweighting always uses one global target-video representative per head;
+multi-anchor and target-189 topologies are not public integration modes.
 See h3_sparse_attention/README.md.
 
 For the tensor aliases, Original names, signatures, internal

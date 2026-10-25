@@ -112,6 +112,7 @@ num_inference_steps = num_denoise_steps + 1
 with install_h3_spark_attn(
     pipe.transformer,
     num_denoise_steps=num_denoise_steps,
+    mode="full",
     warmup_mode="warmup_steps",
     warmup_steps=4,
     dense_layers=0,
@@ -133,27 +134,40 @@ Default Spark settings match the source:
   `min_tokens=0` disables this size gate.
 - Native mean Top-K routing with ratio `0.1`, `gemm_radix` cutoffs, and
   `packed_external_no_route_qk` execution. This exports the packed route once
-  and avoids recomputing route QK inside the attention kernel. Set
-  `sol_route_topk_execution="threshold"` explicitly for the historical
-  compiled Table 4 path. The packed route is implemented on SM80, SM86, SM89, SM90 and SM120;
-  SM100 resolves this default to `threshold` and reports that fallback
-  in the plugin summary. The slower legacy `packed_external` execution was
+  and avoids recomputing route QK inside the attention kernel. Explicit
+  `threshold` execution and automatic threshold fallback are disabled so a
+  Top-K cutoff cannot be confused with the route representation. The packed
+  route is implemented on SM80, SM86, SM89, SM90 and SM120; unsupported
+  architectures fail before sparse execution. The slower legacy `packed_external` execution was
   removed after dual-SM120 verification showed bitwise-identical output; old
   configurations receive a migration error directing them to the no-QK mode.
 - Landmark-v2 Q/K reblocking using opposite second moments, cosine distance,
   fanout 16 with `power_of_two_fanout` scheduling, 32 midpoint landmarks, and no temporal grouping.
-- The midpoint direction builder defaults to the historical two-stage
-  calculation for bitwise compatibility with the Table 4 Spark run. Set
-  `landmark_tree_v2_midpoint_direction_mode="fused"` to opt into the newer,
-  faster direction kernel; it can change near-tie reblock routes and outputs.
-  The ComfyUI Spark node exposes the same choice as its optional
-  `midpoint_direction_mode` input, also defaulting to `legacy`.
+- The midpoint direction builder is fixed to the historical two-stage
+  `legacy` calculation for bitwise compatibility with the Table 4 Spark run.
+  `landmark_tree_v2_midpoint_direction_mode="fused"` is rejected by both the
+  Diffusers and ComfyUI configuration boundaries because it can change
+  near-tie reblock routes and outputs.
 - One global representative per head, formed by averaging all target-video
   queries after reblocking; the default stored anchor dtype is BF16.
-- Global-anchor K/V and log-mass summaries merged with exact attention. The
-  former target-189 representatives remain available only as an explicit
-  ablation and are not the default Spark-H3 configuration.
+- Global-anchor K/V and log-mass summaries merged with exact attention.
+  Target-189 and other multi-anchor topologies are rejected by the public
+  Spark installer.
 - The positional local band is disabled after reblocking.
+
+The public `mode` argument exposes exactly four orthogonal component choices;
+all four use the same single global target-video representative per head:
+
+| `mode` | Reblock | Global-anchor reweight |
+| --- | --- | --- |
+| `"topk_only"` | no | no |
+| `"reblock_only"` | yes | no |
+| `"reweight_only"` | no | yes |
+| `"full"` | yes | yes |
+
+The no-reweight modes retain the ordinary mean-summary compressed branch.
+Low-level tensor helpers remain capable of processing multiple representatives,
+but that experimental topology is no longer part of model-level Spark policy.
 
 The approximate branch defaults to per-query processing. Set
 `sol_tail_granularity="block"` in `install_h3_spark_attn(...)` to share one
@@ -162,8 +176,8 @@ block-granularity mode. Exact attention still uses the real query rows, and
 Top-K/reblock/global-reweight settings do not change. This opt-in mode uses
 the existing exact route/export plus a separate Triton block-tail merge;
 it is a functional compatibility path, not the fused query-mode fast path.
-For Top-K it supports `threshold` and `packed_external_no_route_qk` routing,
-but not `fused` routing. The default
+For Top-K it supports `packed_external_no_route_qk`, but not `fused` routing.
+The default
 `"query"` mode is unchanged.
 
 For reweight **numeric** ablations, the Diffusers installer also accepts
@@ -214,39 +228,37 @@ Sol and Spark always avoid redundant Q/K/V layout copies; the former
 `sol_route_global_weighted_mean=True` enables global weighted Top-K routing;
 `sol_route_global_weighted_side` selects `both`, `query`, or `key`.
 
-Set `sol_route_topk_ratio=None` to use native Sol tau routing with Spark
-reweighting (`sol_virtual_query_route_score="native_mean"`). SM120 reweighting
-now skips unused ordinary value sums. Spark evaluates only complete video query
+SM120 reweighting skips unused ordinary value sums. Spark evaluates only complete video query
 blocks by default; pad mode additionally evaluates the incomplete video tail
 sparsely with query-only padding. All real context query rows are evaluated
 once by dense attention with the complete K/V set.
 
 Configuration overrides are passed as keyword arguments, for example
-`sol_route_topk_ratio=0.2` or `sol_virtual_query_levels_up=2`. Setting levels-up
-automatically clears the default target-block setting; specifying both is an error.
+`sol_route_topk_ratio=0.2`. Public Spark construction rejects
+`sol_virtual_query_levels_up`, `sol_virtual_query_target_blocks`,
+`sol_virtual_query_route_score`, and direct reblock toggles; select one of the
+four `mode` values instead.
 
 
 Plain Sol on SM80/SM89 retains pointer-based Triton kernels. Spark BF16 on SM80,
 SM89, SM90 and SM120 uses a CuTe fused virtual-query mainloop automatically above 8192
 packed tokens; smaller inputs use the streamed exact/skipped implementation.
-The SM80/SM89 mainloop follows the SM120 structure: CTA-local native-threshold or
-fixed-budget fused Top-K routing, warp exact-index compaction, two-stage
+The SM80/SM89 mainloop follows the SM120 structure: packed external Top-K
+routing, warp exact-index compaction, two-stage
 `cp.async` K/V streaming, and a single FP32 online-softmax/output accumulator
-for exact and approximate tiles. Set `sol_route_topk_execution="fused"` to
-select Top-K inside each CTA and remove the external cutoff tensor/pass. The
-SM80 implementation reuses the Q shared-memory tile for route scores after Q
-is register resident, so fused Top-K does not increase shared-memory usage. Its
-exact FP32 radix boundary selection distributes score scans over all four CTA
-warps, and the summary producer writes AK/AV directly in the N-major layout
-consumed by `cp.async`, avoiding per-layer transpose copies.
+for exact and approximate tiles. Public configuration rejects both threshold
+and CTA-local fused Top-K execution so every supported run uses the same exact
+packed route representation. Low-level fused-route kernels remain internal
+experimental code and are not selectable through `H3SparseAttentionConfig`.
+The summary producer writes AK/AV directly in the N-major layout consumed by
+`cp.async`, avoiding per-layer transpose copies.
 Kernel failures propagate to the caller; there is no error-triggered backend
 fallback.
 See the [kernel performance matrix](../docs/kernel_performance_matrix.md) for
 the current cross-architecture benchmark format and locally measured results.
 `H3_SPARK_REWEIGHT_FUSED=0` or `1` selects the source's fallback/fused path on
-SM80/SM89/SM90/SM100/SM120 for testing. On SM80/SM89, fused mode supports native-threshold
-and CTA-local fused Top-K routes; unsupported external/hybrid route modes raise
-directly.
+SM80/SM89/SM90/SM100/SM120 for testing. Public Top-K routing uses packed external
+routes only; unsupported route representations raise directly.
 This code does not change environment variables.
 
 Plain `install_h3_sol_attn` retains its base Sol defaults. The standalone Spark
@@ -363,10 +375,9 @@ through the K pipeline, skipping the unused KC transfer while preserving K/V
 pipeline phases. Exact tokens and conditioned summary
 blocks share one FP32 online softmax and output accumulator.
 
-Use BF16 contiguous `[batch, tokens, heads, 128]` inputs. Threshold, dense
-external routes, query prefixes, sink blocks and explicit local block radii are
-also supported. CTA-local Top-K (`sol_route_topk_execution="fused"`) is not yet
-implemented on SM90; use the default packed execution or `threshold`.
+Use BF16 contiguous `[batch, tokens, heads, 128]` inputs. Packed routes, query
+prefixes, sink blocks and explicit local block radii are supported. The public
+Top-K route policy is fixed to `packed_external_no_route_qk`.
 
 The GPU regression tests are in `tests/test_spark_reweight_sm90_sm100.py` and
 `tests/test_spark_route_backends_sm90_sm100.py`. The preprocessing module needs

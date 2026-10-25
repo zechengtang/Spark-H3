@@ -1122,21 +1122,19 @@ def spark_attention_bthd(
             reblock_workspace = None
         _profile_end(controller, profile)
         controller.counts["sol_landmark_preprocess_calls"] += 1
-    elif getattr(controller, "spark_identity_reweight", False):
-        # Ablation-only path: preserve the original physical video-token order
-        # while applying the same target-189 virtual-query reweighting used by
-        # full Spark.  This isolates reweight cost from dynamic reblocking and
-        from .landmark_virtual_q import target_virtual_query_layout
+    elif cfg.sol_spark_mode in ("topk_only", "reweight_only"):
+        # Fixed-layout public modes preserve physical video-token order while
+        # using the same single global representative as the reblocked modes.
+        # Reweight-only consumes its weighted summaries; Top-K-only selects the
+        # ordinary mean-summary components through sol_reweight_components.
+        from .landmark_virtual_q import virtual_query_layout
         from .reblock_hierarchy import build_reblock_hierarchy
         from .sol_numerator_virtual_q import build_virtual_anchors, validate_virtual_layout
-        from .spark_defaults import (
-            SPARK_REWEIGHT_MAX_BLOCKS,
-            SPARK_REWEIGHT_MIN_BLOCKS,
-            SPARK_REWEIGHT_TARGET_BLOCKS,
-        )
 
         cache = controller._virtual_query_layout_cache
-        cache_key = ("identity_target189", q_bthd.shape[1], q_bthd.device, layout.grid)
+        cache_key = (
+            "identity_global_anchor", q_bthd.shape[1], q_bthd.device, layout.grid
+        )
         if cache_key not in cache:
             hierarchy = build_reblock_hierarchy(
                 layout.video_tokens,
@@ -1144,13 +1142,8 @@ def spark_attention_bthd(
                 grid_shape=layout.grid,
                 fanout_mode=cfg.landmark_tree_v2_fanout_mode,
             )
-            topology = target_virtual_query_layout(
-                layout.video_tokens,
-                q_bthd.shape[1],
-                SPARK_REWEIGHT_TARGET_BLOCKS,
-                SPARK_REWEIGHT_MIN_BLOCKS,
-                SPARK_REWEIGHT_MAX_BLOCKS,
-                hierarchy=hierarchy,
+            topology = virtual_query_layout(
+                layout.video_tokens, q_bthd.shape[1], 99, hierarchy=hierarchy
             )
             ranges_host, mapping_host = validate_virtual_layout(
                 topology["ranges"], topology["leaf_to_virtual"], q_bthd.shape[1]
@@ -1163,7 +1156,8 @@ def spark_attention_bthd(
         ranges, mapping, topology_metadata = cache[cache_key]
         controller.sol_virtual_query_layout = {
             **topology_metadata,
-            "ablation": "identity_physical_order",
+            "layout": "identity_physical_order",
+            "anchor_policy": "global",
         }
         anchors = (
             None
@@ -1172,7 +1166,9 @@ def spark_attention_bthd(
                 dtype=(torch.float32 if cfg.sol_global_anchor_dtype == "float32" else q_bthd.dtype))
         )
         virtual_query_data = (ranges, mapping, anchors)
-        controller.counts["sol_identity_reweight_calls"] += 1
+        controller.counts["sol_identity_virtual_query_calls"] += 1
+        if cfg.sol_spark_mode == "reweight_only":
+            controller.counts["sol_identity_reweight_calls"] += 1
 
     padded_context_queries = None
     if needs_query_padding:
@@ -1288,7 +1284,14 @@ def spark_attention_bthd(
 
 
 def _effective_topk_execution(requested, capability):
-    """Resolve architecture-specific execution for the public default."""
+    """Validate the single public Top-K route representation."""
+    if requested in ("threshold", "fused"):
+        raise ValueError(
+            f"sol_route_topk_execution={requested!r} is disabled; use "
+            "'packed_external_no_route_qk'"
+        )
+    if requested != "packed_external_no_route_qk":
+        raise ValueError(f"invalid sol_route_topk_execution: {requested!r}")
     if requested == "packed_external_no_route_qk" and capability not in (
         (8, 0),
         (8, 6),
@@ -1296,7 +1299,10 @@ def _effective_topk_execution(requested, capability):
         (9, 0),
         (12, 0),
     ):
-        return "threshold"
+        raise RuntimeError(
+            f"SM{capability[0]}{capability[1]} does not implement "
+            "packed_external_no_route_qk; alternate Top-K route modes are disabled"
+        )
     return requested
 
 
@@ -1318,17 +1324,9 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
     cfg = controller.config
     capability = tuple(torch.cuda.get_device_capability(q.device))
     execution = _effective_topk_execution(cfg.sol_route_topk_execution, capability)
-    if execution != cfg.sol_route_topk_execution:
-        controller.counts[
-            f"route_execution_fallback:{cfg.sol_route_topk_execution}->{execution}"
-        ] += 1
-    if capability in ((8, 0), (8, 6), (8, 9)) and execution not in (
-        "threshold", "fused", "packed_external_no_route_qk"
-    ):
+    if execution != "packed_external_no_route_qk":
         raise RuntimeError(
-            f"SM{capability[0]}{capability[1]} does not implement sol_route_topk_execution="
-            f"{execution!r}; use 'threshold', 'fused', "
-            "or 'packed_external_no_route_qk'"
+            "only packed_external_no_route_qk is enabled for Top-K routing"
         )
     from .sol_numerator_virtual_q import virtual_q_backend, reduce_virtual_key_centroids
     profile = _profile_begin(controller, "topk_reduce_kv")
@@ -1414,6 +1412,11 @@ def _spark_topk_attention(controller, q, k, v, layout, virtual_query_data=None, 
             query_tokens=_query_tokens,
         )
         controller.counts["sol_topk_packed_route_calls"] += 1
+    elif execution == "packed_external_no_route_qk":
+        raise RuntimeError(
+            "packed_external_no_route_qk could not materialize a packed route "
+            "for this input/configuration; alternate Top-K route modes are disabled"
+        )
     elif backend is not None and not partial_video:
         profile = _profile_begin(controller, "topk_cutoff")
         cutoff = {"gemm_radix": gemm_radix_topk_cutoff,

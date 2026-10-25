@@ -1,4 +1,4 @@
-"""Hardware-independent wiring checks for fused route executions."""
+"""Hardware-independent wiring checks for the packed Top-K route."""
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +12,6 @@ from h3_sparse_attention.processor import _Controller
 @pytest.mark.parametrize(
     ("execution", "expected_ratio", "expected_skip", "expects_route"),
     [
-        ("fused", 0.25, False, False),
         ("packed_external_no_route_qk", 0.0, True, True),
     ],
 )
@@ -21,8 +20,6 @@ def test_sm120_route_execution_reaches_fused_kernel_contract(
     monkeypatch, execution, expected_ratio, expected_skip, expects_route, capability
 ):
     """The production dispatcher must preserve each supported route contract."""
-    if capability == (9, 0) and execution == "fused":
-        pytest.skip("SM90 uses external Top-K routing")
     from h3_sparse_attention import rope_sol_kernel, sol_numerator_virtual_q
     from h3_sparse_attention import sol_topk_cutoff, spark_integration
 
@@ -83,7 +80,4 @@ def test_sm120_route_execution_reaches_fused_kernel_contract(
     assert kwargs["skip_external_route_qk"] is expected_skip
     assert (kwargs["route"] is packed_route) is expects_route
     assert len(route_calls) == int(expects_route)
-    if execution == "fused":
-        assert controller.counts["sol_topk_fused_route_calls"] == 1
-    else:
-        assert controller.counts["sol_topk_packed_route_calls"] == 1
+    assert controller.counts["sol_topk_packed_route_calls"] == 1

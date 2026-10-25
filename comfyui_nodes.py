@@ -431,7 +431,7 @@ class _RunState:
                 landmark_tree_v2_group_size=(8, 4, 1),
                 **common,
             )
-        elif ablation_mode == "topk_only":
+        elif ablation_mode in ("topk_only", "reblock_only", "reweight_only"):
             config = ComfySparkConfig(**common)
         else:
             raise ValueError(
@@ -445,7 +445,12 @@ class _RunState:
             sparse_scope=sparse_scope,
             producer_chunk=producer_chunk,
         )
-        state.controller.topk_only = ablation_mode == "topk_only"
+        state.controller.reblock_enabled = ablation_mode in (
+            "full", "full_reuse2", "full_group841", "reblock_only"
+        )
+        state.controller.reweight_enabled = ablation_mode in (
+            "full", "full_reuse2", "full_group841", "reweight_only"
+        )
         # The exact kernel can scatter video-first rows directly into H3's
         # natural layout. Keep an opt-out for regression A/B comparisons.
         state.controller.direct_output = os.environ.get("H3_SPARK_DIRECT_OUTPUT", "1") == "1"

@@ -11,8 +11,6 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .spark_defaults import (SPARK_REWEIGHT_TARGET_BLOCKS, SPARK_REWEIGHT_MIN_BLOCKS, SPARK_REWEIGHT_MAX_BLOCKS)
-
 import torch
 import torch.nn.functional as F
 
@@ -68,13 +66,16 @@ class H3SparseAttentionConfig:
     sol_reweight_logmass_key: Literal["stored", "pre_round"] = "stored"
     # Orthogonal ablation of anchor-weighted K/V and the per-block log-mass bias.
     sol_reweight_components: Literal["full", "weights_only", "bias_only", "none"] = "full"
+    sol_spark_mode: Literal[
+        "topk_only", "reblock_only", "reweight_only", "full"
+    ] | None = None
 
     sol_route_topk_ratio: float | None = None
     sol_route_topk_cutoff_mode: Literal[
         "gemm_radix", "gaussian_moments"
     ] = "gemm_radix"
     sol_route_topk_execution: Literal[
-        "threshold", "packed_external_no_route_qk", "fused"
+        "packed_external_no_route_qk"
     ] = "packed_external_no_route_qk"
     sol_sparse_video_scope: Literal["target", "target_and_condition"] = "target"
     sol_video_tail_mode: Literal["dense", "pad"] = "dense"
@@ -111,7 +112,7 @@ class H3SparseAttentionConfig:
     # 5s and 0.191 dB at 10s versus legacy (not statistically significant:
     # p=0.61 and p=0.26). Keep this choice independent of packed/external
     # execution so kernel optimizations can be evaluated without that confound.
-    landmark_tree_v2_midpoint_direction_mode: Literal["legacy", "fused"] = "legacy"
+    landmark_tree_v2_midpoint_direction_mode: Literal["legacy"] = "legacy"
     landmark_tree_v2_aggregation: Literal["linear", "max"] = "linear"
     rope_sol_key_ridge_epsilon: float = 1e-3
 
@@ -207,6 +208,13 @@ class H3SparseAttentionConfig:
             raise ValueError("invalid sol_reweight_logmass_key")
         if self.sol_reweight_components not in ("full", "weights_only", "bias_only", "none"):
             raise ValueError("invalid sol_reweight_components")
+        if self.sol_spark_mode not in (
+            None, "topk_only", "reblock_only", "reweight_only", "full"
+        ):
+            raise ValueError(
+                "sol_spark_mode must be topk_only, reblock_only, "
+                "reweight_only, full, or None"
+            )
 
         if self.sol_route_topk_ratio is not None and not 0 < self.sol_route_topk_ratio <= 1:
             raise ValueError("sol_route_topk_ratio must lie in (0, 1]")
@@ -218,9 +226,14 @@ class H3SparseAttentionConfig:
                 "it is bitwise-equivalent but slower; use "
                 "'packed_external_no_route_qk'"
             )
-        if self.sol_route_topk_execution not in (
-            "threshold", "packed_external_no_route_qk", "fused"
-        ):
+        if self.sol_route_topk_execution in ("threshold", "fused"):
+            raise ValueError(
+                f"sol_route_topk_execution={self.sol_route_topk_execution!r} "
+                "is disabled; use "
+                "'packed_external_no_route_qk' so exact Top-K selections are "
+                "encoded and consumed as packed routes"
+            )
+        if self.sol_route_topk_execution != "packed_external_no_route_qk":
             raise ValueError("invalid sol_route_topk_execution")
         if self.sol_sparse_video_scope not in ("target", "target_and_condition"):
             raise ValueError("sol_sparse_video_scope must be 'target' or 'target_and_condition'")
@@ -272,19 +285,34 @@ class H3SparseAttentionConfig:
             self.sol_virtual_query_levels_up is not None
             or self.sol_virtual_query_target_blocks is not None
         )
+        if self.sol_spark_mode is not None:
+            expected_reblock = self.sol_spark_mode in ("reblock_only", "full")
+            expected_reweight = self.sol_spark_mode in ("reweight_only", "full")
+            if self.sol_route_topk_ratio is None:
+                raise ValueError("Spark component modes require Top-K routing")
+            if self.sol_landmark_preprocess != expected_reblock:
+                raise ValueError(
+                    f"sol_spark_mode={self.sol_spark_mode!r} requires "
+                    f"sol_landmark_preprocess={expected_reblock}"
+                )
+            if (self.sol_reweight_components != "none") != expected_reweight:
+                raise ValueError(
+                    f"sol_spark_mode={self.sol_spark_mode!r} has an incompatible "
+                    "sol_reweight_components value"
+                )
+            if (self.sol_virtual_query_target_blocks is not None
+                    or self.sol_virtual_query_levels_up != 99
+                    or self.sol_virtual_query_route_score != "native_mean"):
+                raise ValueError(
+                    "public Spark modes use one global anchor; target-block, "
+                    "multi-level, and reweighted-route topologies are disabled"
+                )
         if (self.sol_reweight_summary_math != "tensorcore"
                 or self.sol_reweight_logmass_key != "stored"
                 or self.sol_reweight_components != "full") and not virtual_query_enabled:
             raise ValueError("reweight numeric ablations require virtual query summaries")
         if self.sol_tail_granularity in ("block", "block8x8") and not virtual_query_enabled:
             raise ValueError("block tail requires virtual query summaries")
-        if (self.sol_tail_granularity in ("block", "block8x8")
-                and self.sol_route_topk_ratio is not None
-                and self.sol_route_topk_execution == "fused"):
-            raise ValueError(
-                "block tail requires threshold or packed_external_no_route_qk "
-                "Top-K routing"
-            )
         if self.sol_virtual_query_route_score != "native_mean" and not virtual_query_enabled:
             raise ValueError("reweighted routing requires virtual query summaries")
         if self.sol_virtual_query_levels_up is not None and self.sol_virtual_query_target_blocks is not None:
@@ -304,7 +332,9 @@ class H3SparseAttentionConfig:
             ):
                 raise ValueError("virtual query blocks require 1 <= min <= target <= max")
         if virtual_query_enabled:
-            if not self.sol_landmark_preprocess or self.sol_landmark_preprocess_version != "v2":
+            if (self.sol_spark_mode is None
+                    and (not self.sol_landmark_preprocess
+                         or self.sol_landmark_preprocess_version != "v2")):
                 raise ValueError("virtual query summaries require LMv2 Sol preprocessing")
             if self.sol_route_topk_ratio is None and self.sol_virtual_query_route_score != "native_mean":
                 raise ValueError("tau routing with virtual query summaries requires native_mean scores")
@@ -351,8 +381,13 @@ class H3SparseAttentionConfig:
             raise ValueError("landmark_tree_v2_landmark_count must be 32, 64, 128, or 256")
         if self.landmark_tree_v2_landmark_mode not in ("mean", "midpoint"):
             raise ValueError("landmark_tree_v2_landmark_mode must be mean or midpoint")
-        if self.landmark_tree_v2_midpoint_direction_mode not in ("legacy", "fused"):
-            raise ValueError("landmark_tree_v2_midpoint_direction_mode must be legacy or fused")
+        if self.landmark_tree_v2_midpoint_direction_mode == "fused":
+            raise ValueError(
+                "landmark_tree_v2_midpoint_direction_mode='fused' is disabled; "
+                "Spark experiments are fixed to 'legacy'"
+            )
+        if self.landmark_tree_v2_midpoint_direction_mode != "legacy":
+            raise ValueError("landmark_tree_v2_midpoint_direction_mode must be legacy")
         if self.landmark_tree_v2_aggregation not in ("linear", "max") or (self.landmark_tree_v2_aggregation == "max" and self.landmark_tree_v2_distance != "cosine"):
             raise ValueError("max aggregation requires cosine distance")
         if self.landmark_tree_v2_distance not in ("euclidean", "cosine"):
@@ -406,10 +441,41 @@ class H3SparseAttentionConfig:
         num_inference_steps: int | None = None,
         *,
         num_denoise_steps: int | None = None,
+        mode: Literal[
+            "topk_only", "reblock_only", "reweight_only", "full"
+        ] = "full",
         **overrides,
     ) -> "H3SparseAttentionConfig":
-        """Sol TopK10 + ungrouped fanout-16 LMv2 + global reweighting."""
+        """Build one of four fixed-layout/reblock × global-reweight modes."""
         cls._validate_warmup_overrides(overrides)
+        if mode not in ("topk_only", "reblock_only", "reweight_only", "full"):
+            raise ValueError(
+                "mode must be topk_only, reblock_only, reweight_only, or full"
+            )
+        if "sol_spark_mode" in overrides:
+            raise ValueError("pass mode= instead of sol_spark_mode")
+        retired = {
+            "sol_virtual_query_target_blocks",
+            "sol_virtual_query_min_blocks",
+            "sol_virtual_query_max_blocks",
+            "sol_virtual_query_levels_up",
+            "sol_virtual_query_route_score",
+            "sol_landmark_preprocess",
+        }
+        requested_retired = sorted(retired.intersection(overrides))
+        if requested_retired:
+            raise ValueError(
+                "public Spark modes fix global-anchor topology and reblocking; "
+                "remove legacy overrides: " + ", ".join(requested_retired)
+            )
+        reblock = mode in ("reblock_only", "full")
+        reweight = mode in ("reweight_only", "full")
+        if "sol_reweight_components" in overrides:
+            requested_reweight = overrides["sol_reweight_components"] != "none"
+            if requested_reweight != reweight:
+                raise ValueError(
+                    "sol_reweight_components conflicts with the selected Spark mode"
+                )
         defaults = dict(
             # Spark applies sparse attention to every eligible transformer
             # layer by default. Callers can opt leading layers back into dense.
@@ -417,33 +483,26 @@ class H3SparseAttentionConfig:
             sol_route_topk_ratio=0.1,
             sol_route_topk_cutoff_mode="gemm_radix",
             # Export the packed route once and let the attention kernel consume
-            # it without recomputing route QK. The threshold path remains an
-            # explicit compatibility option.
+            # it without recomputing route QK. Threshold and CTA-local fused
+            # routing are deliberately excluded from the public policy.
             sol_route_topk_execution="packed_external_no_route_qk",
             # Short sequences cannot amortize the fused sparse path. Match the
             # kernel crossover directly and keep them on original dense attention.
             sol_min_tokens=8192,
             sol_global_anchor_dtype="bfloat16",
-            sol_landmark_preprocess=True,
+            sol_spark_mode=mode,
+            sol_reweight_components="full" if reweight else "none",
+            sol_landmark_preprocess=reblock,
             sol_landmark_preprocess_version="v2",
             landmark_tree_v2_children=16,
             landmark_tree_v2_midpoint_direction_mode="legacy",
-            # Collapse the completed reblock hierarchy to its video root.  A
-            # deliberately oversized levels-up value makes the global policy
-            # independent of the number of hierarchy levels for a given grid.
+            # All four public modes share one global representative per head.
+            # An oversized levels-up value collapses either the reblocked or
+            # fixed physical hierarchy to its video root.
             sol_virtual_query_target_blocks=None,
             sol_virtual_query_levels_up=99,
             sol_virtual_query_route_score="native_mean",
         )
-        # Preserve target-189 as an explicit compatibility ablation without
-        # making callers clear the global preset manually.
-        if overrides.get("sol_virtual_query_target_blocks") is not None:
-            if "sol_virtual_query_levels_up" not in overrides:
-                defaults["sol_virtual_query_levels_up"] = None
-            defaults["sol_virtual_query_min_blocks"] = SPARK_REWEIGHT_MIN_BLOCKS
-            defaults["sol_virtual_query_max_blocks"] = SPARK_REWEIGHT_MAX_BLOCKS
-        if overrides.get("sol_virtual_query_levels_up") is not None and "sol_virtual_query_target_blocks" not in overrides:
-            defaults["sol_virtual_query_target_blocks"] = None
         if overrides.get("landmark_tree_v2_fanout") is not None and "landmark_tree_v2_children" not in overrides:
             defaults.pop("landmark_tree_v2_children", None)
         defaults.update(overrides)
@@ -1041,6 +1100,9 @@ def install_h3_spark_attn(
     dense_layers: int | None = None,
     min_tokens: int | None = None,
     topk_ratio: float | None = None,
+    mode: Literal[
+        "topk_only", "reblock_only", "reweight_only", "full"
+    ] = "full",
     **config_overrides,
 ) -> H3SparseAttentionPlugin:
     """Return the Spark plugin: Sol TopK10, ungrouped LMv2, global reweight."""
@@ -1076,6 +1138,7 @@ def install_h3_spark_attn(
         H3SparseAttentionConfig.spark(
             num_inference_steps,
             num_denoise_steps=num_denoise_steps,
+            mode=mode,
             **config_overrides,
         ),
     )

@@ -16,6 +16,8 @@ def test_installer_defaults_and_global_frontier():
     assert cfg.sol_min_tokens == 8192
     assert cfg.sol_sparse_video_scope=='target'
     assert cfg.sol_global_anchor_dtype=='bfloat16'
+    assert cfg.sol_spark_mode == 'full'
+    assert cfg.sol_reweight_components == 'full'
     assert cfg.sol_force_local_blocks is None and not cfg.sol_local_blocks_enabled
     assert cfg.sol_video_tail_mode=='dense'
     assert cfg.sol_landmark_preprocess and cfg.sol_landmark_preprocess_version=='v2'
@@ -302,39 +304,60 @@ def test_long_sequence_low_memory_reblock_is_a800_80gb_only(monkeypatch):
 
 
 def test_overrides_and_plain_sol_opt_in():
-    cfg=H3SparseAttentionConfig.spark(20,sol_virtual_query_levels_up=2,landmark_tree_v2_children=8)
-    assert cfg.sol_virtual_query_levels_up==2 and cfg.sol_virtual_query_target_blocks is None
+    cfg=H3SparseAttentionConfig.spark(20,mode='reblock_only',landmark_tree_v2_children=8)
+    assert cfg.sol_virtual_query_levels_up==99 and cfg.sol_virtual_query_target_blocks is None
+    assert cfg.sol_landmark_preprocess and cfg.sol_reweight_components == 'none'
     assert cfg.landmark_tree_v2_children==8
     assert H3SparseAttentionConfig.sol(20).sol_virtual_query_target_blocks is None
     assert H3SparseAttentionConfig.sol(20).sol_route_topk_execution == 'packed_external_no_route_qk'
     assert H3SparseAttentionConfig.sol(20).sol_local_blocks_enabled
     assert H3SparseAttentionConfig.spark(20).sol_force_local_blocks is None
-    assert H3SparseAttentionConfig.spark(
-        20, sol_landmark_preprocess=False, sol_virtual_query_levels_up=None
-    ).sol_local_blocks_enabled
+    assert H3SparseAttentionConfig.spark(20, mode='topk_only').sol_local_blocks_enabled
     assert not H3SparseAttentionConfig.sol(
         20, sol_landmark_preprocess=True, sol_landmark_preprocess_version='v2'
     ).sol_local_blocks_enabled
     assert H3SparseAttentionConfig.spark(20, sol_force_local_blocks=True).sol_local_blocks_enabled
     assert not H3SparseAttentionConfig.sol(20, sol_force_local_blocks=False).sol_local_blocks_enabled
-    assert H3SparseAttentionConfig.spark(
-        20, sol_route_topk_execution='threshold'
-    ).sol_route_topk_execution == 'threshold'
-    assert H3SparseAttentionConfig.spark(
-        20, landmark_tree_v2_midpoint_direction_mode='fused'
-    ).landmark_tree_v2_midpoint_direction_mode == 'fused'
+    with pytest.raises(ValueError, match='threshold.*disabled'):
+        H3SparseAttentionConfig.spark(
+            20, sol_route_topk_execution='threshold'
+        )
+    with pytest.raises(ValueError, match='fused.*disabled'):
+        H3SparseAttentionConfig.spark(
+            20, sol_route_topk_execution='fused'
+        )
+    with pytest.raises(ValueError, match='fused.*disabled'):
+        H3SparseAttentionConfig.spark(
+            20, landmark_tree_v2_midpoint_direction_mode='fused'
+        )
     with pytest.raises(ValueError, match='midpoint_direction_mode'):
         H3SparseAttentionConfig.spark(
             20, landmark_tree_v2_midpoint_direction_mode='invalid'
         )
-    target=H3SparseAttentionConfig.spark(20,sol_virtual_query_target_blocks=189)
-    assert target.sol_virtual_query_levels_up is None
-    assert target.sol_virtual_query_target_blocks==189
-    assert (target.sol_virtual_query_min_blocks,target.sol_virtual_query_max_blocks)==(94,284)
+    modes = {
+        'topk_only': (False, False),
+        'reblock_only': (True, False),
+        'reweight_only': (False, True),
+        'full': (True, True),
+    }
+    for mode, (reblock, reweight) in modes.items():
+        candidate = H3SparseAttentionConfig.spark(20, mode=mode)
+        assert candidate.sol_spark_mode == mode
+        assert candidate.sol_landmark_preprocess is reblock
+        assert (candidate.sol_reweight_components != 'none') is reweight
+        assert candidate.sol_virtual_query_levels_up == 99
+        assert candidate.sol_virtual_query_target_blocks is None
     with pytest.raises(ValueError,match="requires Top-K or virtual-query"):
         H3SparseAttentionConfig.sol(20,sol_video_tail_mode='pad')
-    with pytest.raises(ValueError,match='choose either'):
-        H3SparseAttentionConfig.spark(sol_virtual_query_levels_up=2,sol_virtual_query_target_blocks=189)
+    for legacy in (
+        {'sol_virtual_query_levels_up': 2},
+        {'sol_virtual_query_target_blocks': 189},
+        {'sol_landmark_preprocess': False},
+    ):
+        with pytest.raises(ValueError, match='public Spark modes'):
+            H3SparseAttentionConfig.spark(20, **legacy)
+    with pytest.raises(ValueError, match='mode must be'):
+        H3SparseAttentionConfig.spark(20, mode='invalid')
     assert H3SparseAttentionConfig.spark(
         20, sol_sparse_video_scope='target_and_condition'
     ).sol_sparse_video_scope == 'target_and_condition'
@@ -436,6 +459,18 @@ def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused,
     pos[63:, 2] = torch.arange(514, device='cuda')
     with torch.no_grad():
         expected = model(x)
+        if fused == '0':
+            with pytest.raises(RuntimeError, match='threshold fallback is disabled'):
+                with install_h3_spark_attn(
+                    model, num_inference_steps=3, warmup_percent=0,
+                    sol_dense_layers=0, min_tokens=0,
+                    sol_route_topk_ratio=1.0,
+                    sol_video_tail_mode=tail_mode,
+                ):
+                    model(x, token_tags=tags, position_ids=pos)
+            assert attn.get_processor() is original
+            assert not model._forward_pre_hooks
+            return
         with install_h3_spark_attn(model, num_inference_steps=3, warmup_percent=0,
                                    sol_dense_layers=0, min_tokens=0,
                                    sol_route_topk_ratio=1.0,
@@ -498,6 +533,11 @@ def test_spark_default_routes_merge_with_reweight(monkeypatch, topk_ratio):
         captured['route'] = result[2]
         return result
     monkeypatch.setattr(virtual, 'exact_attention', capture)
+    if topk_ratio is not None:
+        with pytest.raises(RuntimeError, match='threshold fallback is disabled'):
+            _sol_attention(controller, q.transpose(1,2), k.transpose(1,2),
+                           v.transpose(1,2), layout, 0)
+        return
     actual = _sol_attention(controller, q.transpose(1,2), k.transpose(1,2),
                             v.transpose(1,2), layout, 0).transpose(1,2)
     qr, kr, vr = captured['args'][:3]
