@@ -33,16 +33,11 @@
 > [!WARNING]
 > **兼容性与更新计划提醒（2026-10-25）**
 >
-> 近期我们收到社区用户反馈：新版 `comfy-kitchen` 的实现可能在部分硬件和工作流中
-> 引起性能下降。目前相关问题仍在排查，实际影响可能因运行环境而异。
+> 近期我们收到社区用户反馈：新版`comfy-kitchen`的实现可能在部分硬件和工作流中引起性能下降。目前相关问题仍在排查，实际影响可能因运行环境而异。
 >
-> 在问题得到进一步确认和解决前，建议用户暂时安装或继续使用经过验证、运行较稳定的
-> **ComfyUI 0.38.x**，并谨慎升级至更新版本。相关现象与测试可参考这段
-> **[社区反馈视频](https://www.bilibili.com/video/BV1RaHK6cEHt/)**。
+> 在问题得到进一步确认和解决前，建议用户暂时安装或继续使用经过验证、运行较稳定的**ComfyUI 0.38.x**，并谨慎升级至更新版本。相关现象与测试可参考这段**[社区反馈视频](https://www.bilibili.com/video/BV1RaHK6cEHt/)**。
 >
-> 受此影响，原计划于 **2026 年 10 月 27 日**发布的新版本将暂时推迟。我们会优先配合
-> 排查 `comfy-kitchen` 的相关问题，待兼容性和性能表现确认稳定后，再恢复版本发布。
-> 后续进展将在本项目中及时同步，感谢大家的理解与反馈。
+> 受此影响，原计划于**2026年10月27日**发布的新版本将暂时推迟。我们会优先配合排查`comfy-kitchen`的相关问题，待兼容性和性能表现确认稳定后，再恢复版本发布。后续进展将在本项目中及时同步，感谢大家的理解与反馈。
 
 > **ComfyUI v0.1.5：** 新增对 ComfyUI 0.42.x（comfy-kitchen 0.2.39）的支持，
 > 提供 Linux 和 Windows 的 SM86、SM89、SM120 安装包；每包也包含适配
@@ -152,7 +147,7 @@ Diffusers 与 ComfyUI 是两条独立的实现路线。下面分开记录两者�
 | v0.1.3 | 2026-10-13 | ✅ 已发布 | 新增经过验证的 SM86 安装包；适配 KJNodes 低显存节点；新增 `fidelity`、`speed`、`custom`、`dense` 预设及 dense 后端选择 | [发布说明](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.3) |
 | v0.1.4 | 2026-10-15 | ✅ 已发布 | 新增 ComfyUI 0.40.x 支持、面向 Ref2VA 的 `sparse_scope`、可配置 `producer_chunk` 及 Ref2VA 节点内提示 | [发布说明](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.4) |
 | v0.1.5 | 2026-10-19 | ✅ 已发布 | 通过 comfy-kitchen 0.2.39 新增 ComfyUI 0.42.x 支持；发布 Linux 和 Windows 的 SM86/SM89/SM120 安装包，每包也内置适配 ComfyUI 0.38.x–0.40.x 的 wheel | [发布说明](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.5) |
-| v0.1.6 | 待定 | 🛠️ 计划中 | 优化峰值显存占用，减少临时显存分配并改善显存复用；在保留生成质量与加速收益的前提下降低显卡持续功耗 | 显存优化 · [功耗跟踪](https://github.com/zechengtang/Spark-H3/issues/3) |
+| v0.1.6 | 待定 | 🛠️ 计划中 | 增加 Spark-H3 对 [SelfLift-Avatar](https://github.com/slmonker/selflift-Avatar) 的兼容支持，包括集成适配与工作流验证；新增对 ComfyUI 0.37.x 及 Python 3.10.x–3.11.x 的支持 | [SelfLift-Avatar 仓库](https://github.com/slmonker/selflift-Avatar) |
 
 当前 v0.1.5 的 Linux 和 Windows x86_64 SM86/SM89/SM120 安装包支持 ComfyUI 0.38.x–0.40.x 和 0.42.x。
 工作流请参阅 [ComfyUI 指南](comfyui/README.md)，
