@@ -210,9 +210,9 @@ for kernel attributions and included licenses.
 
 ## ❤️ Special Thanks
 
-- Thanks to [Smthem](https://space.bilibili.com/439655233) for support and help during the development of Spark-H3's ComfyUI plugin.
-- Thanks to [AI绘画KK](https://space.bilibili.com/313528845) for relaying the community's requests for Windows support and providing valuable workflow cases for plugin testing.
-- Thanks to [AIwood爱屋研究室](https://space.bilibili.com/503934057) for identifying a bug when Spark-H3 was used in a two-pass sampling workflow and suggesting a switch to Kitchen as the dense backend, which further improved the plugin's speedup ratio.
+- Thanks to **Smthem** ([GitHub](https://github.com/smthemex) · [Bilibili](https://space.bilibili.com/439655233)) for support and help during the development of Spark-H3's ComfyUI plugin.
+- Thanks to **AI绘画KK** ([GitHub](https://github.com/kkget) · [Bilibili](https://space.bilibili.com/313528845)) for relaying the community's requests for Windows support and providing valuable workflow cases for plugin testing.
+- Thanks to **AIwood爱屋研究室** ([GitHub](https://github.com/slmonker) · [Bilibili](https://space.bilibili.com/503934057)) for identifying a bug when Spark-H3 was used in a two-pass sampling workflow and suggesting a switch to Kitchen as the dense backend, which further improved the plugin's speedup ratio.
 
 ## ⭐ Star History
 
