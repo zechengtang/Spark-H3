@@ -163,7 +163,7 @@ Diffusers 与 ComfyUI 是两条独立的实现路线。下面分开记录两者�
 ## ❤️ 特别感谢
 
 - 感谢 **Smthem**（[GitHub](https://github.com/smthemex) · [哔哩哔哩](https://space.bilibili.com/439655233)）在 Spark-H3 的 ComfyUI 插件开发过程中给予的支持与帮助；
-- 感谢 **AI绘画KK**（[GitHub](https://github.com/kkget) · [哔哩哔哩](https://space.bilibili.com/313528845)）反馈了社区对 Windows 适配的需求，并为插件测试提供了宝贵的 workflow 案例；
+- 感谢 **AI绘画KK**（[GitHub](https://github.com/kkget) · [哔哩哔哩](https://space.bilibili.com/313528845)）在 MiniMax-H3 工作流的探索与实践方面给予的宝贵指导和支持，并帮助传达了社区对 Windows 安装包的需求；
 - 感谢 **AIwood爱屋研究室**（[GitHub](https://github.com/slmonker) · [哔哩哔哩](https://space.bilibili.com/503934057)）指出了 Spark-H3 应用于双采工作流时出现的一个 Bug，并提出了将 dense backend 切换为 Kitchen 的宝贵改进建议，使插件的加速比得到进一步提升。
 
 ## ⭐ Star History
