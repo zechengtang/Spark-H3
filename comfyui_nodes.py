@@ -363,8 +363,12 @@ class _RunState:
     warmup_steps: int = 4
     sparse_scope: str = "target-video"
     producer_chunk: int = _PRODUCER_CHUNK
+    chunk_path: str = "none"
     previous_sigma: float | None = None
     layout_cache: dict[tuple[int, int, str, str], ComfyPackedLayout] = field(
+        default_factory=dict
+    )
+    chunked_stats: dict[tuple[int, ...], tuple[torch.Tensor, torch.Tensor]] = field(
         default_factory=dict
     )
 
@@ -386,6 +390,7 @@ class _RunState:
         reblock_layout: str = "q_reuse_k",
         sparse_scope: str = "target-video",
         producer_chunk: int = _PRODUCER_CHUNK,
+        chunk_path: str = "none",
         target_capability: tuple[int, int] = (12, 0),
     ):
         if warmup_mode not in ("warmup_ratio", "warmup_steps"):
@@ -396,6 +401,8 @@ class _RunState:
             raise ValueError("warmup_steps must be a nonnegative integer")
         if type(producer_chunk) is not int or producer_chunk <= 0 or producer_chunk % 64:
             raise ValueError("producer_chunk must be a positive multiple of 64")
+        if chunk_path not in ("none", "keep_k", "drop_k"):
+            raise ValueError("chunk_path must be 'none', 'keep_k' or 'drop_k'")
         sparse_scope = _normalize_sparse_scope(sparse_scope)
         if sparse_scope not in _SPARSE_SCOPES:
             raise ValueError(
@@ -409,6 +416,14 @@ class _RunState:
         if layout_reuse is None:
             raise ValueError(
                 "reblock_layout must be 'q_reuse_k' or 'independent'"
+            )
+        if chunk_path != "none" and (
+            ablation_mode != "full" or layout_reuse != "q_from_k"
+            or midpoint_direction_mode != "legacy"
+        ):
+            raise ValueError(
+                "Spark chunked requires ablation_mode='full', reblock_layout='q_reuse_k' "
+                "and midpoint_direction_mode='legacy'"
             )
         # ComfyUI's steps and the Diffusers installer's num_denoise_steps both
         # count actual model evaluations, so warmup uses this value directly.
@@ -444,6 +459,7 @@ class _RunState:
             warmup_mode=warmup_mode, warmup_steps=warmup_steps,
             sparse_scope=sparse_scope,
             producer_chunk=producer_chunk,
+            chunk_path=chunk_path,
         )
         state.controller.reblock_enabled = ablation_mode in (
             "full", "full_reuse2", "full_group841", "reblock_only"
@@ -478,6 +494,7 @@ class _RunState:
         if new_run:
             self.controller.reset()
             self.layout_cache.clear()
+            self.chunked_stats.clear()
             next_index = 0
         self.controller.evaluation_index = next_index
         self.previous_sigma = sigma
@@ -526,6 +543,12 @@ class _ActivationLog:
 def _native_spark_eligible(attn, x, rope_freqs, transformer_options, layer, policy, state, strict):
     if layer == 0:
         state.begin_evaluation(transformer_options)
+        if os.environ.get("H3_SPARK_MEMORY_TRACE") == "1" and torch.is_tensor(x) and x.is_cuda:
+            torch.cuda.reset_peak_memory_stats(x.device)
+            log.info("[Spark-H3 memory] eval=%d phase=begin allocated_mib=%.1f reserved_mib=%.1f",
+                     state.controller.evaluation_index,
+                     torch.cuda.memory_allocated(x.device) / 2**20,
+                     torch.cuda.memory_reserved(x.device) / 2**20)
     if not torch.is_tensor(x) or x.ndim != 2:
         if strict:
             raise _Incompatible("attention input is not a rank-2 tensor")
@@ -744,21 +767,32 @@ def _native_spark_attention(attn, x, rope_freqs, transformer_options, layer, sta
     layout = state.spark_layout(
         transformer_options["minimax_h3_layout"], x.shape[0], x.device
     )
-    qkv_profile = None
-    if os.environ.get("SPARK_PROFILE_REBLOCK") == "1":
-        qkv_start = torch.cuda.Event(enable_timing=True)
-        qkv_end = torch.cuda.Event(enable_timing=True)
-        qkv_start.record()
-        qkv_profile = ("qkv_materialize", qkv_start, qkv_end)
-    q, k, v = _native_spark_qkv(
-        attn, x, rope_freqs, layout.permutation,
-        producer_chunk=state.producer_chunk,
-        video_start=layout.video_start, video_tokens=layout.video_tokens,
-    )
-    if qkv_profile is not None:
-        qkv_profile[2].record()
-        state.controller.reblock_profile.append(qkv_profile)
-    output = comfy_kitchen_spark_attention(state.controller, q, k, v, layout, layer)
+    if state.chunk_path != "none":
+        try:
+            from .comfyui_spark_split import native_split_attention
+        except ImportError:
+            from comfyui_spark_split import native_split_attention
+        output = native_split_attention(
+            attn, x, rope_freqs, layout, layer, state, state.chunk_path,
+            head_chunks=(transformer_options.get("minimax_head_chunks", 1)
+                         if isinstance(transformer_options, dict) else 1),
+        )
+    else:
+        qkv_profile = None
+        if os.environ.get("SPARK_PROFILE_REBLOCK") == "1":
+            qkv_start = torch.cuda.Event(enable_timing=True)
+            qkv_end = torch.cuda.Event(enable_timing=True)
+            qkv_start.record()
+            qkv_profile = ("qkv_materialize", qkv_start, qkv_end)
+        q, k, v = _native_spark_qkv(
+            attn, x, rope_freqs, layout.permutation,
+            producer_chunk=state.producer_chunk,
+            video_start=layout.video_start, video_tokens=layout.video_tokens,
+        )
+        if qkv_profile is not None:
+            qkv_profile[2].record()
+            state.controller.reblock_profile.append(qkv_profile)
+        output = comfy_kitchen_spark_attention(state.controller, q, k, v, layout, layer)
     unpack_profile = None
     if os.environ.get("SPARK_PROFILE_REBLOCK") == "1":
         unpack_start = torch.cuda.Event(enable_timing=True)
@@ -935,6 +969,17 @@ def _make_native_spark_block_patch(
             block.attn, h, rope_freqs, transformer_options, layer, state, activation_log
         )
 
+    if getattr(state, 'chunk_path', 'none') == 'drop_k':
+        def selflift_group(project, tokens, rope, options, head_start, head_end, chunk):
+            try:
+                from .comfyui_spark_split import selflift_drop_k_group
+            except ImportError:
+                from comfyui_spark_split import selflift_drop_k_group
+            return selflift_drop_k_group(
+                block.attn, state, layer, activation_log, project, tokens, rope, options,
+                head_start, head_end, chunk)
+        attention.selflift_drop_k = selflift_group
+
     def block_patch(args, extra):
         reason, warn = _native_spark_eligible(
             block.attn,
@@ -951,9 +996,16 @@ def _make_native_spark_block_patch(
                             f"dense ({args['img'].shape[0]} tokens): {reason}")
             if warn:
                 activation_log.miss(reason)
-            return extra["original_block"](
+            result = extra["original_block"](
                 _dense_block_args(args, dense_attention_override)
             )
+            if layer == 49 and os.environ.get("H3_SPARK_MEMORY_TRACE") == "1":
+                device = args["img"].device
+                log.info("[Spark-H3 memory] eval=%d phase=dense_end peak_allocated_mib=%.1f reserved_mib=%.1f",
+                         state.controller.evaluation_index,
+                         torch.cuda.max_memory_allocated(device) / 2**20,
+                         torch.cuda.memory_reserved(device) / 2**20)
+            return result
         try:
             result = extra["original_block"]({**args, "attention": attention})
             # Emit the counters at the end of every sparse model evaluation.
@@ -961,6 +1013,12 @@ def _make_native_spark_block_patch(
             # after a prompt has finished and cannot be used as a prompt-level
             # validation boundary.
             if layer == 49:
+                if os.environ.get("H3_SPARK_MEMORY_TRACE") == "1":
+                    device = args["img"].device
+                    log.info("[Spark-H3 memory] eval=%d phase=sparse_end peak_allocated_mib=%.1f reserved_mib=%.1f",
+                             state.controller.evaluation_index,
+                             torch.cuda.max_memory_allocated(device) / 2**20,
+                             torch.cuda.memory_reserved(device) / 2**20)
                 log.info(
                     "[Spark-H3] execution summary: evaluations=%d "
                     "warmup_evaluations=%d counts=%s unexpected_fallbacks=%s",
@@ -1064,6 +1122,11 @@ class MiniMaxH3SparkAttentionSM120:
                     {"default": _PRODUCER_CHUNK, "min": 64, "max": 262144, "step": 64,
                      "tooltip": "Spark Q/K/V producer 每次处理的 token 数。默认 16384；较小值可能降低临时显存，但会增加分块调用开销。必须是 64 的正整数倍。"},
                 ),
+                "chunk_path": (
+                    ["none", "drop_k"],
+                    {"default": "none",
+                     "tooltip": "none：使用非分块 Spark。drop_k：规划阶段不保留完整原始 K；完成 reblock 后释放 K2 特征表，再分块重算 QKV、执行 BSA/reweight。要求 full、q_reuse_k、legacy midpoint。"},
+                ),
             },
         }
 
@@ -1103,7 +1166,10 @@ class MiniMaxH3SparkAttentionSM120:
         dense_backend="inherit",
         sparse_scope="target-video",
         producer_chunk=_PRODUCER_CHUNK,
+        chunk_path="none",
     ):
+        if chunk_path not in ("none", "drop_k"):
+            raise ValueError("chunk_path must be 'none' or 'drop_k'")
         if _spark_mode_is_dense(str(mode)):
             return (model,)
         diffusion_model = model.get_model_object("diffusion_model")
@@ -1132,6 +1198,7 @@ class MiniMaxH3SparkAttentionSM120:
             reblock_layout=str(reblock_layout),
             sparse_scope=str(sparse_scope),
             producer_chunk=int(producer_chunk),
+            chunk_path=chunk_path,
             target_capability=self.TARGET_CAPABILITY,
         )
         if kj_low_vram_forward is not None:
@@ -1158,9 +1225,13 @@ class MiniMaxH3SparkAttentionSM120:
         )
         dense_attention_override = _dense_attention_override(str(dense_backend))
         activation_log = _ActivationLog()
+        # Direct Spark composes at KJNodes' post-projection attention hook.
+        # Split Spark instead keeps KJ's block-level early-release forward and
+        # performs head-group plus token-chunk projection itself, because both
+        # drop_k and keep_k need phase-specific access to qkv_proj.
         block_patch_factory = (
             _make_kj_low_vram_spark_block_patch
-            if kj_low_vram_forward is not None
+            if kj_low_vram_forward is not None and chunk_path == "none"
             else _make_native_spark_block_patch
         )
         for layer, block in enumerate(blocks):
@@ -1182,6 +1253,7 @@ class MiniMaxH3SparkAttentionSM120:
             state.controller.reset()
             state.previous_sigma = None
             state.layout_cache.clear()
+            state.chunked_stats.clear()
             activation_log.reset()
 
         patched.add_callback_with_key(
@@ -1191,12 +1263,13 @@ class MiniMaxH3SparkAttentionSM120:
         )
         log.info(
             "[Spark-H3] installed ComfyUI-native producer on %d H3 blocks "
-            "(profile %s, mode %s, sparse scope %s, producer chunk %d, tail %s, anchor %s, approximation %s, midpoint %s, reblock %s, Top-K %s, warmup %s, dense backend %s, dense blocks %s, KJ low-VRAM %s)",
+            "(profile %s, mode %s, sparse scope %s, producer chunk %d, chunk path %s, tail %s, anchor %s, approximation %s, midpoint %s, reblock %s, Top-K %s, warmup %s, dense backend %s, dense blocks %s, KJ low-VRAM %s)",
             len(blocks),
             str(mode),
             str(ablation_mode),
             state.sparse_scope,
             state.producer_chunk,
+            chunk_path,
             str(video_tail_mode),
             state.controller.config.global_anchor_dtype,
             str(tail_granularity),
@@ -1225,6 +1298,11 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
         required.pop("topk_blocks")
         inputs["optional"].pop("sparse_scope")
         inputs["optional"].pop("producer_chunk")
+        inputs["optional"]["chunk_path"] = (
+            ["none", "chunked"],
+            {"default": "chunked",
+             "tooltip": "chunked：沿用官方 H3 分块 producer。none：使用原始 H3 QKV 投影，由官方 attention override 调用非分块 sol_attn。"},
+        )
         inputs["optional"].pop("dense_backend")
         inputs["optional"].pop("tail_granularity")
         inputs["optional"].pop("reblock_layout")
@@ -1236,8 +1314,8 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
 
     DESCRIPTION = (
         "Compatibility alias for ComfyUI's official MiniMax H3 Sol-Attn "
-        "implementation. It uses the official block patch, chunked producer, "
-        "and comfy-kitchen kernel; no Spark-H3 Triton/CuTe backend is reachable."
+        "implementation. chunk_path=chunked uses its H3 block patch and producer; "
+        "none uses native H3 QKV projection and the official Sol attention override."
     )
 
     def patch(
@@ -1252,7 +1330,10 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
         min_tokens,
         strict,
         tau,
+        chunk_path="chunked",
     ):
+        if chunk_path not in ("none", "chunked"):
+            raise ValueError("Sol chunk_path must be 'none' or 'chunked'")
         if _spark_mode_is_dense(str(mode)):
             return (model,)
         diffusion_model = model.get_model_object("diffusion_model")
@@ -1289,10 +1370,22 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
             extra_tokens=0,
             verbose=True,
         )
+        if chunk_path == "none":
+            # The official override already calls sol_attn on materialized QKV.
+            # Remove only the H3 producer replacements installed above so that
+            # the model's attention forward reaches that override naturally.
+            options = patched.model_options["transformer_options"]
+            replacements = dict(options.get("patches_replace", {}))
+            dit = dict(replacements.get("dit", {}))
+            for layer in range(len(blocks)):
+                dit.pop(("double_block", layer), None)
+            replacements["dit"] = dit
+            options["patches_replace"] = replacements
         log.info(
             "[Spark-H3 Sol] delegated %d MiniMax H3 blocks to ComfyUI's official Sol patch "
-            "(tau %.2f, warmup %.0f%%, dense layers %d)",
+            "(chunk path %s, tau %.2f, warmup %.0f%%, dense layers %d)",
             len(blocks),
+            chunk_path,
             float(tau),
             100.0 * effective_warmup_ratio,
             int(dense_layers),

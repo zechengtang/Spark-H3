@@ -60,6 +60,7 @@ ROOT_FILES = (
     "comfyui_nodes.py",
     "comfyui_backend.py",
     "comfyui_reblock_plan.py",
+    "comfyui_spark_split.py",
     "comfyui_dmad.py",
     "LICENSE",
 )
@@ -67,6 +68,7 @@ SOURCE_DIRECTORIES = ("web",)
 REBLOCK_RUNTIME_FILES = (
     "landmark_direction.py",
     "landmark_initial_order.py",
+    "landmark_lazy_k.py",
     "landmark_projection.py",
     "landmark_tree_clustering.py",
     "landmark_tree_triton.py",
@@ -92,6 +94,11 @@ WORKFLOWS = (
     "spark_h3_lbh_official_lightx2v_4step_5p2s_i2va.json",
 )
 GENERATED_FILES = {
+    "scripts/build_spark_split.py": "scripts/build_spark_split.py",
+    "native/spark_split/producer.cu": "native/spark_split/producer.cu",
+    "docs/spark_chunked.md": "docs/spark_chunked.md",
+    "docs/chunk_impl.md": "docs/chunk_impl.md",
+    "docs/spark_split_5s768p_20261031.md": "docs/spark_split_5s768p_20261031.md",
     "comfyui/install.py": "install.py",
     "comfyui/kernel_builder.py": "kernel_builder.py",
     "comfyui/package_manager.py": "package_manager.py",

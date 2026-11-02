@@ -214,9 +214,8 @@ def test_comfy_sparse_scope_validation():
     assert optional["sparse_scope"][1]["default"] == "target-video"
     assert list(optional) == [
         "dense_backend", "tail_granularity", "reblock_layout", "sparse_scope",
-        "producer_chunk",
+        "producer_chunk", "chunk_path",
     ]
-    assert "sparse_scope" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
 
 
 def test_comfy_producer_chunk_validation():
@@ -236,7 +235,94 @@ def test_comfy_producer_chunk_validation():
         _RunState.create(20, 0.2, 0.2, producer_chunk=0)
     with pytest.raises(ValueError, match="producer_chunk"):
         _RunState.create(20, 0.2, 0.2, producer_chunk=1000)
-    assert "producer_chunk" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
+
+
+def test_comfy_chunked_switch_is_per_node_and_defaults_off():
+    optional = MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
+    assert optional["chunk_path"][0] == ["none", "drop_k"]
+    assert optional["chunk_path"][1]["default"] == "none"
+    assert "use_chunked" not in optional
+    assert "chunked_scheme" not in optional
+    assert _RunState.create(20, 0.2, 0.2).chunk_path == "none"
+    assert _RunState.create(20, 0.2, 0.2, chunk_path="drop_k").chunk_path == "drop_k"
+
+
+def test_internal_chunk_path_defaults_and_explicit_selection():
+    assert _RunState.create(8, .2, .2).chunk_path == "none"
+    assert _RunState.create(8, .2, .2, chunk_path="drop_k").chunk_path == "drop_k"
+    assert _RunState.create(8, .2, .2, chunk_path="keep_k").chunk_path == "keep_k"
+    with pytest.raises(ValueError, match="chunk_path"):
+        _RunState.create(8, .2, .2, chunk_path="old_chunked")
+
+
+@pytest.mark.parametrize("unsupported", [
+    {"ablation_mode": "topk_only"}, {"ablation_mode": "reblock_only"},
+    {"ablation_mode": "reweight_only"}, {"ablation_mode": "full_reuse2"},
+    {"ablation_mode": "full_group841"}, {"reblock_layout": "independent"},
+    {"midpoint_direction_mode": "fused"},
+])
+def test_chunked_rejects_unsupported_settings_before_inference(unsupported):
+    with pytest.raises(ValueError, match="Spark chunked requires"):
+        _RunState.create(8, .2, .2, chunk_path="drop_k", **unsupported)
+    if unsupported.get("midpoint_direction_mode") == "fused":
+        with pytest.raises(ValueError, match="fused.*disabled"):
+            _RunState.create(8, .2, .2, chunk_path="none", **unsupported)
+    else:
+        _RunState.create(8, .2, .2, chunk_path="none", **unsupported)
+
+
+def test_comfy_chunked_switch_selects_native_attention_path(monkeypatch):
+    import comfyui_nodes as nodes
+    import comfyui_spark_split as split
+
+    monkeypatch.delenv("H3_SPARK_SPLIT_SCHEME", raising=False)
+    calls = []
+    tokens = 64
+    layout = SimpleNamespace(
+        permutation=torch.arange(tokens), inverse_permutation=torch.arange(tokens),
+        video_tokens=tokens, video_start=0,
+    )
+    controller = SimpleNamespace(
+        counts=Counter(), output_in_original_layout=True,
+    )
+    state = SimpleNamespace(
+        producer_chunk=64, chunk_path="none", controller=controller,
+        spark_layout=lambda *_args: layout,
+    )
+    attention = SimpleNamespace(heads=1, head_dim=128, out_proj=torch.nn.Identity())
+    output = torch.zeros((1, tokens, 1, 128))
+    activation = SimpleNamespace(hit=lambda *_args: None)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *_args: (12, 0))
+
+    def direct_qkv(*_args, **_kwargs):
+        calls.append("direct_qkv")
+        return output, output, output
+
+    def direct_attention(*_args):
+        calls.append("direct_attention")
+        return output
+
+    def chunked_attention(*args, **kwargs):
+        calls.append(args[-1])
+        return output
+
+    monkeypatch.setattr(nodes, "_native_spark_qkv", direct_qkv)
+    monkeypatch.setattr(nodes, "comfy_kitchen_spark_attention", direct_attention)
+    monkeypatch.setattr(split, "native_split_attention", chunked_attention)
+    for scheme, expected in (
+        ("none", ["direct_qkv", "direct_attention"]),
+        ("keep_k", ["keep_k"]),
+        ("drop_k", ["drop_k"]),
+    ):
+        state.chunk_path = scheme
+        calls.clear()
+        result = nodes._native_spark_attention(
+            attention, torch.zeros((tokens, 128)), None,
+            {"minimax_h3_layout": None}, 0, state, activation,
+        )
+        assert result.shape == (tokens, 128)
+        assert calls == expected
+    assert controller.counts["sparse:spark_comfy_native"] == 3
 
 
 def test_legacy_target_sparse_scope_maps_to_target_video():
@@ -281,7 +367,6 @@ def test_ref2va_12fps_480p_layout_matches_validated_diffusers_shape():
     assert spark.permutation[:reference_stop - reference_start].tolist() == list(
         range(reference_start, reference_stop)
     )
-
 
 
 def test_ref2va_mixed_image_video_layout_sparsifies_only_reference_video():
@@ -363,11 +448,6 @@ def test_spark_warmup_steps_mode_and_limits():
             "tooltip": "Dense 预热、固定 dense 层和 dense 回退所用的 attention 后端。inherit 不强制覆盖，沿用模型或 ComfyUI 当前设置；kitchen、sage、sdpa 强制使用对应后端。",
         },
     )
-    assert MiniMaxH3SolAttentionSM120.INPUT_TYPES()["required"]["mode"][0] == [
-        "fidelity", "speed", "custom", "dense",
-    ]
-    assert "warmup_mode" in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["required"]
-    assert "dense_backend" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
     with pytest.raises(ValueError, match="warmup_mode"):
         _RunState.create(20, 0.1, 0.1, warmup_mode="invalid")
     with pytest.raises(ValueError, match="warmup_steps"):
@@ -465,7 +545,6 @@ def test_spark_ablation_modes_are_orthogonal():
     assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["topk_mode"][1]["default"] == "topk_ratio"
     assert MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]["topk_blocks"][1]["default"] == 228
     assert list(MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]).index("topk_mode") < list(MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]).index("topk_ratio") < list(MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["required"]).index("topk_blocks")
-    assert "topk_blocks" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["required"]
     assert full.config.landmark_tree_v2_group_size == 1
     assert full.config.landmark_tree_v2_layout_reuse == "q_from_k"
     independent = _RunState.create(
@@ -482,10 +561,8 @@ def test_spark_ablation_modes_are_orthogonal():
     assert full.config.video_tail_mode == "dense"
     assert full.config.landmark_tree_v2_midpoint_direction_mode == "legacy"
     assert "midpoint_direction_mode" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
-    assert "midpoint_direction_mode" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
     assert full.config.global_anchor_dtype == "float32"
     assert "global_anchor_dtype" not in MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]
-    assert "global_anchor_dtype" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
     reblock_layout = MiniMaxH3SparkAttentionSM120.INPUT_TYPES()["optional"]["reblock_layout"]
     assert reblock_layout[0] == ["q_reuse_k", "independent"]
     assert reblock_layout[1]["default"] == "q_reuse_k"
@@ -538,7 +615,37 @@ def test_spark_local_exact_override_validation():
         ComfySparkConfig(force_local_blocks=1)
     with pytest.raises(ValueError, match="layout_reuse"):
         ComfySparkConfig(landmark_tree_v2_layout_reuse="k_from_q")
-    assert "tail_granularity" not in MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_sampled_q_reblock_matches_full_q_bitwise():
+    from comfyui_backend import ComfyPackedLayout, ComfySparkConfig, ComfySparkController
+    from comfyui_reblock_plan import build_comfy_reblock_permutations
+    from h3_sparse_attention.mahalanobis_kmeans import hilbert_midpoint_sample_indices
+
+    video, heads = 2048, 3
+    ids = torch.arange(video, device="cuda")
+    layout = ComfyPackedLayout(
+        permutation=ids, inverse_permutation=ids, grid=(1, 32, 64),
+        video_tokens=video, sequence_length=video,
+        video_positions=torch.zeros(video, 3, device="cuda"),
+    )
+    generator = torch.Generator(device="cuda").manual_seed(20261024)
+    q = torch.randn((1, video, heads, 128), device="cuda", dtype=torch.bfloat16,
+                    generator=generator)
+    k = torch.randn(q.shape, device="cuda", dtype=torch.bfloat16,
+                    generator=generator)
+    indices = hilbert_midpoint_sample_indices(layout.grid, video // 64, device=q.device)
+    full = build_comfy_reblock_permutations(
+        ComfySparkController(ComfySparkConfig()), q, k, layout,
+    )
+    sampled = build_comfy_reblock_permutations(
+        ComfySparkController(ComfySparkConfig()), q.index_select(1, indices), k,
+        layout, query_sample_indices=indices,
+    )
+    assert torch.equal(sampled[0], full[0])
+    assert sampled[1] is None and full[1] is None
+    assert torch.equal(sampled[2], full[2])
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
@@ -893,6 +1000,68 @@ def test_spark_node_uses_comfyui_native_block_patches_and_cleanup():
     ) == (model,)
 
 
+@pytest.mark.parametrize("node_class", [
+    MiniMaxH3SparkAttentionSM86, MiniMaxH3SparkAttentionSM89, MiniMaxH3SparkAttentionSM120,
+])
+@pytest.mark.parametrize("scheme", [None, "none", "drop_k"])
+def test_spark_node_chunk_path_controls_dispatch(monkeypatch, node_class, scheme):
+    # Internal experimental defaults must not override the public node choice.
+    monkeypatch.setenv("H3_SPARK_SPLIT_SCHEME", "keep_k")
+    created = []
+    original_create = _RunState.create
+
+    def create_state(*args, **kwargs):
+        state = original_create(*args, **kwargs)
+        created.append(state)
+        return state
+
+    monkeypatch.setattr(_RunState, "create", create_state)
+    model = _FakePatcher(MiniMaxH3Model())
+    kwargs = {} if scheme is None else {"chunk_path": scheme}
+    node_class().patch(
+        model, "fidelity", 8, "warmup_steps", 0.2, 2,
+        0.2, 0, 4096, True, **kwargs,
+    )
+    assert created[0].chunk_path == ("none" if scheme is None else scheme)
+
+
+@pytest.mark.parametrize("scheme", ["keep_k", "invalid", True, None])
+def test_spark_node_rejects_unexposed_chunk_paths(scheme):
+    with pytest.raises(ValueError, match="chunk_path"):
+        MiniMaxH3SparkAttentionSM120().patch(
+            None, "fidelity", 8, "warmup_steps", 0.2, 2,
+            0.2, 0, 4096, True, chunk_path=scheme,
+        )
+
+
+def test_spark_cleanup_discards_chunked_statistics_between_generations(monkeypatch):
+    created = []
+    original_create = _RunState.create
+
+    def create_state(*args, **kwargs):
+        state = original_create(*args, **kwargs)
+        created.append(state)
+        return state
+
+    monkeypatch.setattr(_RunState, "create", create_state)
+    model = _FakePatcher(MiniMaxH3Model())
+    (patched,) = MiniMaxH3SparkAttentionSM89().patch(
+        model, "fidelity", 8, "warmup_steps", 0.2, 2,
+        0.2, 0, 4096, True, chunk_path="drop_k",
+    )
+    state = created[0]
+    state.controller.evaluation_index = 7
+    state.previous_sigma = 0.0
+    state.chunked_stats[(0, 384, 2)] = (torch.ones(2, 128), torch.ones(2, 128))
+    patched.callbacks[0][2](patched)
+
+    # Cleanup resets the evaluation/sigma markers, so begin_evaluation cannot
+    # detect the previous generation and clear its cached quantization scales.
+    state.begin_evaluation({"sigmas": torch.tensor([1.0])})
+    assert state.controller.evaluation_index == 0
+    assert state.chunked_stats == {}
+
+
 def test_spark_node_selects_kj_low_vram_patch_only_at_install_time():
     model = _FakePatcher(MiniMaxH3Model())
 
@@ -917,6 +1086,28 @@ def test_spark_node_selects_kj_low_vram_patch_only_at_install_time():
             plain, "speed", 20, "warmup_ratio", 0.0, 4,
             0.1, 0, 4096, True,
         )
+
+
+def test_chunked_spark_keeps_kj_block_forward_and_owns_head_group_projection():
+    model = _FakePatcher(MiniMaxH3Model())
+
+    def low_vram_forward(*_args, **_kwargs):
+        raise AssertionError("compose hook is not called while installing")
+
+    low_vram_forward._uses_optimized_attention = True
+    options = model.model_options["transformer_options"]
+    options["sol_take_forward"] = low_vram_forward
+    options["minimax_head_chunks"] = 4
+    (patched,) = MiniMaxH3SparkAttentionSM120().patch(
+        model, "speed", 3, "warmup_steps", 0.0, 0,
+        0.2, 0, 4096, True, chunk_path="drop_k",
+    )
+
+    assert patched.model_options["transformer_options"]["minimax_head_chunks"] == 4
+    assert all(
+        not getattr(patch, "spark_kj_low_vram", False)
+        for patch in patched.block_patches.values()
+    )
 
 
 def test_spark_preserves_kjnodes_chunk_feedforward_object_patches():
@@ -1022,19 +1213,34 @@ def test_kj_low_vram_block_keeps_attention_owned_by_kjnodes(monkeypatch):
     ].spark_kj_low_vram
 
 
-def test_sol_node_delegates_to_comfyui_official_patch(monkeypatch):
+@pytest.mark.parametrize("chunk_path", ["none", "chunked"])
+def test_sol_node_delegates_to_comfyui_official_patch(monkeypatch, chunk_path):
     model = _FakePatcher(MiniMaxH3Model())
     model.model_options = {"transformer_options": {}}
     captured = {}
+    old_patch, installed_patch, unrelated_patch = object(), object(), object()
+    model.model_options["transformer_options"]["patches_replace"] = {
+        "dit": {("double_block", 0): old_patch, ("other_block", 0): unrelated_patch},
+    }
+    override = object()
 
     def official(model_arg, **kwargs):
         captured.update(kwargs)
-        return model_arg.clone()
+        patched = model_arg.clone()
+        patched.model_options["transformer_options"].update({
+            "optimized_attention_override": override,
+            "patches_replace": {"dit": {
+                **{("double_block", i): installed_patch for i in range(3)},
+                ("other_block", 0): unrelated_patch,
+            }},
+        })
+        return patched
 
     import comfy_extras.nodes_sparse_attention as official_module
     monkeypatch.setattr(official_module, "apply_block_sparse_attention", official)
     (patched,) = MiniMaxH3SolAttentionSM120().patch(
-        model, "fidelity", 20, "warmup_steps", 0.9, 4, 1, 4096, True, 1.0
+        model, "fidelity", 20, "warmup_steps", 0.9, 4, 1, 4096, True, 1.0,
+        chunk_path=chunk_path,
     )
     assert patched is not model
     assert captured["tau"] == 1.0
@@ -1042,6 +1248,101 @@ def test_sol_node_delegates_to_comfyui_official_patch(monkeypatch):
     assert captured["start_percent"] == 0.2
     assert captured["sink_conditioning"] == "exact_kv_and_rows"
     assert captured["extra_tokens"] == 0
+    options = patched.model_options["transformer_options"]
+    assert options["optimized_attention_override"] is override
+    assert options["patches_replace"]["dit"][("other_block", 0)] is unrelated_patch
+    assert (("double_block", 0) in options["patches_replace"]["dit"]) == (chunk_path == "chunked")
+    assert model.model_options["transformer_options"]["patches_replace"]["dit"][("double_block", 0)] is old_patch
+
+
+def test_sol_chunk_path_schema_and_validation():
+    optional = MiniMaxH3SolAttentionSM120.INPUT_TYPES()["optional"]
+    assert optional["chunk_path"][0] == ["none", "chunked"]
+    assert optional["chunk_path"][1]["default"] == "chunked"
+    for invalid in ("drop_k", "keep_k", True, None):
+        with pytest.raises(ValueError, match="Sol chunk_path"):
+            MiniMaxH3SolAttentionSM120().patch(
+                None, "dense", 20, "warmup_ratio", .2, 4, 0, 0, True, 1.,
+                chunk_path=invalid,
+            )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@pytest.mark.parametrize("chunk_path", ["none", "chunked"])
+def test_sol_chunk_path_executes_official_cuda_kernel(monkeypatch, chunk_path):
+    import comfy_extras.nodes_sparse_attention as official
+    from comfy.ldm.minimax.model import Attention, rope_rotation_table
+    from comfy.model_patcher import set_model_options_patch_replace
+
+    torch.manual_seed(123)
+    tokens, heads, width = 165, 2, 256
+    attention = Attention(width, heads, 128, 1e-5, device="cuda",
+                          dtype=torch.bfloat16, operations=torch.nn).eval().requires_grad_(False)
+    diffusion = MiniMaxH3Model()
+    diffusion.blocks = [SimpleNamespace(attn=attention)]
+    model = _FakePatcher(diffusion)
+    monkeypatch.setattr(official, "MiniMaxH3Model", MiniMaxH3Model)
+    monkeypatch.setattr(official, "PRODUCER_CHUNK", 64)
+
+    def set_patch(self, patch, name, block_name, number, transformer_index=None):
+        self.model_options = set_model_options_patch_replace(
+            self.model_options, patch, name, block_name, number,
+            transformer_index=transformer_index,
+        )
+
+    monkeypatch.setattr(_FakePatcher, "set_model_patch_replace", set_patch)
+    counts = Counter()
+    for name in ("sol_attn", "sol_attn_chunked"):
+        original = getattr(official.ck, name)
+
+        def counted(*args, _name=name, _original=original, **kwargs):
+            counts[_name] += 1
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(official.ck, name, counted)
+    (patched,) = MiniMaxH3SolAttentionSM120().patch(
+        model, "custom", 8, "warmup_ratio", .2, 2, 0, 0, True, 1.,
+        chunk_path=chunk_path,
+    )
+    options = patched.model_options["transformer_options"]
+    options.update({"block_index": 0, "minimax_h3_layout": SimpleNamespace(
+        seq_len=tokens, segments=[(0, 37, "text"), (37, tokens, "video")],
+    )})
+    h = torch.randn(tokens, width, device="cuda", dtype=torch.bfloat16)
+    rope = rope_rotation_table(torch.randn(tokens, 128, device="cuda"), torch.bfloat16)
+    projection_rows = []
+    hook = attention.qkv_proj.register_forward_pre_hook(
+        lambda _module, args: projection_rows.append(args[0].shape[0]))
+
+    def original_block(args):
+        return args.get("attention", attention)(
+            args["img"], rope_freqs=args["rope_freqs"],
+            transformer_options=args["transformer_options"],
+        )
+
+    try:
+        with torch.no_grad():
+            for sigma in (.9, .5, .4):
+                options["sigmas"] = torch.tensor([sigma])
+                args = {"img": h, "rope_freqs": rope, "transformer_options": options}
+                replacement = options.get("patches_replace", {}).get("dit", {}).get(("double_block", 0))
+                projection_rows.clear()
+                out = (original_block(args) if replacement is None else
+                       replacement(args, {"original_block": original_block}))
+                assert out.shape == h.shape and torch.isfinite(out).all()
+                if sigma == .9:
+                    assert not counts  # Official dense window still applies.
+                else:
+                    # Official chunked Sol bootstraps statistics in a first
+                    # projection pass; steady calls only need the producer pass.
+                    expected_rows = ([165] if chunk_path == "none" else
+                                     [64, 64, 37] * (2 if sigma == .5 else 1))
+                    assert projection_rows == expected_rows
+        expected = "sol_attn" if chunk_path == "none" else "sol_attn_chunked"
+        assert counts == {expected: 2}
+        assert model.model_options == {"transformer_options": {}}
+    finally:
+        hook.remove()
 
 
 def test_comfyui_module_has_no_legacy_attention_interface():
@@ -1112,3 +1413,38 @@ def test_comfy_native_chunked_qkv_matches_monolithic_projection():
         )
     for got, expected in zip(actual, (q, k, v)):
         torch.testing.assert_close(got, expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("reblock,reweight", [(False, False), (False, True), (True, False), (True, True)])
+def test_backend_preserves_independent_reblock_and_reweight_flags(monkeypatch, reblock, reweight):
+    import comfyui_backend as backend
+    import comfyui_reblock_plan as planner
+
+    calls = []
+    permutation = torch.arange(64).view(1, 1, 64)
+    def build(*args, **kwargs):
+        calls.append("reblock")
+        return permutation, permutation, permutation, None
+    monkeypatch.setattr(planner, "build_comfy_reblock_permutations", build)
+    captured = []
+    cuda_module = ModuleType("comfy_kitchen.backends.cuda")
+    def spark(q, k, v, **kwargs):
+        captured.append(kwargs)
+        return q
+    cuda_module.spark_attn = spark
+    monkeypatch.setitem(sys.modules, "comfy_kitchen.backends.cuda", cuda_module)
+    controller = backend.ComfySparkController(backend.ComfySparkConfig())
+    controller.reblock_enabled = reblock
+    controller.reweight_enabled = reweight
+    controller.reblock_reuse_layers = 2
+    q = torch.zeros(1, 64, 1, 128, dtype=torch.bfloat16)
+    ids = torch.arange(64)
+    layout = backend.ComfyPackedLayout(ids, ids, (1, 8, 8), 64, 64, torch.zeros(64, 3))
+    for layer in (1, 2):
+        backend.comfy_kitchen_spark_attention(controller, q, q, q, layout, layer)
+    assert calls == (["reblock"] if reblock else [])
+    assert controller.counts["reblock_reuse_calls"] == int(reblock)
+    for call in captured:
+        assert call["reweight"] is reweight
+        for key in ("query_permutation", "key_permutation", "query_inverse"):
+            assert call[key] is (permutation if reblock else None)

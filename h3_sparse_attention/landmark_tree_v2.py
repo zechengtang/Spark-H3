@@ -752,6 +752,9 @@ def _recursive_landmark_tree_v2(
                 token_offset += capacity
                 atom_offset += capacity // 4
                 leaf_offset += budget
+            # Descendants do not need this node's margins; release them before
+            # allocating the next level's score table.
+            scores = None
         frontier = next_frontier
         level += 1
 

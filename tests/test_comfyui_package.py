@@ -41,6 +41,11 @@ def test_standalone_package_is_small_complete_and_importable(tmp_path):
     )
     assert (package / "__init__.py").is_file()
     assert (package / "comfyui_backend.py").is_file()
+    assert (package / "comfyui_spark_split.py").is_file()
+    assert (package / "h3_sparse_attention/landmark_lazy_k.py").is_file()
+    assert (package / "scripts/build_spark_split.py").is_file()
+    assert (package / "native/spark_split/producer.cu").is_file()
+    assert (package / "docs/spark_chunked.md").is_file()
     assert (package / "package_manager.py").is_file()
     assert "packaging>=24" in (package / "requirements.txt").read_text()
     mode_widgets = package / "web/spark_mode_widgets.js"
@@ -282,6 +287,8 @@ assert spark_inputs['optional']['producer_chunk'][1]['default'] == 16384
 assert spark_inputs['optional']['producer_chunk'][1]['step'] == 64
 sol_inputs = module.NODE_CLASS_MAPPINGS['MiniMaxH3SolAttentionSM120'].INPUT_TYPES()
 assert 'producer_chunk' not in sol_inputs['optional']
+assert sol_inputs['optional']['chunk_path'][0] == ['none', 'chunked']
+assert sol_inputs['optional']['chunk_path'][1]['default'] == 'chunked'
 for workflow_path in (root / 'workflows').glob('*.json'):
     workflow = __import__('json').loads(workflow_path.read_text(encoding='utf-8'))
     spark_nodes = [

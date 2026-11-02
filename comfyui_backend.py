@@ -14,7 +14,6 @@ from dataclasses import dataclass
 
 import torch
 
-
 BLOCK_SIZE = 64
 _PROFILE_REBLOCK = os.environ.get("SPARK_PROFILE_REBLOCK") == "1"
 
@@ -157,6 +156,70 @@ def reblock_profile_summary(controller: ComfySparkController, *, clear: bool = T
     }
 
 
+def _cached_comfy_reblock_permutations(controller, layer):
+    """Return a reusable layout before requesting Q/K from the chunk producer."""
+    if not controller.reblock_enabled:
+        return None
+    reuse = int(controller.reblock_reuse_layers)
+    start = int(controller.reblock_reuse_start_layer)
+    if reuse <= 1 or layer < start:
+        return None
+    group = (layer - start) // reuse
+    group_start = start + group * reuse
+    cached = controller.last_reblock
+    if layer == group_start or cached is None or cached[0] != (controller.evaluation_index, group):
+        return None
+    query_permutation, query_inverse, key_permutation, hierarchy = cached[1]
+    controller.landmark_reblock_hierarchy = hierarchy
+    controller.counts["reblock_reuse_calls"] += 1
+    return query_permutation, query_inverse, key_permutation
+
+
+def _comfy_reblock_permutations(
+    controller, q, k, layout, layer, *, query_sample_indices=None,
+    consume_key=False,
+):
+    """Share the exact ComfyUI planning/cache policy between Spark entries."""
+    if not controller.reblock_enabled:
+        query_permutation = query_inverse = key_permutation = None
+    else:
+        try:
+            from .comfyui_reblock_plan import build_comfy_reblock_permutations
+        except ImportError:  # standalone source-tree tests
+            from comfyui_reblock_plan import build_comfy_reblock_permutations
+
+        reuse = int(controller.reblock_reuse_layers)
+        start = int(controller.reblock_reuse_start_layer)
+        group = (layer - start) // reuse if reuse > 1 and layer >= start else None
+        key = (controller.evaluation_index, group)
+        cached_layout = _cached_comfy_reblock_permutations(controller, layer)
+        if cached_layout is not None:
+            query_permutation, query_inverse, key_permutation = cached_layout
+        else:
+            sample = _profile_begin(controller, "reblock_permutation_build_total")
+            sample_options = (
+                {"query_sample_indices": query_sample_indices}
+                if query_sample_indices is not None else {}
+            )
+            if consume_key:
+                sample_options["consume_key"] = True
+            query_permutation, query_inverse, key_permutation, _ = (
+                build_comfy_reblock_permutations(controller, q, k, layout, **sample_options)
+            )
+            _profile_end(controller, sample)
+            if group is not None:
+                controller.last_reblock = (
+                    key,
+                    (
+                        query_permutation,
+                        query_inverse,
+                        key_permutation,
+                        controller.landmark_reblock_hierarchy,
+                    ),
+                )
+    return query_permutation, query_inverse, key_permutation
+
+
 @torch.no_grad()
 def comfy_kitchen_spark_attention(
     controller: ComfySparkController,
@@ -174,41 +237,9 @@ def comfy_kitchen_spark_attention(
         raise RuntimeError("ComfyUI Spark requires matching Q/K/V shapes")
     if not q.is_contiguous() or not k.is_contiguous() or not v.is_contiguous():
         raise RuntimeError("ComfyUI Spark requires contiguous Q/K/V")
-
-    if not controller.reblock_enabled:
-        query_permutation = query_inverse = key_permutation = None
-    else:
-        try:
-            from .comfyui_reblock_plan import build_comfy_reblock_permutations
-        except ImportError:  # standalone source-tree tests
-            from comfyui_reblock_plan import build_comfy_reblock_permutations
-
-        reuse = int(controller.reblock_reuse_layers)
-        start = int(controller.reblock_reuse_start_layer)
-        group = (layer - start) // reuse if reuse > 1 and layer >= start else None
-        key = (controller.evaluation_index, group)
-        group_start = start + group * reuse if group is not None else layer
-        cached = controller.last_reblock
-        if group is not None and layer != group_start and cached is not None and cached[0] == key:
-            query_permutation, query_inverse, key_permutation, hierarchy = cached[1]
-            controller.landmark_reblock_hierarchy = hierarchy
-            controller.counts["reblock_reuse_calls"] += 1
-        else:
-            sample = _profile_begin(controller, "reblock_permutation_build_total")
-            query_permutation, query_inverse, key_permutation, _ = (
-                build_comfy_reblock_permutations(controller, q, k, layout)
-            )
-            _profile_end(controller, sample)
-            if group is not None:
-                controller.last_reblock = (
-                    key,
-                    (
-                        query_permutation,
-                        query_inverse,
-                        key_permutation,
-                        controller.landmark_reblock_hierarchy,
-                    ),
-                )
+    query_permutation, query_inverse, key_permutation = _comfy_reblock_permutations(
+        controller, q, k, layout, layer,
+    )
 
     try:
         from comfy_kitchen.backends.cuda import spark_attn

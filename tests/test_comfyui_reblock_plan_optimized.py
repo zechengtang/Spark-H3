@@ -1,5 +1,10 @@
 """CUDA checks for the ComfyUI-only reblock planning fast path."""
 
+import inspect
+import math
+import sys
+import types
+
 import pytest
 import torch
 
@@ -7,6 +12,186 @@ import torch
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="CUDA required"
 )
+
+
+def _assert_bits(actual, expected):
+    assert actual.shape == expected.shape
+    assert actual.dtype == expected.dtype
+    if actual.is_floating_point():
+        assert torch.isfinite(actual).all()
+        assert torch.isfinite(expected).all()
+    assert torch.equal(actual.contiguous().view(torch.uint8),
+                       expected.contiguous().view(torch.uint8))
+
+
+@pytest.fixture(scope="module")
+def tree_before_score_release():
+    """Isolate lifetime changes: all arithmetic stays identical to current code."""
+    import h3_sparse_attention.landmark_tree_v2 as current
+
+    source = inspect.getsource(current)
+    release = "            scores = None\n"
+    assert source.count(release) == 1
+    module = types.ModuleType("h3_sparse_attention._test_before_score_release")
+    module.__file__ = current.__file__
+    module.__package__ = "h3_sparse_attention"
+    sys.modules[module.__name__] = module
+    try:
+        exec(compile(source.replace(release, ""), current.__file__, "exec"), module.__dict__)
+        yield module
+    finally:
+        del sys.modules[module.__name__]
+
+
+@pytest.mark.parametrize("batch,heads,tokens", [
+    (1, 1, 65), (1, 3, 2048), (2, 3, 2080),
+    (1, 8, 4097), (1, 56, 37296), (1, 56, 74592),
+])
+@pytest.mark.parametrize("column_major", [False, True])
+@pytest.mark.parametrize("seed", [11, 43])
+@pytest.mark.parametrize("pattern", ["random", "zero", "repeated_rows"])
+def test_projection_can_consume_head_major_key_without_changing_bits(
+    batch, heads, tokens, column_major, seed, pattern,
+):
+    from h3_sparse_attention.landmark_projection import project_bthd
+
+    torch.manual_seed(seed)
+    key = torch.randn(batch * heads, tokens, 128, device="cuda", dtype=torch.bfloat16)
+    if pattern == "zero":
+        key.zero_()
+    elif pattern == "repeated_rows":
+        key[:, 1:].copy_(key[:, :1].clone())
+    factor = torch.randn(batch * heads, 128, 128, device="cuda", dtype=torch.bfloat16)
+    if column_major:
+        factor = factor.transpose(-1, -2)
+    expected = torch.bmm(key, factor)
+    source = key.view(batch, heads, tokens, 128).transpose(1, 2)
+    project_bthd(source, factor, out=key, block_m=128)
+    _assert_bits(key, expected)
+
+
+@pytest.mark.parametrize("grid", [(1, 32, 64), (1, 32, 65)])
+@pytest.mark.parametrize("seed", [20261030, 20261102, 20261103])
+def test_consuming_key_preserves_real_runtime_permutation(grid, seed):
+    from comfyui_backend import ComfyPackedLayout, ComfySparkConfig, ComfySparkController
+    from comfyui_reblock_plan import build_comfy_reblock_permutations
+    from h3_sparse_attention.mahalanobis_kmeans import hilbert_midpoint_sample_indices
+
+    torch.manual_seed(seed)
+    video = grid[0] * grid[1] * grid[2]
+    tokens, heads = video + 37, 3
+    ids = torch.arange(tokens, device="cuda")
+    layout = ComfyPackedLayout(ids, ids, grid, video, tokens,
+                               torch.zeros(video, 3, device="cuda"))
+    indices = hilbert_midpoint_sample_indices(grid, video // 64, device="cuda")
+    q = torch.randn(1, indices.numel(), heads, 128, device="cuda", dtype=torch.bfloat16)
+    k = torch.randn(1, tokens, heads, 128, device="cuda", dtype=torch.bfloat16)
+    compact = k[:, :video].transpose(1, 2).contiguous().transpose(1, 2)
+    expected = build_comfy_reblock_permutations(
+        ComfySparkController(ComfySparkConfig()), q, k, layout,
+        query_sample_indices=indices)
+    controller = ComfySparkController(ComfySparkConfig())
+    actual = build_comfy_reblock_permutations(
+        controller, q, compact, layout,
+        query_sample_indices=indices, consume_key=True)
+    assert controller.counts["reblock_plan_inplace_key"] == 1
+    for a, b in zip(actual, expected):
+        if isinstance(a, torch.Tensor):
+            _assert_bits(a, b)
+
+
+@pytest.mark.parametrize("heads,grid", [
+    (1, (1, 32, 64)), (3, (2, 32, 33)),
+    (8, (1, 128, 256)), (56, (1, 144, 259)),
+])
+@pytest.mark.parametrize("seed", [11, 43])
+@pytest.mark.parametrize("pattern", ["random", "zero", "repeated_rows"])
+def test_early_score_release_preserves_permutation_and_inverse(
+    tree_before_score_release, heads, grid, seed, pattern,
+):
+    from h3_sparse_attention.landmark_tree_v2 import PreparedLandmarkTreeV2Permutation
+
+    torch.manual_seed(seed)
+    tokens = math.prod(grid)
+    features = torch.randn(heads, tokens, 128, device="cuda", dtype=torch.bfloat16)
+    if pattern == "zero":
+        features.zero_()
+    elif pattern == "repeated_rows":
+        features[:, 1:].copy_(features[:, :1].clone())
+    before = features.clone()
+    options = dict(batch=heads, tokens=tokens, dim=128, grid_shape=grid,
+                   device=features.device, initial_order="flat", return_inverse=True,
+                   compact_direct_route=True)
+    old = tree_before_score_release.PreparedLandmarkTreeV2Permutation(**options)
+    new = PreparedLandmarkTreeV2Permutation(**options)
+    expected = old.run(features, allow_cuda_graph=False)
+    actual = new.run(features, allow_cuda_graph=False)
+    for a, b in zip(actual, expected):
+        _assert_bits(a, b)
+    _assert_bits(features, before)
+
+
+@pytest.mark.parametrize("tokens", [2048, 2080])
+def test_early_score_release_preserves_cuda_graph_replay(tree_before_score_release, tokens):
+    from h3_sparse_attention.landmark_tree_v2 import PreparedLandmarkTreeV2Permutation
+
+    torch.manual_seed(tokens)
+    options = dict(batch=3, tokens=tokens, dim=128, grid_shape=(1, 1, tokens),
+                   device=torch.device("cuda"), initial_order="flat", return_inverse=True,
+                   compact_direct_route=True)
+    old = tree_before_score_release.PreparedLandmarkTreeV2Permutation(**options)
+    new = PreparedLandmarkTreeV2Permutation(**options)
+    # Change inputs across bootstrap/capture/replay to catch stale-buffer errors.
+    for _ in range(6):
+        features = torch.randn(3, tokens, 128, device="cuda", dtype=torch.bfloat16)
+        expected, actual = old.run(features), new.run(features)
+        for a, b in zip(actual, expected):
+            _assert_bits(a, b)
+    assert old.graph_active and new.graph_active
+
+
+@pytest.mark.parametrize("heads,grid", [(3, (1, 32, 64)), (8, (1, 32, 65))])
+@pytest.mark.parametrize("seed", [11, 43])
+def test_reblock_lifetime_changes_preserve_final_spark_output(
+    monkeypatch, tree_before_score_release, heads, grid, seed,
+):
+    import comfyui_backend as backend
+    import comfyui_reblock_plan as planner
+    import h3_sparse_attention.landmark_tree_v2 as tree
+    from h3_sparse_attention.mahalanobis_kmeans import hilbert_midpoint_sample_indices
+
+    torch.manual_seed(seed)
+    video = math.prod(grid)
+    tokens = video + 37
+    ids = torch.arange(tokens, device="cuda")
+    layout = backend.ComfyPackedLayout(ids, ids, grid, video, tokens,
+                                      torch.zeros(video, 3, device="cuda"), 0)
+    q, k, v = [torch.randn(1, tokens, heads, 128, device="cuda", dtype=torch.bfloat16)
+               for _ in range(3)]
+    key_before = k.clone()
+    indices = hilbert_midpoint_sample_indices(grid, video // 64, device="cuda")
+    original_build = planner.build_comfy_reblock_permutations
+
+    def consumed_build(controller, query, key, layout, **kwargs):
+        compact = key[:, :video].transpose(1, 2).contiguous().transpose(1, 2)
+        result = original_build(controller, query.index_select(1, indices), compact, layout,
+                                query_sample_indices=indices, consume_key=True, **kwargs)
+        assert controller.counts["reblock_plan_inplace_key"] == 1
+        return result
+
+    def run():
+        controller = backend.ComfySparkController(backend.ComfySparkConfig())
+        return backend.comfy_kitchen_spark_attention(controller, q, k, v, layout, 0)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(tree, "_recursive_landmark_tree_v2",
+                      tree_before_score_release._recursive_landmark_tree_v2)
+        expected = run()
+    _assert_bits(run(), expected)
+    with monkeypatch.context() as patch:
+        patch.setattr(planner, "build_comfy_reblock_permutations", consumed_build)
+        _assert_bits(run(), expected)
+    _assert_bits(k, key_before)
 
 
 def test_bthd_projection_respects_factor_layout_and_fuses_root_scores():

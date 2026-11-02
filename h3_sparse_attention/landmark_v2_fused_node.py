@@ -256,13 +256,14 @@ def fused_proxy_directions(
 
 @triton.jit
 def _fused_node_split_kernel(
-    source, global_indices, row_batch, scratch, output, tokens,
+    source, global_indices, row_batch, original_ids, scratch, output, tokens,
     N: tl.constexpr, BLOCK_N: tl.constexpr, MAX_LEN: tl.constexpr,
     LANDMARKS: tl.constexpr, CHILDREN: tl.constexpr, INTERNAL: tl.constexpr,
     CHILD_OFFSETS: tl.constexpr,
     BLOCK_T: tl.constexpr, ROWS_PER_STEP: tl.constexpr, MODE: tl.constexpr,
     FP8: tl.constexpr,
     MIDPOINT: tl.constexpr = False,
+    EXTERNAL_IDS: tl.constexpr = False,
     SPLIT_TREE: tl.constexpr = (),
     INDEX_BITS: tl.constexpr = 0,
 ):
@@ -364,7 +365,11 @@ def _fused_node_split_kernel(
     positions = tl.arange(0, BLOCK_N)
     valid = positions < N
     global_ids = tl.load(base + positions, mask=valid, other=0)
-    original = global_ids - tl.load(row_batch + parent) * tokens
+    if EXTERNAL_IDS:
+        original = tl.load(original_ids + parent.to(tl.int64) * N + positions,
+                           mask=valid, other=0).to(tl.int64)
+    else:
+        original = global_ids - tl.load(row_batch + parent) * tokens
     infinite = tl.full((BLOCK_N,), 9223372036854775807, tl.int64)
     tag = tl.zeros((BLOCK_N,),tl.int32)
     # One sort per binary depth, not one sort per internal node. Pack
@@ -426,6 +431,7 @@ def fused_node_split(
     midpoint: bool = False,
     landmarks: int = 32,
     terminal: bool = False,
+    original_ids: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Split every node in ``global_indices`` and return original ids in child order.
 
@@ -453,6 +459,12 @@ def fused_node_split(
         raise ValueError("node size outside the fused range")
     if row_batch.shape != (parents,) or row_batch.dtype != torch.long:
         raise ValueError("row_batch must be int64 [parents]")
+    if original_ids is not None and (
+        original_ids.shape != global_indices.shape
+        or original_ids.dtype not in (torch.int32, torch.long)
+        or original_ids.device != source.device
+    ):
+        raise ValueError("original_ids must match global_indices shape on CUDA")
     if mode not in ("fp16", "fp16x3", "bf16", "tf32", "tf32x3"):
         raise ValueError("unsupported score precision")
     from .landmark_v2_terminal import split_topology
@@ -463,16 +475,21 @@ def fused_node_split(
         raise ValueError("routing key exceeds int64 capacity")
     global_indices = global_indices.contiguous()
     row_batch = row_batch.contiguous()
+    if original_ids is not None:
+        original_ids = original_ids.contiguous()
     scratch = torch.empty((parents, n, children - 1), device=source.device, dtype=torch.float32)
     output = torch.empty((parents, n), device=source.device, dtype=global_indices.dtype)
     _fused_node_split_kernel[(parents,)](
-        source, global_indices, row_batch, scratch, output, int(tokens),
+        source, global_indices, row_batch,
+        original_ids if original_ids is not None else global_indices,
+        scratch, output, int(tokens),
         N=n, BLOCK_N=triton.next_power_of_2(n), MAX_LEN=triton.cdiv(n, landmarks),
         LANDMARKS=landmarks, CHILDREN=children, INTERNAL=children - 1,
         CHILD_OFFSETS=child_offsets,
         BLOCK_T=_default_block_t(n) if block_t is None else block_t,
         ROWS_PER_STEP=_default_rows_per_step(n) if rows_per_step is None else rows_per_step,
         MODE=mode, FP8=fp8, MIDPOINT=midpoint,
+        EXTERNAL_IDS=original_ids is not None,
         SPLIT_TREE=split_tree, INDEX_BITS=index_bits,
         num_warps=(16 if landmarks >= 128 else 8 if landmarks == 64 else _default_warps(n, source.device)) if num_warps is None else num_warps,
     )

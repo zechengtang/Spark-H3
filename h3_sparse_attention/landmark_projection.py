@@ -14,6 +14,9 @@ def _bthd_projection_kernel(
     factor_stride_batch: tl.constexpr,
     factor_stride_k: tl.constexpr,
     factor_stride_n: tl.constexpr,
+    source_stride_batch: tl.constexpr,
+    source_stride_token: tl.constexpr,
+    source_stride_head: tl.constexpr,
 ):
     tile = tl.program_id(0)
     batch_head = tl.program_id(1)
@@ -23,7 +26,8 @@ def _bthd_projection_kernel(
     cols = tl.arange(0, 128)
     reduction = tl.arange(0, 128)
     source_offsets = (
-        ((batch * tokens + rows[:, None]) * heads + head) * 128
+        batch * source_stride_batch + rows[:, None] * source_stride_token
+        + head * source_stride_head
         + reduction[None, :]
     )
     factor_offsets = (
@@ -76,13 +80,19 @@ def project_bthd(
     score_directions: torch.Tensor | None = None,
     score_out: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Compute each BTHD head's ``[T,128] @ [128,128]`` without transposing."""
+    """Compute each BTHD head's ``[T,128] @ [128,128]`` without transposing.
+
+    Source strides may describe either token-major or head-major storage.
+    ``out`` may be the same head-major rows as ``source``: each CTA loads all
+    input channels before storing its own disjoint rows. Other overlapping
+    layouts are not supported.
+    """
     if (
         source.ndim != 4 or source.shape[-1] != 128
         or source.dtype != torch.bfloat16 or not source.is_cuda
-        or not source.is_contiguous()
+        or source.stride(-1) != 1
     ):
-        raise ValueError("source must be contiguous CUDA BF16 BTHD with dim=128")
+        raise ValueError("source must be CUDA BF16 BTHD with contiguous dim=128")
     batch, tokens, heads, _ = source.shape
     if factor.shape != (batch * heads, 128, 128) or factor.dtype != torch.bfloat16:
         raise ValueError("factor must be BF16 [B*H,128,128]")
@@ -116,6 +126,9 @@ def project_bthd(
         factor_stride_batch=factor.stride(0),
         factor_stride_k=factor.stride(1),
         factor_stride_n=factor.stride(2),
+        source_stride_batch=source.stride(0),
+        source_stride_token=source.stride(1),
+        source_stride_head=source.stride(2),
         num_warps=8 if block_m >= 64 else 4,
         num_stages=3,
     )

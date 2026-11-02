@@ -40,7 +40,7 @@ if triton is not None:
         STORE_COST: tl.constexpr,
         INDIRECT: tl.constexpr,
     ):
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
         dims = tl.arange(0, BLOCK_D)
         row_mask = rows < tokens
@@ -99,7 +99,7 @@ if triton is not None:
         BLOCK_M: tl.constexpr,
         BLOCK_D: tl.constexpr,
     ):
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
         dims = tl.arange(0, BLOCK_D)
         mask = (rows[:, None] < tokens) & (dims[None, :] < dim)
@@ -131,7 +131,7 @@ if triton is not None:
     ):
         center_block = tl.program_id(0)
         dim_block = tl.program_id(1)
-        batch = tl.program_id(2)
+        batch = tl.program_id(2).to(tl.int64)
         center = center_block * BLOCK_K + tl.arange(0, BLOCK_K)
         dims = dim_block * BLOCK_D + tl.arange(0, BLOCK_D)
         total = tl.zeros((BLOCK_K, BLOCK_D), tl.float32)
@@ -208,7 +208,7 @@ if triton is not None:
         BLOCK_S: tl.constexpr,
         INDIRECT: tl.constexpr,
     ):
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
         dims = tl.arange(0, BLOCK_D)
         score_columns = tl.arange(0, BLOCK_S)
@@ -284,7 +284,7 @@ if triton is not None:
     ):
         """Form the small Kc×Kc squared-distance matrix in one program."""
 
-        batch = tl.program_id(0)
+        batch = tl.program_id(0).to(tl.int64)
         landmark = tl.arange(0, BLOCK_K)
         dims = tl.arange(0, BLOCK_D)
         valid_k = landmark < landmarks
@@ -321,7 +321,7 @@ if triton is not None:
         BLOCK_M: tl.constexpr,
         BLOCK_N: tl.constexpr,
     ):
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
         nodes = tl.arange(0, BLOCK_N)
         mask = (rows[:, None] < tokens) & (nodes[None, :] < internal_nodes)
@@ -365,7 +365,7 @@ if triton is not None:
     ):
         """Encode only the score column active at the current tree depth."""
 
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
         valid = rows < tokens
         node = tl.load(
@@ -400,7 +400,7 @@ if triton is not None:
         nodes: tl.constexpr,
         BLOCK_M: tl.constexpr,
     ):
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
         valid = rows < tokens
         node = tl.load(
@@ -428,7 +428,7 @@ if triton is not None:
         BLOCK_C: tl.constexpr,
     ):
         tile = tl.program_id(0)
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tile * BLOCK_M + tl.arange(0, BLOCK_M)
         child = tl.arange(0, BLOCK_C)
         valid = rows < tokens
@@ -455,7 +455,7 @@ if triton is not None:
         BLOCK_T: tl.constexpr,
     ):
         child = tl.program_id(0)
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         tile = tl.arange(0, BLOCK_T)
         valid = tile < tiles
         count = tl.load(
@@ -482,7 +482,7 @@ if triton is not None:
         """Count selected Hilbert-ordered rows without materializing labels."""
 
         tile = tl.program_id(0)
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tile * BLOCK_M + tl.arange(0, BLOCK_M)
         valid = rows < tokens
         source = tl.load(source_order + rows, mask=valid, other=0)
@@ -499,7 +499,7 @@ if triton is not None:
         tiles: tl.constexpr,
         BLOCK_T: tl.constexpr,
     ):
-        batch = tl.program_id(0)
+        batch = tl.program_id(0).to(tl.int64)
         tile = tl.arange(0, BLOCK_T)
         valid = tile < tiles
         count = tl.load(counts + batch * tiles + tile, mask=valid, other=0)
@@ -519,7 +519,7 @@ if triton is not None:
         BLOCK_M: tl.constexpr,
     ):
         tile = tl.program_id(0)
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tile * BLOCK_M + tl.arange(0, BLOCK_M)
         valid = rows < tokens
         source = tl.load(source_order + rows, mask=valid, other=0)
@@ -555,7 +555,7 @@ if triton is not None:
         STORE_DESTINATION: tl.constexpr,
     ):
         tile = tl.program_id(0)
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tile * BLOCK_M + tl.arange(0, BLOCK_M)
         valid = rows < tokens
         label = tl.load(labels + batch * tokens + rows, mask=valid, other=0)
@@ -601,7 +601,7 @@ if triton is not None:
     ):
         row_block = tl.program_id(0)
         dim_block = tl.program_id(1)
-        batch = tl.program_id(2)
+        batch = tl.program_id(2).to(tl.int64)
         rows = row_block * BLOCK_M + tl.arange(0, BLOCK_M)
         dims = dim_block * BLOCK_D + tl.arange(0, BLOCK_D)
         row_valid = rows < tokens
@@ -650,7 +650,7 @@ if triton is not None:
         BLOCK_M: tl.constexpr,
     ):
         tile = tl.program_id(0)
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         rows = tile * BLOCK_M + tl.arange(0, BLOCK_M)
         valid = rows < tokens
         label = tl.load(labels + batch * tokens + rows, mask=valid, other=0)
@@ -720,7 +720,7 @@ if triton is not None:
     ):
         row_block = tl.program_id(0)
         dim_block = tl.program_id(1)
-        batch = tl.program_id(2)
+        batch = tl.program_id(2).to(tl.int64)
         rows = row_block * BLOCK_M + tl.arange(0, BLOCK_M)
         dims = dim_block * BLOCK_D + tl.arange(0, BLOCK_D)
         row_valid = rows < tokens
@@ -757,7 +757,7 @@ if triton is not None:
         WRITE_SOURCE: tl.constexpr,
     ):
         label_id = tl.program_id(0)
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         output_offset = tl.load(offsets + label_id).to(tl.int64)
         running = tl.zeros((), tl.int64)
         for start_m in tl.range(0, tokens, BLOCK_M, loop_unroll_factor=1):
@@ -807,7 +807,7 @@ if triton is not None:
         """Build one complete proxy-tree depth with one program per node/row."""
 
         local_node = tl.program_id(0)
-        batch = tl.program_id(1)
+        batch = tl.program_id(1).to(tl.int64)
         node = node_offset + local_node
         landmark = tl.arange(0, BLOCK_K)
         dims = tl.arange(0, BLOCK_D)
@@ -973,7 +973,7 @@ if triton is not None:
         BLOCK_M: tl.constexpr,
         BLOCK_D: tl.constexpr,
     ):
-        row = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
+        row = tl.program_id(0).to(tl.int64) * BLOCK_M + tl.arange(0, BLOCK_M)
         dims = tl.arange(0, BLOCK_D)
         row_mask = row < rows
         source_row = tl.load(row_indices + row, mask=row_mask, other=0)

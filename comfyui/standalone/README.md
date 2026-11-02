@@ -190,6 +190,16 @@ python install.py --wheel /path/to/comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-*
 - **MiniMax H3 Spark Attention (SM120)**
 - **MiniMax H3 Sol Attention (Official Compatibility)**
 
+The Sol compatibility node exposes `chunk_path=chunked` (default) for the
+official H3 chunked producer, or `none` for native H3 QKV projection followed
+by the official non-chunked Sol attention override. Both retain the official
+schedule and sink policy.
+
+Spark's optional `chunk_path=drop_k` also requires a separately built split
+producer library and a compatible comfy-kitchen Spark native core. The package
+includes the producer source and build script; see [build instructions](docs/spark_chunked.md).
+Prebuilt wheel installation alone does not build this experimental producer.
+
 Spark defaults to legacy midpoint directions, FP32 global anchors, exact
 key-block budgets, query-granularity tails, and `q_reuse_k` reblocking.
 

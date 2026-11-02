@@ -61,6 +61,8 @@
 
 > 👉 [Ref2VA 任务加速解决方案](docs/sparse_scope.md#ref2va-任务加速解决方案)
 
+> Source development: [Spark chunked paths and build instructions](docs/spark_chunked.md). The node defaults to `chunk_path=none`; select `drop_k` to enable chunking. `keep_k` remains an internal experimental path.
+
 ---
 
 <a id="demo"></a>
@@ -190,7 +192,7 @@ with ComfyUI packaging or compatibility work.
 | v0.1.3 | 2026-10-13 | ✅ Released | Added validated SM86 packages; integrated with KJNodes low-VRAM patches; added `fidelity`, `speed`, `custom`, and `dense` presets plus selectable dense backends | [Release notes](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.3) |
 | v0.1.4 | 2026-10-15 | ✅ Released | Added ComfyUI 0.40.x support, Ref2VA-aware `sparse_scope`, configurable `producer_chunk`, and in-node Ref2VA guidance | [Release notes](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.4) |
 | v0.1.5 | 2026-10-19 | ✅ Released | Added ComfyUI 0.42.x support through comfy-kitchen 0.2.39; released Linux and Windows SM86/SM89/SM120 packages, each also bundling wheels for ComfyUI 0.38.x–0.40.x | [Release notes](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.5) |
-| v0.1.6 | TBD | 🛠️ Planned | Add Spark-H3 compatibility with [SelfLift-Avatar](https://github.com/slmonker/selflift-Avatar), including integration and workflow validation; add support for ComfyUI 0.37.x and Python 3.10.x–3.11.x | [SelfLift-Avatar repository](https://github.com/slmonker/selflift-Avatar) |
+| v0.1.6 | TBD | 🛠️ Planned | Add Spark-H3 compatibility with [SelfLift-Avatar](https://github.com/slmonker/selflift-Avatar), including integration and workflow validation; add support for ComfyUI 0.37.x and Python 3.11.x | [SelfLift-Avatar repository](https://github.com/slmonker/selflift-Avatar) |
 
 The current v0.1.5 release supports ComfyUI 0.38.x–0.40.x and 0.42.x with
 Linux and Windows x86_64 packages for SM86, SM89, and SM120.

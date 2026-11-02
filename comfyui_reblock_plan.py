@@ -22,7 +22,10 @@ def _enable_local_imports() -> None:
 
 
 @torch.no_grad()
-def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
+def build_comfy_reblock_permutations(
+    controller, query_bthd, key_bthd, layout, *, query_sample_indices=None,
+    consume_key=False,
+):
     try:
         from .h3_sparse_attention.landmark_direction import (
             landmark_direction_factors,
@@ -47,7 +50,15 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
             hilbert_midpoint_sample_indices,
         )
 
-    if query_bthd.shape != key_bthd.shape or query_bthd.ndim != 4:
+    sampled_query = query_sample_indices is not None
+    if query_bthd.ndim != 4 or key_bthd.ndim != 4:
+        raise ValueError("ComfyUI reblock requires BTHD Q/K")
+    if sampled_query:
+        if (query_bthd.shape[0] != key_bthd.shape[0] or
+                query_bthd.shape[2:] != key_bthd.shape[2:] or
+                query_bthd.shape[1] != query_sample_indices.numel()):
+            raise ValueError("sampled ComfyUI reblock requires matching Q samples and K")
+    elif query_bthd.shape != key_bthd.shape:
         raise ValueError("paired ComfyUI reblock requires equal BTHD Q/K")
     cfg = controller.config
     batch, _, heads, dim = query_bthd.shape
@@ -56,6 +67,8 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
     clusters = video_tokens // BLOCK_SIZE
     layout_reuse = cfg.landmark_tree_v2_layout_reuse
     shared_layout = layout_reuse == "q_from_k"
+    if sampled_query and not shared_layout:
+        raise ValueError("sampled Q planning requires q_from_k layout reuse")
     fused_root_scores = (
         cfg.landmark_tree_v2_initial_order == "flat"
         and cfg.landmark_tree_v2_landmark_mode == "midpoint"
@@ -70,8 +83,8 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
 
     metric_key = (
         "metric_indices",
-        query_bthd.device.type,
-        query_bthd.device.index,
+        key_bthd.device.type,
+        key_bthd.device.index,
         layout.grid,
         fused_root_scores,
         clusters,
@@ -79,19 +92,35 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
     metric_indices = controller.rope_sol_key_clustering_static.get(metric_key)
     if metric_indices is None:
         metric_indices = hilbert_midpoint_sample_indices(
-            layout.grid, clusters, device=query_bthd.device
+            layout.grid, clusters, device=key_bthd.device
         )
         controller.rope_sol_key_clustering_static[metric_key] = metric_indices
 
-    query = (
-        query_bthd[:, :video_tokens]
-        .permute(0, 2, 1, 3)
-        .reshape(flat_batch, video_tokens, dim)
-    )
+    if sampled_query:
+        if not torch.equal(query_sample_indices.to(metric_indices.device), metric_indices):
+            raise ValueError("sampled Q indices must match the planner's metric indices")
+        query = query_bthd.permute(0, 2, 1, 3).reshape(
+            flat_batch, metric_indices.numel(), dim,
+        )
+        query_metric_indices = torch.arange(metric_indices.numel(), device=key_bthd.device)
+    else:
+        query = (
+            query_bthd[:, :video_tokens]
+            .permute(0, 2, 1, 3)
+            .reshape(flat_batch, video_tokens, dim)
+        )
+        query_metric_indices = metric_indices
     key = (
         key_bthd[:, :video_tokens]
         .permute(0, 2, 1, 3)
         .reshape(flat_batch, video_tokens, dim)
+    )
+    # Only the chunk producer's private, compact head-major K may be consumed.
+    # Each projection CTA reads all 128 channels before overwriting its rows.
+    inplace_key = (
+        consume_key and shared_layout and key.is_contiguous()
+        and key.dtype == torch.bfloat16 and key.is_cuda and dim == 128
+        and cfg.landmark_tree_v2_mean_mode == "raw"
     )
     if shared_layout:
         # q_reuse_k builds the K ordering only. K clustering features consume
@@ -101,7 +130,7 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
         query_metric = landmark_single_direction_factor(
             query,
             key,
-            metric_indices,
+            query_metric_indices,
             "key",
             ridge=cfg.rope_sol_key_ridge_epsilon,
             moment=cfg.landmark_tree_v2_moment_mode,
@@ -188,7 +217,7 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
         key_plan = query_plan = None
 
     if fused_root_scores:
-        key_transformed = key_plan.graph_input
+        key_transformed = key if inplace_key else key_plan.graph_input
         if key_transformed is None:
             key_transformed = torch.empty(
                 (flat_batch, video_tokens, dim),
@@ -201,7 +230,7 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
             if query_transformed is None:
                 query_transformed = torch.empty_like(key_transformed)
     else:
-        transformed = plan.graph_input
+        transformed = key if inplace_key else plan.graph_input
         if transformed is None:
             transformed = torch.empty(
                 (
@@ -340,11 +369,21 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
                 allow_cuda_graph=False,
             )
     else:
-        torch.bmm(
-            key.to(torch.bfloat16),
-            query_metric.to(torch.bfloat16),
-            out=transformed[:flat_batch],
-        )
+        if inplace_key:
+            try:
+                from .h3_sparse_attention.landmark_projection import project_bthd
+            except ImportError:
+                from h3_sparse_attention.landmark_projection import project_bthd
+            project_bthd(
+                key_bthd[:, :video_tokens], query_metric.to(torch.bfloat16),
+                out=transformed, block_m=128,
+            )
+        else:
+            torch.bmm(
+                key.to(torch.bfloat16),
+                query_metric.to(torch.bfloat16),
+                out=transformed[:flat_batch],
+            )
         if not shared_layout:
             torch.bmm(
                 query.to(torch.bfloat16),
@@ -397,6 +436,8 @@ def build_comfy_reblock_permutations(controller, query_bthd, key_bthd, layout):
         hierarchy = key_plan.hierarchy if shared_layout else query_plan.hierarchy
     controller.landmark_reblock_hierarchy = hierarchy
     controller.counts["reblock_plan_calls"] += 1
+    if inplace_key:
+        controller.counts["reblock_plan_inplace_key"] += 1
 
     def unflatten(value):
         if value is None:
