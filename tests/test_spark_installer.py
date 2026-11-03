@@ -1,4 +1,5 @@
 import inspect
+from dataclasses import replace
 
 import pytest
 import torch
@@ -460,7 +461,7 @@ def test_spark_inference_matches_dense_when_all_blocks_exact(monkeypatch, fused,
     with torch.no_grad():
         expected = model(x)
         if fused == '0':
-            with pytest.raises(RuntimeError, match='threshold fallback is disabled'):
+            with pytest.raises(RuntimeError, match='alternate Top-K route modes are disabled'):
                 with install_h3_spark_attn(
                     model, num_inference_steps=3, warmup_percent=0,
                     sol_dense_layers=0, min_tokens=0,
@@ -514,8 +515,17 @@ def test_spark_default_routes_merge_with_reweight(monkeypatch, topk_ratio):
                                             torch.arange(4, device='cuda'),
                                             torch.arange(4, device='cuda'))
     layout = _packed_layout(tags, positions)
-    cfg = H3SparseAttentionConfig.spark(3, warmup_percent=0, sol_dense_layers=0,
-                                        sol_route_topk_ratio=topk_ratio)
+    cfg = H3SparseAttentionConfig.spark(
+        3, warmup_mode="warmup_steps", warmup_steps=0, sol_dense_layers=0,
+    )
+    if topk_ratio is None:
+        with pytest.raises(ValueError, match='Spark component modes require Top-K routing'):
+            H3SparseAttentionConfig.spark(3, sol_route_topk_ratio=None)
+        # Keep the mathematical threshold/reweight oracle on the internal Sol
+        # configuration; public Spark modes now require packed Top-K routing.
+        cfg = replace(cfg, sol_spark_mode=None, sol_route_topk_ratio=None)
+    else:
+        cfg = replace(cfg, sol_route_topk_ratio=topk_ratio)
     controller = _Controller(cfg)
     # Capture the source's exact branch route; use it to build the independent oracle.
     import h3_sparse_attention.sol_numerator_virtual_q as virtual
@@ -534,7 +544,7 @@ def test_spark_default_routes_merge_with_reweight(monkeypatch, topk_ratio):
         return result
     monkeypatch.setattr(virtual, 'exact_attention', capture)
     if topk_ratio is not None:
-        with pytest.raises(RuntimeError, match='threshold fallback is disabled'):
+        with pytest.raises(RuntimeError, match='alternate Top-K route modes are disabled'):
             _sol_attention(controller, q.transpose(1,2), k.transpose(1,2),
                            v.transpose(1,2), layout, 0)
         return
