@@ -198,7 +198,10 @@ schedule and sink policy.
 Spark's optional `chunk_path=drop_k` also requires a separately built split
 producer library and a compatible comfy-kitchen Spark native core. The package
 includes the producer source and build script; see [build instructions](docs/spark_chunked.md).
-Prebuilt wheel installation alone does not build this experimental producer.
+The v0.1.5 prebuilt wheels lack `_C.spark_attn_chunked_core`. Rebuild Kitchen
+with the current bundled patch and install that wheel before building the
+producer; the build instructions cover both steps. Installing the old wheel
+or compiling only the producer does not enable `drop_k`.
 
 Spark defaults to legacy midpoint directions, FP32 global anchors, exact
 key-block budgets, query-granularity tails, and `q_reuse_k` reblocking.

@@ -36,6 +36,17 @@ def extract_extension(wheel: Path, target: Path) -> Path:
     return target / names[0]
 
 
+def require_native_symbols(extension) -> list[str]:
+    required = (
+        "spark_attn", "spark_attn_chunked_core", "sol_attn_plan",
+        "sol_producer_begin", "sol_producer_chunk",
+    )
+    missing = [name for name in required if not callable(getattr(extension, name, None))]
+    if missing:
+        raise RuntimeError(f"wheel lacks required native Spark APIs: {', '.join(missing)}")
+    return list(required)
+
+
 def child(wheel: Path) -> None:
     # A loaded .pyd remains memory-mapped until this child process exits on
     # Windows, so TemporaryDirectory cannot remove it from inside the child.
@@ -47,8 +58,12 @@ def child(wheel: Path) -> None:
 
         import torch
         import comfy_kitchen
+        from comfy_kitchen.backends import cuda
         from comfy_kitchen.backends.cuda import spark_attn
 
+        if Path(cuda._C.__file__).resolve() != extension.resolve():
+            raise RuntimeError("wheel audit imported an installed extension instead of the extracted wheel")
+        native_symbols = require_native_symbols(cuda._C)
         distributions = list(importlib.metadata.distributions(path=[str(target)]))
         versions = [dist.version for dist in distributions if dist.metadata["Name"].lower() == "comfy-kitchen"]
         if len(versions) != 1:
@@ -80,6 +95,7 @@ def child(wheel: Path) -> None:
             "dtype": str(first.dtype),
             "finite": True,
             "repeat_bitwise": True,
+            "native_symbols": native_symbols,
         }))
     finally:
         shutil.rmtree(directory, ignore_errors=True)

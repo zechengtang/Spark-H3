@@ -291,3 +291,28 @@ def test_generated_linux_kit_uses_linux_wheels_and_entrypoints(tmp_path):
         assert packaged_identity["platform"] == "linux-x86_64"
     with zipfile.ZipFile(kit.with_suffix(".zip")) as archive:
         assert archive.testzip() is None
+
+
+def test_wheel_audit_rejects_backend_without_chunked_core(tmp_path, monkeypatch):
+    config = types.ModuleType("config")
+    for name, value in {
+        "ARCH": "sm120", "CAPABILITY": (12, 0), "CUDA_TAG": "cu130",
+        "ELF_ARCH": "sm_120", "LOCAL_VERSION": "spark.h3.sm120.cu130.1",
+        "PLATFORM": "linux-x86_64", "EXTENSION_SUFFIX": ".so",
+        "wheel_base": lambda _: "0.2.36",
+    }.items():
+        setattr(config, name, value)
+    monkeypatch.setitem(sys.modules, "config", config)
+    spec = importlib.util.spec_from_file_location(
+        "spark_test_wheel_symbols", ROOT / "tools/spark_release_toolkit/validate_wheels.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    extension = types.SimpleNamespace(**{
+        name: lambda: None for name in
+        ("spark_attn", "sol_attn_plan", "sol_producer_begin", "sol_producer_chunk")
+    })
+    with pytest.raises(RuntimeError, match="spark_attn_chunked_core"):
+        module.require_native_symbols(extension)
+    extension.spark_attn_chunked_core = lambda: None
+    assert "spark_attn_chunked_core" in module.require_native_symbols(extension)

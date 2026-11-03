@@ -70,6 +70,11 @@ def test_standalone_package_is_small_complete_and_importable(tmp_path):
     assert not (package / "sol_attn").exists()
     assert (package / "patches/comfy-kitchen-spark-v0.2.36.patch").is_file()
     assert (package / "patches/comfy-kitchen-spark-v0.2.39.patch").is_file()
+    for patch in (package / "patches").glob("comfy-kitchen-spark-*.patch"):
+        source = patch.read_text()
+        assert '+    m.def("spark_attn_chunked_core", &spark_attn_chunked_core_py,' in source
+        assert '+    sage_attention/spark_carrier_reblock.cu' in source
+        assert '+extern "C" void launch_spark_reweight_carriers(' in source
     assert not list(package.rglob("__pycache__"))
     assert (package / "assets/adaln_curve_projection.safetensors").is_file()
     assert json.loads((package / "spark_h3_build.json").read_text()) == {

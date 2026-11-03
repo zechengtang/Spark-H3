@@ -17,14 +17,78 @@ Spark 节点统一使用 `chunk_path`，只有 `none`（默认，非分块 Spark
 
 ## 构建与使用
 
-两种方案均需要带有 Spark 原生 BSA/reweight 核的 comfy-kitchen，以及独立的 split producer 动态库。当前验证环境包括 Linux、SM86/SM120、ComfyUI 0.38.2；其他平台需要单独构建和验证。下例构建 SM86；SM120 使用 `--arch 120`。
+两种方案均需要带有 `_C.spark_attn_chunked_core` 的 comfy-kitchen，以及独立的 split producer 动态库。仓库中的 `comfy-kitchen-spark-v0.2.36.patch`（同时用于 0.2.37）和 `comfy-kitchen-spark-v0.2.39.patch` 已包含该入口、C++ 绑定、量化载体重排内核及载体 reweight 内核。它们由现有 `comfyui/kernel_builder.py` 构建流程自动应用。
+
+**旧版 0.1.5 预编译 wheel 不包含这个分块入口；只编译 `libproducer.so` 不够。** 必须先按当前仓库补丁重建并安装 Kitchen，再构建 producer。`chunk_path=none` 仍可使用原来的非分块后端。以下是 Linux / SM120 / CUDA 13.0 / ComfyUI 0.38.2 的完整重建步骤，使用 ComfyUI 自己的 Python；构建目录须为新的空目录。SM86/SM89 对应将 `SPARK_ARCH`、`COMFY_CUDA_ARCHS`、`--arch` 分别改为 `sm86/86/86` 或 `sm89/89/89`。
+
+### 1. 从干净的固定版本源码构建 Kitchen
+
+`0.38.x` 使用 Kitchen `0.2.36`，`0.39.x/0.40.x` 使用 `0.2.37`，`0.42.x` 使用 `0.2.39`。准备 CUDA 13.0 Toolkit、Git 和 C++ 构建工具，并确保 GitHub/PyPI 可访问。
 
 ```bash
-python scripts/build_spark_split.py \
-  --kitchen /path/to/comfy-kitchen \
-  --output /path/to/libproducer.so --arch 86
-export H3_SPARK_SPLIT_LIBRARY=/path/to/libproducer.so
+export SPARK_ROOT=/absolute/path/to/Spark-H3
+export SPARK_PY=/absolute/path/to/comfyui/venv/bin/python
+export SPARK_BUILD_ROOT=/absolute/path/to/new-spark-build
+export SPARK_KITCHEN_BASE=0.2.36
+export SPARK_ARCH=sm120
+export COMFY_CUDA_ARCHS=120f
+export COMFY_BUILD_JOBS=4
+mkdir -p "$SPARK_BUILD_ROOT/wheels"
+
+# 与 kernel_builder CLI 使用同一个源码准备函数；保留源码供 producer 编译。
+"$SPARK_PY" - <<'PY'
+import os, sys
+from pathlib import Path
+root = Path(os.environ['SPARK_ROOT'])
+sys.path.insert(0, str(root / 'comfyui'))
+from kernel_builder import prepare_source, KITCHEN_SOURCE
+prepare_source(
+    root, Path(os.environ['SPARK_BUILD_ROOT']) / 'comfy-kitchen',
+    source_url=KITCHEN_SOURCE,
+    kitchen_base=os.environ['SPARK_KITCHEN_BASE'],
+    architecture=os.environ['SPARK_ARCH'], cuda_tag='cu130',
+)
+PY
+
+"$SPARK_PY" -m pip wheel --no-deps \
+  --wheel-dir "$SPARK_BUILD_ROOT/wheels" "$SPARK_BUILD_ROOT/comfy-kitchen"
+"$SPARK_PY" -m pip install --no-deps --force-reinstall \
+  "$SPARK_BUILD_ROOT"/wheels/comfy_kitchen-*.whl
+
+# 确认当前 Python 加载的确实是新扩展，不以版本号代替接口检查。
+"$SPARK_PY" - <<'PY'
+from comfy_kitchen.backends import cuda
+print(cuda.__file__)
+print(cuda._C.__file__)
+for name in ('spark_attn', 'spark_attn_chunked_core', 'sol_attn_plan',
+             'sol_producer_begin', 'sol_producer_chunk'):
+    assert callable(getattr(cuda._C, name, None)), name
+print('Spark native APIs: OK')
+PY
+```
+
+### 2. 使用同一份 Kitchen 头文件构建 producer
+
+```bash
+"$SPARK_PY" "$SPARK_ROOT/scripts/build_spark_split.py" \
+  --kitchen "$SPARK_BUILD_ROOT/comfy-kitchen" \
+  --output "$SPARK_BUILD_ROOT/libproducer.so" --arch 120
+export H3_SPARK_SPLIT_LIBRARY="$SPARK_BUILD_ROOT/libproducer.so"
 # 之后在同一环境启动 ComfyUI。
+```
+
+当前运行验证使用 Linux；Windows 和其他 GPU 架构的构建及运行需另行验证。独立 producer 的构建脚本目前使用 Linux 编译参数。
+
+### 3. 验证分块执行
+
+在完整 Spark-H3 源码目录下执行。测试会实际运行 bootstrap/steady、`drop_k`/内部 `keep_k`、KJ 分组和分配器检查；缺少 CUDA 或 `H3_SPARK_SPLIT_LIBRARY` 时会跳过，所以验收时必须检查测试结果而不能只看退出码。
+
+```bash
+cd "$SPARK_ROOT"
+export COMFYUI_ROOT=/absolute/path/to/ComfyUI
+PYTHONPATH="$SPARK_ROOT:$COMFYUI_ROOT" "$SPARK_PY" -m pytest -q -ra \
+  tests/test_spark_split.py tests/test_spark_split_allocator.py \
+  tests/test_comfyui_plugin.py
 ```
 
 在 Spark 节点中设置 `chunk_path=drop_k`。支持默认 `full`、`q_reuse_k`、`legacy` midpoint 配置；输入要求 BF16、head_dim=128、batch=1，`producer_chunk` 必须为 64 的正整数倍。`topk_only`、`reblock_only`、`reweight_only`、跨层排列复用、Spark 配置中的层次化 head 分组规划、独立 Q/K 规划或 fused midpoint 在启用 chunked 时会提前报错。这里的“层次化 head 分组规划”不包括 KJNodes 的 `MiniMaxLowVRAMAttention`：后者的 `head_chunks` 已支持，会在每个 head group 内继续按 token chunk 执行 drop_k。缺少动态库时会提示构建方法，不回到旧实现。ComfyUI Spark 的 fused midpoint 已由上游整体禁用，`chunk_path=none` 也不接受该设置。

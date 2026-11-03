@@ -52,14 +52,15 @@ index bc63bef..b7141da 100644
  
  
 diff --git a/comfy_kitchen/backends/cuda/CMakeLists.txt b/comfy_kitchen/backends/cuda/CMakeLists.txt
-index 808a185..a0c852f 100644
+index 808a185..c8b7d95 100644
 --- a/comfy_kitchen/backends/cuda/CMakeLists.txt
 +++ b/comfy_kitchen/backends/cuda/CMakeLists.txt
-@@ -143,6 +143,9 @@ set(CUDA_SOURCES
+@@ -143,6 +143,10 @@ set(CUDA_SOURCES
      sage_attention/sol_attn_route.cu
      sage_attention/sol_attn_exact.cu
      sage_attention/sol_attn_token.cu
 +    sage_attention/spark_reblock.cu
++    sage_attention/spark_carrier_reblock.cu
 +    sage_attention/spark_reweight.cu
 +    sage_attention/spark_block_tail.cu
      ops/quantize_svdquant_w4a4.cu
@@ -369,10 +370,24 @@ index 09c0869..82500ad 100644
  _register()
 -
 diff --git a/comfy_kitchen/backends/cuda/dlpack_bindings.cpp b/comfy_kitchen/backends/cuda/dlpack_bindings.cpp
-index ba706a1..512fb75 100644
+index ba706a1..c6256c1 100644
 --- a/comfy_kitchen/backends/cuda/dlpack_bindings.cpp
 +++ b/comfy_kitchen/backends/cuda/dlpack_bindings.cpp
-@@ -276,23 +276,46 @@ extern "C" {
+@@ -269,6 +269,13 @@ extern "C" {
+     // Sol-Attn sparse attention — see sage_attention/sol_attn.cu.
+     extern const char* const sol_attn_plan_names[];   // null-terminated
+     int sol_attn_plan(int batch, int seq_len, int num_heads, int n_tok, int64_t* out, int cap);
++    void launch_spark_attn_chunked_core(
++        void*, void*, const void*, const void*, void*, void*,
++        void*, void*, void*, void*, void*, void*, void*, void*,
++        int, int, int, int, int, float, float,
++        int, int, int, int, int, int, int,
++        void*, void*, const void*, const void*, int, int, cudaStream_t);
++
+     void sol_producer_begin(void* workspace, int batch, int seq_len,
+                             int num_heads, int n_tok, cudaStream_t stream);
+     void sol_producer_chunk(
+@@ -276,23 +283,46 @@ extern "C" {
          const void* qw, const void* kw, const void* kmean, const void* vscale,
          const void* blen, float rope_eps, int rot_dim, int t0, int M,
          int batch, int seq_len, int num_heads, int n_tok, cudaStream_t stream);
@@ -423,7 +438,7 @@ index ba706a1..512fb75 100644
  
      // fp16-accumulate NDHWC conv3d with fused bias/residual — see ops/cutlass_conv3d_fp16.cu.
      // resid is a full NZPQK tensor (resid_full) or a K-vector broadcast to every row.
-@@ -1532,6 +1555,8 @@ static void need_elems(const nb::ndarray<nb::device::cuda>& a, int64_t n, const
+@@ -1532,6 +1562,8 @@ static void need_elems(const nb::ndarray<nb::device::cuda>& a, int64_t n, const
  }
  static void need_workspace(const nb::ndarray<nb::device::cuda>& ws, int64_t batch, int64_t seq_len,
                             int64_t num_heads, int64_t token_aug, const char* who) {
@@ -432,7 +447,7 @@ index ba706a1..512fb75 100644
      int64_t v[48];
      const int n = sol_attn_plan((int)batch, (int)seq_len, (int)num_heads, (int)token_aug, v, 48);
      if (n > 48 || (int64_t)ws.size() < v[n - 1])   // last slot is "total"
-@@ -1581,6 +1606,20 @@ nb::dict sol_attn_plan_py(int64_t batch, int64_t seq_len, int64_t num_heads, int
+@@ -1581,6 +1613,20 @@ nb::dict sol_attn_plan_py(int64_t batch, int64_t seq_len, int64_t num_heads, int
      return d;
  }
  
@@ -453,7 +468,7 @@ index ba706a1..512fb75 100644
  void sol_attn(
      nb::ndarray<nb::device::cuda> q,
      nb::ndarray<nb::device::cuda> k,
-@@ -1594,11 +1633,22 @@ void sol_attn(
+@@ -1594,11 +1640,22 @@ void sol_attn(
      std::optional<nb::ndarray<nb::device::cuda>> key_bias = std::nullopt,
      std::optional<nb::ndarray<nb::device::cuda>> threshold = std::nullopt,
      std::optional<nb::ndarray<nb::device::cuda>> block_len = std::nullopt,
@@ -479,7 +494,7 @@ index ba706a1..512fb75 100644
      if (block_len) check_block_len(*block_len, seq_len, "sol_attn");
      const int elem = sol_elem_code(q);
      if (elem < 0) throw std::runtime_error("sol_attn: q must be bfloat16 or float16");
-@@ -1611,7 +1661,13 @@ void sol_attn(
+@@ -1611,7 +1668,13 @@ void sol_attn(
      need_staging_layout(v, "sol_attn", "v");
      need_contiguous(out, "sol_attn", "out");
      need_workspace(workspace, batch, seq_len, num_heads, token_aug, "sol_attn");
@@ -494,7 +509,7 @@ index ba706a1..512fb75 100644
      // Explicit strides: only the last dim must be contiguous (BHND views go in as-is).
      launch_sol_attn(
          q.data(), k.data(), v.data(), out.data(), workspace.data(),
-@@ -1619,11 +1675,127 @@ void sol_attn(
+@@ -1619,11 +1682,201 @@ void sol_attn(
          tau, scale,
          key_bias ? key_bias->data() : nullptr,
          threshold ? threshold->data() : nullptr,
@@ -621,10 +636,84 @@ index ba706a1..512fb75 100644
 +        v.stride(0), v.stride(1), v.stride(2),
 +        reinterpret_cast<cudaStream_t>(stream_ptr), block_tail ? 1 : 0,
 +        reweight ? 1 : 0, force_local_blocks ? 1 : 0);
++}
++
++void spark_attn_chunked_core_py(
++    nb::ndarray<nb::device::cuda> workspace, nb::ndarray<nb::device::cuda> out,
++    nb::ndarray<nb::device::cuda> stale_kmean, nb::ndarray<nb::device::cuda> vscale,
++    nb::ndarray<nb::device::cuda> kmean_next, nb::ndarray<nb::device::cuda> vamax_out,
++    nb::ndarray<nb::device::cuda> route_bits, nb::ndarray<nb::device::cuda> anchor,
++    nb::ndarray<nb::device::cuda> ak, nb::ndarray<nb::device::cuda> av,
++    nb::ndarray<nb::device::cuda> lm, nb::ndarray<nb::device::cuda> rki,
++    nb::ndarray<nb::device::cuda> rksb, nb::ndarray<nb::device::cuda> rv,
++    int64_t seq_len, int64_t num_heads, int64_t video_tokens, bool anchor_bf16,
++    int64_t topk_count, float tau, float scale,
++    int64_t sink_start, int64_t sink_end, int64_t sink_q_start, int64_t sink_q_end,
++    bool block_tail, bool reweight, bool force_local_blocks, uintptr_t stream_ptr,
++    std::optional<nb::ndarray<nb::device::cuda>> temp_carrier = std::nullopt,
++    std::optional<nb::ndarray<nb::device::cuda>> temp_scales = std::nullopt,
++    std::optional<nb::ndarray<nb::device::cuda>> query_permutation = std::nullopt,
++    std::optional<nb::ndarray<nb::device::cuda>> key_permutation = std::nullopt,
++    int64_t video_start = 0)
++{
++    constexpr const char* fn = "spark_attn_chunked_core";
++    const int64_t ntb = (seq_len + 63) / 64;
++    const int64_t rtp = ((ntb + 63) / 64) * 64;
++    need_workspace(workspace, 1, seq_len, num_heads, 0, fn);
++    need_bthd(out, 1, seq_len, num_heads, 128, 0, fn, "out");
++    need_contiguous(out, fn, "out");
++    for (const auto& tensor : {stale_kmean, vscale, kmean_next, vamax_out})
++        need_elems(tensor, num_heads * 128, fn, "statistics");
++    need_elems(route_bits, num_heads * ntb * ((ntb + 31) / 32), fn, "route_bits");
++    need_elems(anchor, num_heads * 128, fn, "anchor");
++    need_elems(ak, num_heads * ntb * 128, fn, "ak");
++    need_elems(av, num_heads * ntb * 128, fn, "av");
++    need_elems(lm, num_heads * ntb, fn, "lm");
++    need_elems(rki, num_heads * rtp * 128, fn, "rki");
++    need_elems(rksb, num_heads * rtp * 2, fn, "rksb");
++    need_elems(rv, num_heads * rtp * 128, fn, "rv");
++    if (query_permutation.has_value() != key_permutation.has_value())
++        throw std::runtime_error("spark_attn_chunked_core: query/key permutations must be paired");
++    int index64 = 0;
++    if (query_permutation) {
++        if (!temp_carrier || !temp_scales)
++            throw std::runtime_error("spark_attn_chunked_core: reblock temporary buffers missing");
++        const bool shared_layout = query_permutation->data() == key_permutation->data();
++        need_elems(*temp_carrier, num_heads * ntb * 64 * 128, fn, "temp_carrier");
++        need_elems(*temp_scales, (shared_layout ? 3 : 2) * num_heads * ntb * 64,
++                   fn, "temp_scales");
++        const auto check_permutation = [&](const nb::ndarray<nb::device::cuda>& p) {
++            const bool is64 = p.dtype() == nb::dtype<int64_t>();
++            const bool is32 = p.dtype() == nb::dtype<int32_t>();
++            if ((!is64 && !is32) || p.ndim() != 3 || p.shape(0) != 1 ||
++                p.shape(1) != (size_t)num_heads || p.shape(2) != (size_t)video_tokens)
++                throw std::runtime_error("spark_attn_chunked_core: invalid permutation shape/dtype");
++            need_contiguous(p, fn, "permutation");
++            return is64;
++        };
++        const bool q64 = check_permutation(*query_permutation);
++        const bool k64 = check_permutation(*key_permutation);
++        if (q64 != k64) throw std::runtime_error("spark_attn_chunked_core: permutation dtypes differ");
++        index64 = q64 ? 1 : 0;
++    }
++    launch_spark_attn_chunked_core(
++        workspace.data(), out.data(), stale_kmean.data(), vscale.data(),
++        kmean_next.data(), vamax_out.data(), route_bits.data(), anchor.data(),
++        ak.data(), av.data(), lm.data(), rki.data(), rksb.data(), rv.data(),
++        (int)seq_len, (int)num_heads, (int)video_tokens, anchor_bf16 ? 1 : 0,
++        (int)topk_count, tau, scale,
++        (int)sink_start, (int)sink_end, (int)sink_q_start, (int)sink_q_end,
++        block_tail ? 1 : 0, reweight ? 1 : 0, force_local_blocks ? 1 : 0,
++        temp_carrier ? temp_carrier->data() : nullptr,
++        temp_scales ? temp_scales->data() : nullptr,
++        query_permutation ? query_permutation->data() : nullptr,
++        key_permutation ? key_permutation->data() : nullptr,
++        index64, (int)video_start,
++        reinterpret_cast<cudaStream_t>(stream_ptr));
  }
  
  void sol_producer_begin_py(nb::ndarray<nb::device::cuda> workspace,
-@@ -1664,6 +1836,62 @@ void sol_producer_chunk_py(
+@@ -1664,6 +1917,62 @@ void sol_producer_chunk_py(
                         reinterpret_cast<cudaStream_t>(stream_ptr));
  }
  
@@ -687,7 +776,7 @@ index ba706a1..512fb75 100644
  void sol_attn_core_py(
      nb::ndarray<nb::device::cuda> workspace, nb::ndarray<nb::device::cuda> out,
      nb::ndarray<nb::device::cuda> vscale, nb::ndarray<nb::device::cuda> kmean_next,
-@@ -1674,23 +1902,37 @@ void sol_attn_core_py(
+@@ -1674,23 +1983,37 @@ void sol_attn_core_py(
      uintptr_t stream_ptr,
      std::optional<nb::ndarray<nb::device::cuda>> threshold = std::nullopt,
      std::optional<nb::ndarray<nb::device::cuda>> block_len = std::nullopt,
@@ -728,7 +817,7 @@ index ba706a1..512fb75 100644
  }
  
  // Nanobind wrapper for fused AdaLN (LayerNorm statistics)
-@@ -4443,6 +4685,11 @@ NB_MODULE(_C, m) {
+@@ -4443,6 +4766,11 @@ NB_MODULE(_C, m) {
      m.def("sol_attn_plan", &sol_attn_plan_py,
            "Workspace dims, slot byte offsets and total bytes for this shape and token budget",
            nb::arg("batch"), nb::arg("seq_len"), nb::arg("num_heads"), nb::arg("token_aug") = 0);
@@ -740,7 +829,7 @@ index ba706a1..512fb75 100644
  
      m.def("sol_attn", &sol_attn,
            "Sol-Attn training-free sparse attention (BF16 or FP16 in/out, head_dim 128)",
-@@ -4457,7 +4704,29 @@ NB_MODULE(_C, m) {
+@@ -4457,7 +4785,44 @@ NB_MODULE(_C, m) {
            nb::arg("key_bias") = nb::none(),
            nb::arg("threshold") = nb::none(),
            nb::arg("block_len") = nb::none(),
@@ -768,10 +857,25 @@ index ba706a1..512fb75 100644
 +          nb::arg("reweight") = true,
 +          nb::arg("force_local_blocks") = false,
 +          nb::arg("video_start") = 0);
++
++    m.def("spark_attn_chunked_core", &spark_attn_chunked_core_py,
++          "Spark-H3 route, reweight and exact stages over Sol chunk-producer carriers",
++          nb::arg("workspace"), nb::arg("out"), nb::arg("stale_kmean"),
++          nb::arg("vscale"), nb::arg("kmean_next"), nb::arg("vamax_out"),
++          nb::arg("route_bits"), nb::arg("anchor"), nb::arg("ak"), nb::arg("av"),
++          nb::arg("lm"), nb::arg("rki"), nb::arg("rksb"), nb::arg("rv"),
++          nb::arg("seq_len"), nb::arg("num_heads"), nb::arg("video_tokens"),
++          nb::arg("anchor_bf16"), nb::arg("topk_count"), nb::arg("tau"), nb::arg("scale"),
++          nb::arg("sink_start"), nb::arg("sink_end"), nb::arg("sink_q_start"),
++          nb::arg("sink_q_end"), nb::arg("block_tail"), nb::arg("reweight"),
++          nb::arg("force_local_blocks"), nb::arg("stream_ptr"),
++          nb::arg("temp_carrier") = nb::none(), nb::arg("temp_scales") = nb::none(),
++          nb::arg("query_permutation") = nb::none(), nb::arg("key_permutation") = nb::none(),
++          nb::arg("video_start") = 0);
  
      m.def("sol_producer_begin", &sol_producer_begin_py,
            nb::arg("workspace"), nb::arg("batch"), nb::arg("seq_len"),
-@@ -4468,6 +4737,17 @@ NB_MODULE(_C, m) {
+@@ -4468,6 +4833,17 @@ NB_MODULE(_C, m) {
            nb::arg("rope_eps"), nb::arg("rot_dim"), nb::arg("t0"), nb::arg("m"),
            nb::arg("batch"), nb::arg("seq_len"), nb::arg("num_heads"),
            nb::arg("stream_ptr"), nb::arg("block_len") = nb::none(), nb::arg("token_aug") = 0);
@@ -789,7 +893,7 @@ index ba706a1..512fb75 100644
      m.def("sol_attn_core", &sol_attn_core_py,
            nb::arg("workspace"), nb::arg("out"), nb::arg("vscale"),
            nb::arg("kmean_next"), nb::arg("vamax_out"),
-@@ -4477,7 +4757,9 @@ NB_MODULE(_C, m) {
+@@ -4477,7 +4853,9 @@ NB_MODULE(_C, m) {
            nb::arg("sink_q_start"), nb::arg("sink_q_end"), nb::arg("stream_ptr"),
            nb::arg("threshold") = nb::none(),
            nb::arg("block_len") = nb::none(),
@@ -801,10 +905,10 @@ index ba706a1..512fb75 100644
      m.def("flash_attention_decode", &flash_attention_decode,
            "Flash Attention decode over a fixed-capacity variable-length KV cache",
 diff --git a/comfy_kitchen/backends/cuda/sage_attention/sol_attn.cu b/comfy_kitchen/backends/cuda/sage_attention/sol_attn.cu
-index aaf53b2..64cb7d4 100644
+index aaf53b2..3d0e982 100644
 --- a/comfy_kitchen/backends/cuda/sage_attention/sol_attn.cu
 +++ b/comfy_kitchen/backends/cuda/sage_attention/sol_attn.cu
-@@ -39,32 +39,59 @@ void launch_sol_preprocess(const void*, const void*, const void*, void*, void*,
+@@ -39,32 +39,69 @@ void launch_sol_preprocess(const void*, const void*, const void*, void*, void*,
                             void*, const void*, const void*,
                             int, int, int, int, int, int, int,
                             int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
@@ -871,13 +975,23 @@ index aaf53b2..64cb7d4 100644
 +    int, int, int, int, int, int, int, int, const void*, int,
 +    int, float, int, cudaStream_t);
 +
++extern "C" void launch_spark_reweight_carriers(
++    const void*, const void*, const void*, const void*,
++    const void*, const void*, const void*,
++    void*, void*, void*, void*, void*, void*, void*,
++    int, int, int, int, int, int, int, int, int, float, cudaStream_t);
++extern "C" void launch_spark_carrier_reblock(
++    void*, void*, void*, void*, void*, void*, void*, void*, void*, void*,
++    const void*, const void*, void*, void*, const void*, const void*, int,
++    int, int, int, int, int, int, int, cudaStream_t);
++
 +void launch_spark_block_tail(const void*, const void*, const void*, const void*,
 +    const void*, const void*, void*, void*, void*, int, int, int, int,
 +    float, cudaStream_t);
  
  namespace {
  
-@@ -148,23 +175,58 @@ void validate_shape(int batch, int seq_len, int num_heads) {
+@@ -148,23 +185,58 @@ void validate_shape(int batch, int seq_len, int num_heads) {
          throw std::runtime_error("sol_attn: batch * num_heads exceeds the 65535 grid limit");
  }
  
@@ -939,7 +1053,7 @@ index aaf53b2..64cb7d4 100644
      if (n_tok)
          launch_sol_token(w + p.qmean, w + p.tokRef, w + p.tokBits,
                           w + p.gCen8, w + p.gCens, w + p.gRef, w + p.gBits,
-@@ -174,9 +236,29 @@ void run_route_exact(const Plan& p, char* w, const void* ext_threshold, void* ou
+@@ -174,9 +246,29 @@ void run_route_exact(const Plan& p, char* w, const void* ext_threshold, void* ou
                           w + p.oPart, w + p.mPart, w + p.lPart,
                           batch, p.Tp, num_heads, p.NQ, p.NPAD, p.NTB, n_tok, tail,
                           sink_q_start, sink_q_end, scale_log2, stream);
@@ -970,7 +1084,7 @@ index aaf53b2..64cb7d4 100644
                       batch, seq_len, p.Tp, num_heads, p.NQ, p.NTB,
                       scale_log2, elem, stream);
      const cudaError_t err = cudaGetLastError();
-@@ -187,6 +269,52 @@ void run_route_exact(const Plan& p, char* w, const void* ext_threshold, void* ou
+@@ -187,6 +279,52 @@ void run_route_exact(const Plan& p, char* w, const void* ext_threshold, void* ou
  
  }  // namespace
  
@@ -1023,7 +1137,7 @@ index aaf53b2..64cb7d4 100644
  // Plan dims and slot offsets, in the order sol_attn_plan_names lists them.
  extern "C" const char* const sol_attn_plan_names[] = {
      "Tp", "NTB", "NPAD", "NQ",
-@@ -241,12 +369,32 @@ extern "C" void sol_producer_chunk(
+@@ -241,12 +379,32 @@ extern "C" void sol_producer_chunk(
      validate_token_aug(n_tok);
      const Plan p(batch, seq_len, num_heads, n_tok);
      char* w = reinterpret_cast<char*>(workspace);
@@ -1058,7 +1172,7 @@ index aaf53b2..64cb7d4 100644
  }
  
  // vscale: the [B*H, HD] f32 scale the producer quantized V with.
-@@ -255,9 +403,9 @@ extern "C" void launch_sol_attn_core(
+@@ -255,9 +413,9 @@ extern "C" void launch_sol_attn_core(
      void* workspace, void* out, const void* vscale, void* kmean_next, void* vamax_out,
      const void* blen, int tail,
      int batch, int seq_len, int num_heads,
@@ -1070,7 +1184,7 @@ index aaf53b2..64cb7d4 100644
  {
      validate_shape(batch, seq_len, num_heads);
      validate_token_aug(n_tok);
-@@ -270,9 +418,9 @@ extern "C" void launch_sol_attn_core(
+@@ -270,9 +428,9 @@ extern "C" void launch_sol_attn_core(
                        w + p.cen8, w + p.cens, kmean_next, blen,
                        batch, seq_len, num_heads, p.NTB, p.NPAD, p.NQ,
                        tau, scale_log2, stream);
@@ -1082,7 +1196,7 @@ index aaf53b2..64cb7d4 100644
      cudaMemcpyAsync(vamax_out, w + p.statsV, stats_bytes, cudaMemcpyDeviceToDevice, stream);
  }
  
-@@ -280,12 +428,12 @@ extern "C" void launch_sol_attn(
+@@ -280,12 +438,12 @@ extern "C" void launch_sol_attn(
      const void* q, const void* k, const void* v, void* out, void* workspace,
      int batch, int seq_len, int num_heads, int head_dim, int elem,
      float tau, float scale, const void* key_bias,
@@ -1097,7 +1211,7 @@ index aaf53b2..64cb7d4 100644
  {
      if (head_dim != HD)
          throw std::runtime_error("sol_attn supports head_dim 128, got " + std::to_string(head_dim));
-@@ -301,9 +449,98 @@ extern "C" void launch_sol_attn(
+@@ -301,9 +459,203 @@ extern "C" void launch_sol_attn(
                            key_bias, blen,
                            batch, seq_len, p.Tp, num_heads, p.NTB, p.NPAD, p.NQ,
                            qs_b, qs_t, qs_h, ks_b, ks_t, ks_h, vs_b, vs_t, vs_h,
@@ -1198,6 +1312,111 @@ index aaf53b2..64cb7d4 100644
 +    const cudaError_t err = cudaGetLastError();
 +    if (err != cudaSuccess)
 +        throw std::runtime_error(std::string("spark_attn: kernel launch failed: ") +
++                                 cudaGetErrorString(err));
++}
++
++// Spark over the original Sol chunk producer's INT8 carriers. The caller has
++// already streamed all fused QKV chunks into workspace. Optional head-wise
++// permutations remap the carriers before routing, reweighting and exact attention.
++extern "C" void launch_spark_attn_chunked_core(
++    void* workspace, void* out, const void* stale_kmean, const void* vscale,
++    void* kmean_next, void* vamax_out,
++    void* route_bits, void* anchor, void* ak, void* av, void* lm,
++    void* rki, void* rksb, void* rv,
++    int seq_len, int num_heads, int video_tokens, int anchor_bf16,
++    int topk_count, float tau, float scale,
++    int sink_start, int sink_end, int sink_q_start, int sink_q_end,
++    int block_tail, int reweight, int force_local_blocks,
++    void* temp_carrier, void* temp_scales,
++    const void* query_permutation, const void* key_permutation,
++    int permutation_index64, int video_start,
++    cudaStream_t stream)
++{
++    validate_shape(1, seq_len, num_heads);
++    const Plan p(1, seq_len, num_heads, 0);
++    char* w = reinterpret_cast<char*>(workspace);
++    const float scale_log2 = scale * 1.4426950408889634f;
++    const size_t stats_bytes = (size_t)num_heads * HD * sizeof(float);
++    cudaMemcpyAsync(w + p.vsc, vscale, stats_bytes, cudaMemcpyDeviceToDevice, stream);
++    const bool shared_layout = query_permutation && query_permutation == key_permutation;
++    const size_t carrier_bytes = (size_t)num_heads * p.Tp * HD;
++    const size_t scale_floats = (size_t)num_heads * p.Tp * 2;
++    // For very short unaligned sequences, Q plus its scales is smaller than
++    // the padded K carrier; retain the one-slot copy fallback in that case.
++    const bool reuse_workspace = shared_layout && p.kiP - p.qiP >= carrier_bytes;
++    const bool borrow_output = reuse_workspace && temp_carrier == out;
++    const void* qi = borrow_output ? w + p.vTi : (reuse_workspace ? temp_carrier : w + p.qiP);
++    const void* qs = reuse_workspace ? temp_scales : w + p.qs;
++    const void* ki = reuse_workspace ? w + p.qiP : w + p.kiP;
++    const void* ks = reuse_workspace ? (const void*)((float*)temp_scales + scale_floats / 2) : (const void*)(w + p.ksb);
++    const void* vi = reuse_workspace ? w + p.kiP : w + p.vTi;
++    if (query_permutation) {
++        if (!key_permutation || !temp_carrier || !temp_scales)
++            throw std::runtime_error("spark_attn_chunked: incomplete reblock buffers");
++        launch_spark_carrier_reblock(
++            w + p.qiP, w + p.qs, w + p.kiP, w + p.ksb, w + p.vTi,
++            w + p.qmean, w + p.cen8, w + p.cens, w + p.scratch, w + p.vcT,
++            stale_kmean, w + p.vsc, temp_carrier, temp_scales,
++            query_permutation, key_permutation, permutation_index64,
++            seq_len, p.Tp, num_heads, p.NQ, p.NPAD, video_tokens,
++            reuse_workspace ? 1 : 0, stream);
++    }
++    const int rtp = ((p.NTB + BLK - 1) / BLK) * BLK;
++    if (reweight || borrow_output) {
++        // Finish/route do not read Q. Preserve it in the dead V slot while
++        // routing runs, then release the borrowed output before exact writes.
++        spark_aux_stream.ensure();
++        cudaEventRecord(spark_aux_stream.preprocess_done, stream);
++        cudaStreamWaitEvent(spark_aux_stream.stream, spark_aux_stream.preprocess_done, 0);
++        if (borrow_output)
++            cudaMemcpyAsync(w + p.vTi, temp_carrier,
++                (size_t)seq_len * num_heads * HD, cudaMemcpyDeviceToDevice,
++                spark_aux_stream.stream);
++    }
++    if (reweight) {
++        launch_spark_reweight_carriers(
++            w + p.qmean, ki, ks, vi,
++            stale_kmean, stale_kmean, w + p.vsc,
++            anchor, ak, av, lm, rki, rksb, rv,
++            1, seq_len, p.Tp, num_heads, video_tokens, p.NTB, p.NPAD, rtp,
++            anchor_bf16, scale_log2, spark_aux_stream.stream);
++    }
++    if (reweight || borrow_output)
++        cudaEventRecord(spark_aux_stream.summary_done, spark_aux_stream.stream);
++    launch_sol_finish(w + p.scratch, w + p.kciP, w + p.kcs, w + p.thr,
++                      w + p.cen8, w + p.cens, kmean_next, nullptr,
++                      1, seq_len, num_heads, p.NTB, p.NPAD, p.NQ,
++                      tau, scale_log2, stream);
++    if (!reweight) {
++        launch_sol_pooled_tokens(w + p.kciP, w + p.kcs, w + p.vcT, w + p.vsc,
++            nullptr, rki, rksb, rv, w + p.scratch, nullptr,
++            1, seq_len, num_heads, p.NTB, p.NPAD, stream);
++    }
++    launch_sol_route(w + p.cen8, w + p.cens, w + p.kciP, w + p.kcs,
++                     w + p.vcT, w + p.vsc, w + p.thr,
++                     w + p.idx, w + p.cnt, w + p.oPart, w + p.mPart, w + p.lPart,
++                     nullptr, nullptr, route_bits, nullptr, topk_count, 0,
++                     force_local_blocks, 1, seq_len, num_heads, p.NTB, p.NPAD, p.NQ,
++                     sink_start, sink_end, sink_q_start, sink_q_end, scale_log2, stream);
++    if (reweight || borrow_output) cudaStreamWaitEvent(stream, spark_aux_stream.summary_done, 0);
++    if (block_tail)
++        launch_spark_block_tail(w + p.cen8, w + p.cens, rki, rksb, rv, route_bits,
++            w + p.oPart, w + p.mPart, w + p.lPart,
++            num_heads, p.NQ, p.NTB, rtp, scale_log2, stream);
++    launch_sol_exact(qi, qs, ki, ks,
++                     vi, w + p.vsc, w + p.idx, w + p.cnt,
++                     w + p.oPart, w + p.mPart, w + p.lPart,
++                     nullptr, nullptr, nullptr,
++                     block_tail ? nullptr : rv, block_tail ? nullptr : route_bits,
++                     nullptr, block_tail ? 0 : p.NTB, out,
++                     rki, rksb, rtp, 0, query_permutation,
++                     permutation_index64, video_tokens, video_start,
++                     1, seq_len, p.Tp, num_heads, p.NQ, p.NTB,
++                     scale_log2, sol::SOL_BF16, stream);
++    cudaMemcpyAsync(vamax_out, w + p.statsV, stats_bytes, cudaMemcpyDeviceToDevice, stream);
++    const cudaError_t err = cudaGetLastError();
++    if (err != cudaSuccess)
++        throw std::runtime_error(std::string("spark_attn_chunked: kernel launch failed: ") +
 +                                 cudaGetErrorString(err));
  }
 diff --git a/comfy_kitchen/backends/cuda/sage_attention/sol_attn_exact.cu b/comfy_kitchen/backends/cuda/sage_attention/sol_attn_exact.cu
@@ -2309,6 +2528,250 @@ index 0000000..ba961be
 +        (const float2*)ks, (const int8_t*)vt, (const uint32_t*)bits,
 +        (__nv_bfloat16*)out, (float*)om, (float*)ol, nq, nk, storage, scale_log2);
 +}
+diff --git a/comfy_kitchen/backends/cuda/sage_attention/spark_carrier_reblock.cu b/comfy_kitchen/backends/cuda/sage_attention/spark_carrier_reblock.cu
+new file mode 100644
+index 0000000..b596af3
+--- /dev/null
++++ b/comfy_kitchen/backends/cuda/sage_attention/spark_carrier_reblock.cu
+@@ -0,0 +1,238 @@
++/*
++ * SPDX-FileCopyrightText: Copyright (c) 2025 Comfy Org. All rights reserved.
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Reorder the Sol chunk producer's quantized carriers head by head. The
++ * temporary buffers are one carrier at a time, so BF16 Q/K/V stay absent.
++ */
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++
++#include "sol_layout.cuh"
++
++namespace {
++using namespace sol;
++constexpr int HD = HEAD_DIM, BLK = BLOCK;
++constexpr int REORDER_ROWS = 16;
++
++__device__ __forceinline__ int source_token(
++    const void* permutation, int index64, int video_tokens, int head, int t) {
++    if (!permutation || t >= video_tokens) return t;
++    const int64_t at = (int64_t)head * video_tokens + t;
++    return index64 ? (int)((const int64_t*)permutation)[at]
++                   : ((const int32_t*)permutation)[at];
++}
++
++__global__ void reorder_q(const int8_t* src, const float* scales,
++                          int8_t* dst, float* dst_scales,
++                          const void* permutation, int index64,
++                          int T, int H, int video_tokens) {
++    // A warp copies one aligned 128-byte row with 32-bit transactions; four
++    // warps process different tokens instead of serializing 16 bytewise rows.
++    const int h = blockIdx.y, d = (threadIdx.x & 31) * 4;
++    const int row = threadIdx.x >> 5;
++    #pragma unroll 4
++    for (int j = row; j < REORDER_ROWS; j += 4) {
++        const int t = blockIdx.x * REORDER_ROWS + j;
++        if (t >= T) continue;
++        const int from = source_token(permutation, index64, video_tokens, h, t);
++        *reinterpret_cast<uint32_t*>(dst + ((int64_t)t * H + h) * HD + d) =
++            *reinterpret_cast<const uint32_t*>(src + ((int64_t)from * H + h) * HD + d);
++        if (d == 0) dst_scales[(int64_t)t * H + h] = scales[(int64_t)from * H + h];
++    }
++}
++
++__global__ void reorder_k(const int8_t* src, const float2* scales,
++                          int8_t* dst, float2* dst_scales,
++                          const void* permutation, int index64,
++                          int T, int Tp, int video_tokens) {
++    const int h = blockIdx.y, d = (threadIdx.x & 31) * 4;
++    const int row = threadIdx.x >> 5;
++    #pragma unroll 4
++    for (int j = row; j < REORDER_ROWS; j += 4) {
++        const int t = blockIdx.x * REORDER_ROWS + j;
++        if (t >= Tp) continue;
++        const int out = t / BLK * BLK + perm_key_inv(t % BLK);
++        if (t < T) {
++            const int from = source_token(permutation, index64, video_tokens, h, t);
++            const int in = from / BLK * BLK + perm_key_inv(from % BLK);
++            *reinterpret_cast<uint32_t*>(dst + ((int64_t)h * Tp + out) * HD + d) =
++                *reinterpret_cast<const uint32_t*>(src + ((int64_t)h * Tp + in) * HD + d);
++            if (d == 0) dst_scales[(int64_t)h * Tp + out] = scales[(int64_t)h * Tp + in];
++        } else {
++            *reinterpret_cast<uint32_t*>(dst + ((int64_t)h * Tp + out) * HD + d) = 0;
++            if (d == 0) dst_scales[(int64_t)h * Tp + out] = make_float2(0.f, NEG);
++        }
++    }
++}
++
++__global__ void reorder_qk_shared(
++    const int8_t* qsrc, const float* qscales,
++    const int8_t* ksrc, const float2* kscales,
++    int8_t* qdst, float* qdst_scales,
++    int8_t* kdst, float2* kdst_scales,
++    const void* permutation, int index64,
++    int T, int Tp, int H, int video_tokens) {
++    const int h = blockIdx.y, d = threadIdx.x;
++    #pragma unroll 4
++    for (int j = 0; j < REORDER_ROWS; ++j) {
++        const int t = blockIdx.x * REORDER_ROWS + j;
++        if (t >= Tp) continue;
++        const int kout = t / BLK * BLK + perm_key_inv(t % BLK);
++        if (t < T) {
++            const int from = source_token(permutation, index64, video_tokens, h, t);
++            qdst[((int64_t)t * H + h) * HD + d] = qsrc[((int64_t)from * H + h) * HD + d];
++            if (d == 0) qdst_scales[(int64_t)t * H + h] = qscales[(int64_t)from * H + h];
++            const int kin = from / BLK * BLK + perm_key_inv(from % BLK);
++            kdst[((int64_t)h * Tp + kout) * HD + d] = ksrc[((int64_t)h * Tp + kin) * HD + d];
++            if (d == 0) kdst_scales[(int64_t)h * Tp + kout] = kscales[(int64_t)h * Tp + kin];
++        } else {
++            kdst[((int64_t)h * Tp + kout) * HD + d] = 0;
++            if (d == 0) kdst_scales[(int64_t)h * Tp + kout] = make_float2(0.f, NEG);
++        }
++    }
++}
++
++__global__ void reorder_v(const int8_t* src, int8_t* dst,
++                          const void* permutation, int index64,
++                          int T, int Tp, int video_tokens) {
++    __shared__ int from_physical[BLK];
++    const int block = blockIdx.x, h = blockIdx.y;
++    if (threadIdx.x < BLK) {
++        const int t = block * BLK + threadIdx.x;
++        const int from = t < T ? source_token(permutation, index64, video_tokens, h, t) : 0;
++        from_physical[threadIdx.x] = from / BLK * BLK + perm_d(from % BLK);
++    }
++    __syncthreads();
++    for (int idx = threadIdx.x; idx < HD * BLK; idx += blockDim.x) {
++        const int d = idx / BLK, s = idx % BLK;
++        const int t = block * BLK + s;
++        const int out = block * BLK + perm_d(s);
++        dst[((int64_t)h * HD + d) * Tp + out] =
++            t < T ? src[((int64_t)h * HD + d) * Tp + from_physical[s]] : 0;
++    }
++}
++
++__global__ void rebuild_block_stats(
++    const int8_t* qiP, const float* qs,
++    const int8_t* kiP, const float2* ksb,
++    const int8_t* vTi, const float* stale_kmean, const float* vsc,
++    float* qmean, int8_t* cen8, float* cens,
++    float* ksum, __nv_bfloat16* vcT,
++    int T, int H, int Tp, int NQ, int NPAD) {
++    __shared__ float partial_q[4][HD];
++    __shared__ float partial_k[4][HD];
++    __shared__ float partial_v[4][HD];
++    __shared__ float reduce[HD];
++    __shared__ __align__(4) int8_t value_tile[HD][BLK + 4];
++    const int block = blockIdx.x, h = blockIdx.y;
++    const int d = threadIdx.x, lane = threadIdx.y;
++    if (block >= NQ) return;
++    const int len = min(BLK, T - block * BLK);
++    // Coalesce channel-major V reads while retaining the original summation
++    // order. Padding avoids bank conflicts when lanes consume channels.
++    for (int idx = lane * HD + d; idx < HD * (BLK / 4); idx += HD * 4) {
++        const int channel = idx / (BLK / 4), token = (idx % (BLK / 4)) * 4;
++        *reinterpret_cast<uint32_t*>(&value_tile[channel][token]) =
++            *reinterpret_cast<const uint32_t*>(
++                vTi + ((int64_t)h * HD + channel) * Tp + block * BLK + token);
++    }
++    __syncthreads();
++    float sq = 0.f, sk = 0.f, sv = 0.f;
++    for (int i = lane; i < len; i += 4) {
++        const int t = block * BLK + i;
++        sq += (float)qiP[((int64_t)t * H + h) * HD + perm_d(d)] * qs[(int64_t)t * H + h];
++        const int kp = block * BLK + perm_key_inv(i);
++        sk += (float)kiP[((int64_t)h * Tp + kp) * HD + perm_d(d)] *
++              ksb[(int64_t)h * Tp + kp].x + stale_kmean[(int64_t)h * HD + d];
++        sv += (float)value_tile[d][perm_d(i)] *
++              vsc[(int64_t)h * HD + d];
++    }
++    partial_q[lane][d] = sq;
++    partial_k[lane][d] = sk;
++    partial_v[lane][d] = sv;
++    __syncthreads();
++    if (lane == 0) {
++        sq = partial_q[0][d] + partial_q[1][d] + partial_q[2][d] + partial_q[3][d];
++        sk = partial_k[0][d] + partial_k[1][d] + partial_k[2][d] + partial_k[3][d];
++        sv = partial_v[0][d] + partial_v[1][d] + partial_v[2][d] + partial_v[3][d];
++        const float mean = sq / (float)len;
++        qmean[((int64_t)h * NPAD + block) * HD + d] = mean;
++        ksum[((int64_t)h * NPAD + block) * HD + d] = sk;
++        vcT[((int64_t)h * HD + d) * NPAD + block] = __float2bfloat16(sv);
++        reduce[d] = fabsf(mean);
++    }
++    __syncthreads();
++    for (int width = HD / 2; width; width >>= 1) {
++        if (lane == 0 && d < width)
++            reduce[d] = fmaxf(reduce[d], reduce[d + width]);
++        __syncthreads();
++    }
++    const float sc = fmaxf(reduce[0] / 127.f, 1e-8f);
++    if (lane == 0) {
++        const float mean = sq / (float)len;
++        cen8[((int64_t)h * NQ + block) * HD + perm_d(d)] = q8(mean, 1.f / sc);
++        if (d == 0) cens[(int64_t)h * NQ + block] = sc;
++    }
++}
++} // namespace
++
++extern "C" void launch_spark_carrier_reblock(
++    void* qiP, void* qs, void* kiP, void* ksb, void* vTi,
++    void* qmean, void* cen8, void* cens, void* ksum, void* vcT,
++    const void* stale_kmean, const void* vsc,
++    void* temp_carrier, void* temp_scales,
++    const void* qperm, const void* kperm, int index64,
++    int T, int Tp, int H, int NQ, int NPAD, int video_tokens,
++    int direct_output,
++    cudaStream_t stream) {
++    const size_t qbytes = (size_t)T * H * HD;
++    const size_t kvbytes = (size_t)H * Tp * HD;
++    // With a shared permutation, Q is the only carrier that needs separate
++    // storage. After Q has been read, its old workspace slot can hold K;
++    // after K has been read, its old slot can hold V. Run these kernels in
++    // order so each source is consumed before its slot is reused.
++    int8_t* qdst = (int8_t*)temp_carrier;
++    int8_t* kdst = direct_output ? (int8_t*)qiP : qdst;
++    int8_t* vdst = direct_output ? (int8_t*)kiP : qdst;
++    float* qsdst = (float*)temp_scales;
++    float2* ksdst = direct_output
++        ? (float2*)(qsdst + (size_t)H * Tp) : (float2*)temp_scales;
++    if (direct_output) {
++        reorder_q<<<dim3((T + REORDER_ROWS - 1) / REORDER_ROWS, H), HD, 0, stream>>>(
++            (const int8_t*)qiP, (const float*)qs,
++            qdst, qsdst, qperm, index64, T, H, video_tokens);
++        reorder_k<<<dim3((Tp + REORDER_ROWS - 1) / REORDER_ROWS, H), HD, 0, stream>>>(
++            (const int8_t*)kiP, (const float2*)ksb,
++            kdst, ksdst, kperm, index64, T, Tp, video_tokens);
++    } else {
++        reorder_q<<<dim3((T + REORDER_ROWS - 1) / REORDER_ROWS, H), HD, 0, stream>>>(
++            (const int8_t*)qiP, (const float*)qs,
++            qdst, qsdst,
++            qperm, index64, T, H, video_tokens);
++        cudaMemcpyAsync(qiP, qdst, qbytes, cudaMemcpyDeviceToDevice, stream);
++        cudaMemcpyAsync(qs, qsdst, (size_t)T * H * sizeof(float), cudaMemcpyDeviceToDevice, stream);
++        reorder_k<<<dim3((Tp + REORDER_ROWS - 1) / REORDER_ROWS, H), HD, 0, stream>>>(
++            (const int8_t*)kiP, (const float2*)ksb,
++            kdst, ksdst,
++            kperm, index64, T, Tp, video_tokens);
++        cudaMemcpyAsync(kiP, kdst, kvbytes, cudaMemcpyDeviceToDevice, stream);
++        cudaMemcpyAsync(ksb, ksdst, (size_t)H * Tp * sizeof(float2), cudaMemcpyDeviceToDevice, stream);
++    }
++    reorder_v<<<dim3((Tp + BLK - 1) / BLK, H), 256, 0, stream>>>(
++        (const int8_t*)vTi, vdst,
++        kperm, index64, T, Tp, video_tokens);
++    if (!direct_output)
++        cudaMemcpyAsync(vTi, vdst, kvbytes, cudaMemcpyDeviceToDevice, stream);
++    rebuild_block_stats<<<dim3(NQ, H), dim3(HD, 4), 0, stream>>>(
++        direct_output ? qdst : (const int8_t*)qiP,
++        direct_output ? qsdst : (const float*)qs,
++        direct_output ? kdst : (const int8_t*)kiP,
++        direct_output ? ksdst : (const float2*)ksb,
++        direct_output ? vdst : (const int8_t*)vTi,
++        (const float*)stale_kmean, (const float*)vsc,
++        (float*)qmean, (int8_t*)cen8, (float*)cens,
++        (float*)ksum, (__nv_bfloat16*)vcT,
++        T, H, Tp, NQ, NPAD);
++}
 diff --git a/comfy_kitchen/backends/cuda/sage_attention/spark_reblock.cu b/comfy_kitchen/backends/cuda/sage_attention/spark_reblock.cu
 new file mode 100644
 index 0000000..d4fadea
@@ -2401,10 +2864,10 @@ index 0000000..d4fadea
 +}
 diff --git a/comfy_kitchen/backends/cuda/sage_attention/spark_reweight.cu b/comfy_kitchen/backends/cuda/sage_attention/spark_reweight.cu
 new file mode 100644
-index 0000000..1dc657d
+index 0000000..9be0707
 --- /dev/null
 +++ b/comfy_kitchen/backends/cuda/sage_attention/spark_reweight.cu
-@@ -0,0 +1,420 @@
+@@ -0,0 +1,558 @@
 +/*
 + * SPDX-FileCopyrightText: Copyright (c) 2025 Comfy Org. All rights reserved.
 + * SPDX-License-Identifier: Apache-2.0
@@ -2746,6 +3209,110 @@ index 0000000..1dc657d
 +        rksb[(int64_t)bh * RTP + physical] = make_float2(kscale, slm);
 +}
 +
++// The Sol chunk producer has already quantized each token. Decode directly
++// from its carriers so Spark's weighted virtual KV never needs full BF16 K/V.
++template <typename A>
++__global__ void spark_summary_quant_carriers_kernel(
++    const int8_t* __restrict__ kiP, const float2* __restrict__ ksb,
++    const int8_t* __restrict__ vTi, const A* __restrict__ anchor,
++    __nv_bfloat16* __restrict__ ak, __nv_bfloat16* __restrict__ av,
++    float* __restrict__ lm, const float* __restrict__ stale_kmean,
++    const float* __restrict__ current_kmean, const float* __restrict__ vsc,
++    int8_t* __restrict__ rki, float2* __restrict__ rksb,
++    int8_t* __restrict__ rv,
++    int T, int Tp, int NTB, int RTP, float scale_log2) {
++    __shared__ float scores[BLK];
++    __shared__ float reduce[HD];
++    __shared__ float smax, sden, slm;
++    // V is channel-major. Stage adjacent token bytes cooperatively instead
++    // of issuing one strided global load per channel for every token. The
++    // four-byte padding rotates shared-memory banks across channels.
++    __shared__ __align__(4) int8_t value_tile[HD][BLK + 4];
++    const int kb = blockIdx.x, bh = blockIdx.y;
++    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
++    const int len = min(BLK, T - kb * BLK);
++    const A* a = anchor + (int64_t)bh * HD;
++
++    for (int idx = threadIdx.x; idx < HD * (BLK / 4); idx += HD) {
++        const int channel = idx / (BLK / 4), token = (idx % (BLK / 4)) * 4;
++        *reinterpret_cast<uint32_t*>(&value_tile[channel][token]) =
++            *reinterpret_cast<const uint32_t*>(
++                vTi + ((int64_t)bh * HD + channel) * Tp + kb * BLK + token);
++    }
++
++    for (int i = warp; i < len; i += 4) {
++        const int physical = kb * BLK + perm_key_inv(i);
++        const float sc = ksb[(int64_t)bh * Tp + physical].x;
++        float dot = 0.f;
++        #pragma unroll
++        for (int d = lane; d < HD; d += 32) {
++            const float k = (float)kiP[((int64_t)bh * Tp + physical) * HD + perm_d(d)] * sc
++                            + stale_kmean[(int64_t)bh * HD + d];
++            dot = fmaf(anchor_to_f32(a[d]), k, dot);
++        }
++        #pragma unroll
++        for (int off = 16; off; off >>= 1)
++            dot += __shfl_down_sync(0xffffffffu, dot, off);
++        if (lane == 0) scores[i] = dot * scale_log2;
++    }
++    __syncthreads();
++    if (threadIdx.x == 0) {
++        float m = NEG;
++        for (int i = 0; i < len; ++i) m = fmaxf(m, scores[i]);
++        float den = 0.f;
++        for (int i = 0; i < len; ++i) {
++            const float weight = exp2f(scores[i] - m);
++            scores[i] = weight;
++            den += weight;
++        }
++        smax = m;
++        sden = den;
++    }
++    __syncthreads();
++    const int d = threadIdx.x;
++    float sk = 0.f, sv = 0.f;
++    for (int i = 0; i < len; ++i) {
++        const int physical = kb * BLK + perm_key_inv(i);
++        const float sc = ksb[(int64_t)bh * Tp + physical].x;
++        const float kval = (float)kiP[((int64_t)bh * Tp + physical) * HD + perm_d(d)] * sc
++                           + stale_kmean[(int64_t)bh * HD + d];
++        const float vval = (float)value_tile[d][perm_d(i)]
++                           * vsc[(int64_t)bh * HD + d];
++        sk = fmaf(scores[i], kval, sk);
++        sv = fmaf(scores[i], vval, sv);
++    }
++    sk /= sden;
++    sv /= sden;
++    const __nv_bfloat16 sk_bf = __float2bfloat16(sk);
++    const __nv_bfloat16 sv_bf = __float2bfloat16(sv);
++    const int64_t summary = ((int64_t)bh * NTB + kb) * HD + d;
++    ak[summary] = sk_bf;
++    av[summary] = sv_bf;
++    reduce[d] = anchor_to_f32(a[d]) * sk;
++    __syncthreads();
++    for (int width = HD / 2; width; width >>= 1) {
++        if (d < width) reduce[d] += reduce[d + width];
++        __syncthreads();
++    }
++    if (d == 0) slm = smax + log2f(sden) - reduce[0] * scale_log2;
++    __syncthreads();
++    if (d == 0) lm[(int64_t)bh * NTB + kb] = slm;
++    const float x = __bfloat162float(sk_bf) - current_kmean[(int64_t)bh * HD + d];
++    reduce[d] = fabsf(x);
++    __syncthreads();
++    for (int width = HD / 2; width; width >>= 1) {
++        if (d < width) reduce[d] = fmaxf(reduce[d], reduce[d + width]);
++        __syncthreads();
++    }
++    const float kscale = fmaxf(reduce[0] / 127.f, 1e-8f);
++    const int out_key = (kb / BLK) * BLK + perm_key_inv(kb % BLK);
++    rki[((int64_t)bh * RTP + out_key) * HD + perm_d(d)] = q8(x, 1.f / kscale);
++    const int out_value = (kb / BLK) * BLK + perm_d(kb % BLK);
++    rv[((int64_t)bh * HD + d) * RTP + out_value] =
++        q8(__bfloat162float(sv_bf), 1.f / vsc[(int64_t)bh * HD + d]);
++    if (d == 0) rksb[(int64_t)bh * RTP + out_key] = make_float2(kscale, slm);
++}
++
 +}  // namespace
 +
 +extern "C" void launch_spark_reweight(
@@ -2823,6 +3390,40 @@ index 0000000..1dc657d
 +    const cudaError_t err = cudaGetLastError();
 +    if (err != cudaSuccess)
 +        throw std::runtime_error(std::string("spark_reweight_tokens: kernel launch failed: ") +
++                                 cudaGetErrorString(err));
++}
++
++extern "C" void launch_spark_reweight_carriers(
++    const void* qmean, const void* kiP, const void* ksb, const void* vTi,
++    const void* stale_kmean, const void* current_kmean, const void* vsc,
++    void* anchor, void* ak, void* av, void* lm,
++    void* rki, void* rksb, void* rv,
++    int B, int T, int Tp, int H, int video_tokens, int NTB, int NPAD, int RTP,
++    int anchor_bf16, float scale_log2, cudaStream_t stream) {
++    if (video_tokens <= 0 || video_tokens > T)
++        throw std::runtime_error("spark_reweight_carriers: invalid video_tokens");
++    if (anchor_bf16) {
++        spark_anchor_from_blocks_kernel<__nv_bfloat16><<<B * H, HD, 0, stream>>>(
++            (const float*)qmean, (__nv_bfloat16*)anchor, video_tokens, NPAD);
++        spark_summary_quant_carriers_kernel<__nv_bfloat16><<<dim3(NTB, B * H), HD, 0, stream>>>(
++            (const int8_t*)kiP, (const float2*)ksb, (const int8_t*)vTi,
++            (const __nv_bfloat16*)anchor, (__nv_bfloat16*)ak, (__nv_bfloat16*)av,
++            (float*)lm, (const float*)stale_kmean, (const float*)current_kmean,
++            (const float*)vsc, (int8_t*)rki, (float2*)rksb, (int8_t*)rv,
++            T, Tp, NTB, RTP, scale_log2);
++    } else {
++        spark_anchor_from_blocks_kernel<float><<<B * H, HD, 0, stream>>>(
++            (const float*)qmean, (float*)anchor, video_tokens, NPAD);
++        spark_summary_quant_carriers_kernel<float><<<dim3(NTB, B * H), HD, 0, stream>>>(
++            (const int8_t*)kiP, (const float2*)ksb, (const int8_t*)vTi,
++            (const float*)anchor, (__nv_bfloat16*)ak, (__nv_bfloat16*)av,
++            (float*)lm, (const float*)stale_kmean, (const float*)current_kmean,
++            (const float*)vsc, (int8_t*)rki, (float2*)rksb, (int8_t*)rv,
++            T, Tp, NTB, RTP, scale_log2);
++    }
++    const cudaError_t err = cudaGetLastError();
++    if (err != cudaSuccess)
++        throw std::runtime_error(std::string("spark_reweight_carriers: kernel launch failed: ") +
 +                                 cudaGetErrorString(err));
 +}
 diff --git a/comfy_kitchen/backends/eager/sol_attn.py b/comfy_kitchen/backends/eager/sol_attn.py
