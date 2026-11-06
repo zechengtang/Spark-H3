@@ -1,15 +1,18 @@
 # Comfy Registry release
 
-Spark-H3 publishes one self-contained Registry archive under publisher
-`zechengtang` and node ID `comfyui-spark-h3`. The archive contains the complete
-Linux/Windows, SM86/SM89/SM120, comfy-kitchen 0.2.36/0.2.37 wheel matrix. Users
-do not need GitHub access during installation.
+Spark-H3 publishes one cross-platform Registry archive under publisher
+`zechengtang` and node ID `comfyui-spark-h3`. The Registry archive contains the
+node, installer, and workflows, but not architecture-specific backend wheels.
+During installation, the installer downloads the matching platform archive from
+the pinned GitHub Release and extracts an isolated `spark-h3-kitchen` wheel.
+Users therefore need GitHub access during installation unless they provide a
+matching local wheel.
 
-Registry version `0.1.6` packages the runtime and backend wheels from GitHub
-Release `comfyui-v0.1.4`. Registry version `0.1.5` corresponds to GitHub Release
-`comfyui-v0.1.3`. Registry versions `0.1.3` and `0.1.4` were withdrawn while
-metadata and the package introduction were corrected; withdrawn version numbers
-cannot be reused. The Registry security review status is visible on the
+Registry version `0.2.0` routes backend installation to GitHub Release
+`comfyui-v0.2.0`. It supports ComfyUI 0.38.x-0.40.x and 0.42.x-0.44.x and keeps
+ComfyUI's official `comfy-kitchen` package separate from Spark-H3's isolated
+backend. Older withdrawn Registry version numbers cannot be reused. The
+Registry security review status is visible on the
 [node page](https://registry.comfy.org/nodes/comfyui-spark-h3).
 
 The Registry node description is:
@@ -23,30 +26,30 @@ The Registry node description is:
 
 ## Build locally
 
-Collect the twelve `comfy_kitchen` wheels from the six architecture-specific
-GitHub release ZIPs into one directory, then run:
+Build the Registry candidate and pin it to the matching GitHub Release tag:
 
 ```bash
 python tools/build_comfyui_package.py \
   --registry \
-  --version 0.1.6 \
+  --version 0.2.0 \
+  --backend-release-tag comfyui-v0.2.0 \
   --publisher-id zechengtang \
-  --kernel-wheel-dir /path/to/registry-wheels \
   --output-dir dist/registry
 ```
 
-The builder rejects incomplete, duplicate, unsupported-CUDA, or unsupported-
-platform wheel matrices. The preview archive is
-`dist/registry/ComfyUI-Spark-H3-0.1.6-registry.zip`.
+The preview archive is
+`dist/registry/ComfyUI-Spark-H3-0.2.0-registry.zip`. Before publishing it,
+confirm that the pinned GitHub Release contains all six Linux/Windows and
+SM86/SM89/SM120 platform ZIPs.
 
 ## Publish
 
 Create a Registry publishing API key for `@zechengtang`, then save it as the
 GitHub repository secret `REGISTRY_ACCESS_TOKEN`. Run the **Publish Comfy
-Registry package** workflow manually. It downloads the six already-published
-v0.1.4 platform archives, checks their SHA-256 sums, verifies that exactly
-twelve wheels are present, builds the Registry package, runs
-`comfy node validate`, and publishes Registry version 0.1.6.
+Registry package** workflow manually with version `0.2.0`, backend release tag
+`comfyui-v0.2.0`, and the release changelog. It verifies that the six platform
+archives are present, builds the Registry package, runs `comfy node validate`,
+and publishes Registry version 0.2.0.
 
 The workflow is intentionally manual because a Registry version must not be
 published twice. For later releases, update the version and release tag in the

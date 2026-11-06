@@ -36,7 +36,7 @@ BACKEND_LOCAL_VERSION_PREFIXES = {
 SUPPORTED_RELEASE_CUDA = {(13, 0)}
 DEFAULT_RELEASE_CUDA_TAG = "cu130"
 PACKAGE_BUILD_IDENTITY = "spark_h3_build.json"
-DEFAULT_BACKEND_RELEASE_TAG = "comfyui-v0.1.5"
+DEFAULT_BACKEND_RELEASE_TAG = "comfyui-v0.2.0"
 RELEASE_API_PREFIX = "https://api.github.com/repos/zechengtang/Spark-H3/releases/tags/"
 
 BACKEND_PROBE = (

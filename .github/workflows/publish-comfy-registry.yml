@@ -12,9 +12,9 @@ on:
         required: true
         type: string
       backend_release_tag:
-        description: GitHub Release containing all six platform packages and Kitchen wheels
+        description: GitHub Release containing all six platform packages and isolated backend wheels
         required: true
-        default: comfyui-v0.1.5
+        default: comfyui-v0.2.0
         type: string
 
 permissions:

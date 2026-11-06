@@ -31,11 +31,14 @@ wheel。它使用独立的 `spark_h3_kitchen` 命名空间，不覆盖 ComfyUI �
 
 请同时按照操作系统和 GPU 架构选择安装包：
 
-| GPU | 架构 | 平台 | 0.1.5 安装包 |
+| GPU | 架构 | 平台 | 0.2.0 安装包 |
 | --- | --- | --- | --- |
-| GeForce RTX 40 系 | SM89 | Windows | `ComfyUI-Spark-H3-0.1.5-windows-x86_64-sm89-cu130.zip` |
-| GeForce RTX 50 系、RTX PRO 5000/6000 Blackwell | SM120 | Windows | `ComfyUI-Spark-H3-0.1.5-windows-x86_64-sm120-cu130.zip` |
-| GeForce RTX 50 系、RTX PRO 5000/6000 Blackwell | SM120 | Linux | `ComfyUI-Spark-H3-0.1.5-linux-x86_64-sm120-cu130.zip` |
+| GeForce RTX 30 系 | SM86 | Linux | `ComfyUI-Spark-H3-0.2.0-linux-x86_64-sm86-cu130.zip` |
+| GeForce RTX 40 系 | SM89 | Linux | `ComfyUI-Spark-H3-0.2.0-linux-x86_64-sm89-cu130.zip` |
+| GeForce RTX 50 系、RTX PRO 5000/6000 Blackwell | SM120 | Linux | `ComfyUI-Spark-H3-0.2.0-linux-x86_64-sm120-cu130.zip` |
+| GeForce RTX 30 系 | SM86 | Windows | `ComfyUI-Spark-H3-0.2.0-windows-x86_64-sm86-cu130.zip` |
+| GeForce RTX 40 系 | SM89 | Windows | `ComfyUI-Spark-H3-0.2.0-windows-x86_64-sm89-cu130.zip` |
+| GeForce RTX 50 系、RTX PRO 5000/6000 Blackwell | SM120 | Windows | `ComfyUI-Spark-H3-0.2.0-windows-x86_64-sm120-cu130.zip` |
 
 正式发布安装时，文件名中的以下部分必须与本机环境一致：
 

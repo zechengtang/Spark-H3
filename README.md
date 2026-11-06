@@ -30,30 +30,12 @@
 
 </div>
 
-> [!WARNING]
-> **Compatibility and release schedule notice (October 25, 2026)**
->
-> We have recently received community reports indicating that newer
-> `comfy-kitchen` implementations may cause performance regressions with
-> certain hardware configurations or workflows. The issue is still under
-> investigation, and its impact may vary by environment.
->
-> Until the cause is confirmed and resolved, we recommend installing or
-> continuing to use the validated and currently more stable **ComfyUI 0.38.x**
-> release, and exercising caution when upgrading. See this
-> **[community report and comparison video](https://www.bilibili.com/video/BV1RaHK6cEHt/)**
-> for additional context.
->
-> Consequently, the new release originally planned for **October 27, 2026**
-> has been postponed. We will prioritize investigating the `comfy-kitchen`
-> issue and resume the release after compatibility and performance have been
-> verified. Further updates will be posted in this repository. Thank you for
-> your understanding and feedback.
-
-> **ComfyUI v0.1.5:** Adds support for ComfyUI 0.42.x (comfy-kitchen 0.2.39),
-> with Linux and Windows packages for SM86, SM89, and SM120. Each package
-> also includes wheels for ComfyUI 0.38.x–0.40.x.
-> **[Release notes and downloads](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.5)**
+> [!IMPORTANT]
+> **ComfyUI v0.2.0 release candidate:** Spark-H3 now uses the isolated
+> `spark-h3-kitchen` distribution and `spark_h3_kitchen` import namespace.
+> It no longer replaces or pins ComfyUI's official `comfy-kitchen` package.
+> The release supports ComfyUI 0.38.x–0.40.x and 0.42.x–0.44.x.
+> **[Read the v0.2.0 release notes](docs/release_comfyui_v020.md)**
 
 > **VPack v0.1.0:** A separate ComfyUI plugin that compresses reference
 > videos in Ref2VA workflows.
@@ -128,10 +110,10 @@ with install_h3_spark_attn(
 
 ## 🧩 ComfyUI Installation
 
-Spark-H3 provides standalone nodes for ComfyUI 0.38.x–0.40.x and 0.42.x.
-**[v0.1.5](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.5)**
-adds ComfyUI 0.42.x support with Linux and Windows x86_64 packages for
-SM86, SM89, and SM120. Each package also supports ComfyUI 0.38.x–0.40.x.
+Spark-H3 v0.2.0 provides standalone nodes for ComfyUI 0.38.x–0.40.x and
+0.42.x–0.44.x. Its isolated `spark-h3-kitchen` backend is installed alongside
+ComfyUI's official `comfy-kitchen` package instead of replacing it. Linux and
+Windows x86_64 packages are produced for SM86, SM89, and SM120.
 Choose the CUDA 13.0 package matching your operating system and GPU
 architecture. ComfyUI and model weights are not included.
 
@@ -192,9 +174,9 @@ with ComfyUI packaging or compatibility work.
 | v0.1.3 | 2026-10-13 | ✅ Released | Added validated SM86 packages; integrated with KJNodes low-VRAM patches; added `fidelity`, `speed`, `custom`, and `dense` presets plus selectable dense backends | [Release notes](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.3) |
 | v0.1.4 | 2026-10-15 | ✅ Released | Added ComfyUI 0.40.x support, Ref2VA-aware `sparse_scope`, configurable `producer_chunk`, and in-node Ref2VA guidance | [Release notes](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.4) |
 | v0.1.5 | 2026-10-19 | ✅ Released | Added ComfyUI 0.42.x support through comfy-kitchen 0.2.39; released Linux and Windows SM86/SM89/SM120 packages, each also bundling wheels for ComfyUI 0.38.x–0.40.x | [Release notes](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.5) |
-| v0.1.6 | TBD | 🛠️ Planned | Add Spark-H3 compatibility with [SelfLift-Avatar](https://github.com/slmonker/selflift-Avatar), including integration and workflow validation; add support for ComfyUI 0.37.x and Python 3.11.x | [SelfLift-Avatar repository](https://github.com/slmonker/selflift-Avatar) |
+| v0.2.0 | 2026-11-06 | 🧪 Release candidate | Decouples Spark-H3 from ComfyUI's official `comfy-kitchen` dependency by using an isolated backend; supports ComfyUI 0.38.x–0.40.x and 0.42.x–0.44.x | [Release notes](docs/release_comfyui_v020.md) |
 
-The current v0.1.5 release supports ComfyUI 0.38.x–0.40.x and 0.42.x with
+The v0.2.0 release candidate supports ComfyUI 0.38.x–0.40.x and 0.42.x–0.44.x with
 Linux and Windows x86_64 packages for SM86, SM89, and SM120.
 See the [ComfyUI guide](comfyui/README.md)
 for workflows and the [installation guide](comfyui/standalone/README.md) for

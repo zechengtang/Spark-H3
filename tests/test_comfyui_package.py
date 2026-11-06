@@ -368,7 +368,7 @@ def test_registry_package_routes_kitchen_wheels_to_releases(tmp_path):
     assert identity["platforms"] == ["linux-x86_64", "windows-x86_64"]
     assert identity["kernel_wheels"] == []
     assert identity["backend_source"] == "github-release"
-    assert identity["backend_release_tag"] == "comfyui-v0.1.5"
+    assert identity["backend_release_tag"] == "comfyui-v0.2.0"
     assert (package / "package_manager.py").read_bytes() == (
         ROOT / "comfyui/package_manager.py"
     ).read_bytes()
@@ -415,7 +415,7 @@ def test_installer_routes_release_archive_to_matching_kitchen_wheel(tmp_path, mo
     wheel_tag = next(sys_tags())
     matching = f"spark_h3_kitchen-0.2.39+spark.h3.sm120.cu130.1-{wheel_tag}.whl"
     other = f"spark_h3_kitchen-0.2.37+spark.h3.sm120.cu130.1-{wheel_tag}.whl"
-    archive_path = tmp_path / "ComfyUI-Spark-H3-0.1.5-linux-x86_64-sm120-cu130.zip"
+    archive_path = tmp_path / "ComfyUI-Spark-H3-0.2.0-linux-x86_64-sm120-cu130.zip"
     with zipfile.ZipFile(archive_path, "w") as archive:
         archive.writestr(f"ComfyUI-Spark-H3/wheelhouse/{matching}", b"matching-wheel")
         archive.writestr(f"ComfyUI-Spark-H3/wheelhouse/{other}", b"other-wheel")
@@ -443,7 +443,7 @@ def test_registry_installer_uses_pinned_backend_release(
         "platforms": [installer._runtime_platform_tag()],
         "cuda_tag": "cu130",
         "kernel_wheels": [],
-        "backend_release_tag": "comfyui-v0.1.5",
+        "backend_release_tag": "comfyui-v0.2.0",
     }), encoding="utf-8")
     monkeypatch.setattr(installer, "_node_root", lambda: tmp_path)
     monkeypatch.setattr(installer, "_validate_runtime", lambda **_kwargs: (13, 0))
@@ -458,7 +458,7 @@ def test_registry_installer_uses_pinned_backend_release(
         ["--skip-dependencies", "--kitchen-base", "0.2.39"]
     ) == 0
     assert calls == [
-        (installer.RELEASE_API_PREFIX + "comfyui-v0.1.5", "0.2.37", "sm120", "cu130"),
+        (installer.RELEASE_API_PREFIX + "comfyui-v0.2.0", "0.2.37", "sm120", "cu130"),
         ("https://example.invalid/release.zip", "0.2.37", "sm120", "cu130"),
     ]
     assert "--kitchen-base is deprecated and ignored" in capsys.readouterr().err
