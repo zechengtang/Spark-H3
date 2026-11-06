@@ -1,14 +1,17 @@
-"""Build the pinned Spark-enabled comfy-kitchen backend.
+"""Build the isolated Spark-H3 kitchen backend.
 
 This module is intentionally usable on Linux and Windows.  The custom-node
 installer imports it for its source fallback, while maintainers use the CLI to
-produce release wheels.
+produce release wheels.  The output distribution and import namespace are
+``spark-h3-kitchen`` and ``spark_h3_kitchen``; the official ``comfy-kitchen``
+installation is never replaced.
 """
 from __future__ import annotations
 
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,11 +23,7 @@ else:
     from package_manager import install_command, wheel_command
 
 KITCHEN_SOURCE = "https://github.com/Comfy-Org/comfy-kitchen.git"
-KITCHEN_TARGETS = {
-    "0.2.36": {
-        "tag": "v0.2.36",
-        "revision": "888b13e2c0e721f6576fe351a2ad79894b1c451f",
-    },
+KITCHEN_IMPLEMENTATION_TARGETS = {
     "0.2.37": {
         "tag": "v0.2.37",
         "revision": "be003b7c23c5b01328657955b8bc5d3f073d868e",
@@ -34,7 +33,7 @@ KITCHEN_TARGETS = {
         "revision": "e40e76d9c544b3f74c3b9ea923f7bc3d45a96372",
     },
 }
-DEFAULT_KITCHEN_BASE = "0.2.37"
+DEFAULT_KITCHEN_IMPLEMENTATION = "0.2.37"
 DEFAULT_ARCHITECTURE = "sm120"
 DEFAULT_CUDA_TAG = "cu130"
 ARCHITECTURES = {
@@ -42,13 +41,12 @@ ARCHITECTURES = {
     "sm89": {"capability": (8, 9), "cuda_archs": "89"},
     "sm120": {"capability": (12, 0), "cuda_archs": "120f"},
 }
-CUDA_ARCH_OVERRIDES = {
-    ("sm120", "cu128"): "120a",
-    ("sm120", "cu129"): "120a",
-}
+MINIMUM_CUDA_TAG = 130
 # Retain the public constant for existing SM120 release automation.
 SPARK_LOCAL_VERSION = "spark.h3.sm120.cu130.1"
 CUDA_ARCHS = ARCHITECTURES[DEFAULT_ARCHITECTURE]["cuda_archs"]
+SPARK_DISTRIBUTION = "spark-h3-kitchen"
+SPARK_IMPORT_PACKAGE = "spark_h3_kitchen"
 
 
 def _run(command: list[str], *, cwd: Path | None = None, env=None) -> None:
@@ -57,10 +55,15 @@ def _run(command: list[str], *, cwd: Path | None = None, env=None) -> None:
     subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
-def _patch_path(node_root: Path, kitchen_base: str) -> Path:
+def _patch_path(node_root: Path, kitchen_implementation: str) -> Path:
+    if kitchen_implementation not in KITCHEN_IMPLEMENTATION_TARGETS:
+        raise ValueError(
+            f"unsupported comfy-kitchen implementation {kitchen_implementation!r}; "
+            f"expected one of {', '.join(KITCHEN_IMPLEMENTATION_TARGETS)}"
+        )
     patch_name = (
         "comfy-kitchen-spark-v0.2.39.patch"
-        if kitchen_base == "0.2.39"
+        if kitchen_implementation == "0.2.39"
         else "comfy-kitchen-spark-v0.2.36.patch"
     )
     candidates = (
@@ -84,18 +87,17 @@ def _architecture(name: str) -> dict:
 
 
 def _validate_cuda_tag(cuda_tag: str) -> str:
-    if re.fullmatch(r"cu\d+", cuda_tag) is None:
+    match = re.fullmatch(r"cu(\d+)", cuda_tag)
+    if match is None or int(match.group(1)) < MINIMUM_CUDA_TAG:
         raise ValueError(
-            f"invalid CUDA tag {cuda_tag!r}; expected a tag such as 'cu128' or 'cu130'"
+            f"unsupported CUDA tag {cuda_tag!r}; expected cu130 or newer"
         )
     return cuda_tag
 
 
 def _cuda_architecture(architecture: str, cuda_tag: str) -> str:
     _validate_cuda_tag(cuda_tag)
-    return CUDA_ARCH_OVERRIDES.get(
-        (architecture, cuda_tag), str(_architecture(architecture)["cuda_archs"])
-    )
+    return str(_architecture(architecture)["cuda_archs"])
 
 
 def _spark_local_version(
@@ -117,31 +119,71 @@ def architecture_for_capability(capability: tuple[int, int]) -> str:
 
 
 def _spark_version(
-    kitchen_base: str,
+    kitchen_implementation: str,
     architecture: str = DEFAULT_ARCHITECTURE,
     cuda_tag: str = DEFAULT_CUDA_TAG,
 ) -> str:
-    if kitchen_base not in KITCHEN_TARGETS:
+    if kitchen_implementation not in KITCHEN_IMPLEMENTATION_TARGETS:
         raise ValueError(
-            f"unsupported comfy-kitchen base {kitchen_base!r}; expected one of "
-            f"{', '.join(KITCHEN_TARGETS)}"
+            f"unsupported comfy-kitchen implementation {kitchen_implementation!r}; "
+            f"expected one of {', '.join(KITCHEN_IMPLEMENTATION_TARGETS)}"
         )
-    return f"{kitchen_base}+{_spark_local_version(architecture, cuda_tag)}"
+    return f"{kitchen_implementation}+{_spark_local_version(architecture, cuda_tag)}"
 
 
 def _set_local_version(
     source: Path,
-    kitchen_base: str,
+    kitchen_implementation: str,
     architecture: str = DEFAULT_ARCHITECTURE,
     cuda_tag: str = DEFAULT_CUDA_TAG,
 ) -> None:
     pyproject = source / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
-    old = f'version = "{kitchen_base}"'
-    new = f'version = "{_spark_version(kitchen_base, architecture, cuda_tag)}"'
+    old = f'version = "{kitchen_implementation}"'
+    new = f'version = "{_spark_version(kitchen_implementation, architecture, cuda_tag)}"'
     if old not in text:
         raise RuntimeError(f"cannot find {old!r} in the pinned comfy-kitchen source")
     pyproject.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def _isolate_distribution(source: Path) -> None:
+    """Move the patched fork out of every comfy-kitchen global namespace.
+
+    Both packages can be imported in one interpreter.  Renaming only the
+    distribution would still collide in Python and in ``torch.library``;
+    therefore imports, custom-op names, and the native extension package path
+    are rewritten together.
+    """
+
+    upstream_package = source / "comfy_kitchen"
+    isolated_package = source / SPARK_IMPORT_PACKAGE
+    if not upstream_package.is_dir():
+        raise FileNotFoundError(f"missing upstream package directory: {upstream_package}")
+    if isolated_package.exists():
+        raise FileExistsError(f"isolated package directory already exists: {isolated_package}")
+    shutil.move(str(upstream_package), str(isolated_package))
+
+    text_suffixes = {
+        ".cmake", ".cpp", ".cu", ".cuh", ".h", ".hpp", ".in", ".md", ".py", ".toml", ".txt"
+    }
+    candidates = [source / "MANIFEST.in", source / "README.md", source / "pyproject.toml", source / "setup.py"]
+    candidates.extend(
+        path for path in isolated_package.rglob("*")
+        if path.is_file() and path.suffix.lower() in text_suffixes
+    )
+    for path in candidates:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        rewritten = text.replace("comfy-kitchen", SPARK_DISTRIBUTION)
+        rewritten = rewritten.replace("comfy_kitchen", SPARK_IMPORT_PACKAGE)
+        rewritten = rewritten.replace("COMFY_KITCHEN_", "SPARK_H3_KITCHEN_")
+        rewritten = rewritten.replace(
+            "https://github.com/Comfy-Org/spark-h3-kitchen",
+            "https://github.com/zechengtang/Spark-H3",
+        )
+        if rewritten != text:
+            path.write_text(rewritten, encoding="utf-8")
 
 
 def prepare_source(
@@ -149,7 +191,7 @@ def prepare_source(
     destination: Path,
     *,
     source_url: str,
-    kitchen_base: str = DEFAULT_KITCHEN_BASE,
+    kitchen_implementation: str = DEFAULT_KITCHEN_IMPLEMENTATION,
     architecture: str = DEFAULT_ARCHITECTURE,
     cuda_tag: str = DEFAULT_CUDA_TAG,
 ) -> Path:
@@ -157,8 +199,8 @@ def prepare_source(
 
     if destination.exists():
         raise FileExistsError(f"build destination already exists: {destination}")
-    _spark_version(kitchen_base, architecture, cuda_tag)
-    target = KITCHEN_TARGETS[kitchen_base]
+    _spark_version(kitchen_implementation, architecture, cuda_tag)
+    target = KITCHEN_IMPLEMENTATION_TARGETS[kitchen_implementation]
     _run([
         "git", "clone", "--quiet", "--depth", "1", "--branch", target["tag"],
         source_url, str(destination),
@@ -183,10 +225,11 @@ def prepare_source(
         ],
         cwd=destination,
     )
-    patch = _patch_path(node_root.resolve(), kitchen_base)
+    patch = _patch_path(node_root.resolve(), kitchen_implementation)
     _run(["git", "apply", "--check", str(patch)], cwd=destination)
     _run(["git", "apply", str(patch)], cwd=destination)
-    _set_local_version(destination, kitchen_base, architecture, cuda_tag)
+    _isolate_distribution(destination)
+    _set_local_version(destination, kitchen_implementation, architecture, cuda_tag)
     return destination
 
 
@@ -196,7 +239,7 @@ def build_wheel(
     *,
     python: str = sys.executable,
     source_url: str = KITCHEN_SOURCE,
-    kitchen_base: str = DEFAULT_KITCHEN_BASE,
+    kitchen_implementation: str = DEFAULT_KITCHEN_IMPLEMENTATION,
     architecture: str = DEFAULT_ARCHITECTURE,
     cuda_tag: str = DEFAULT_CUDA_TAG,
     cuda_archs: str | None = None,
@@ -210,12 +253,12 @@ def build_wheel(
             f"{architecture}/{cuda_tag}; expected {expected_cuda_archs!r}"
         )
     output_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="spark-comfy-kitchen-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="spark-h3-kitchen-") as temporary:
         source = prepare_source(
             node_root,
-            Path(temporary) / "comfy-kitchen",
+            Path(temporary) / SPARK_IMPORT_PACKAGE,
             source_url=source_url,
-            kitchen_base=kitchen_base,
+            kitchen_implementation=kitchen_implementation,
             architecture=architecture,
             cuda_tag=cuda_tag,
         )
@@ -229,11 +272,11 @@ def build_wheel(
         )
     wheels = sorted(
         output_dir.glob(
-            f"comfy_kitchen-{_spark_version(kitchen_base, architecture, cuda_tag)}-*.whl"
+            f"{SPARK_IMPORT_PACKAGE}-{_spark_version(kitchen_implementation, architecture, cuda_tag)}-*.whl"
         )
     )
     if not wheels:
-        raise RuntimeError("comfy-kitchen build completed without producing a wheel")
+        raise RuntimeError("spark-h3-kitchen build completed without producing a wheel")
     return wheels
 
 
@@ -242,7 +285,7 @@ def install_from_source(
     *,
     python: str = sys.executable,
     source_url: str = KITCHEN_SOURCE,
-    kitchen_base: str = DEFAULT_KITCHEN_BASE,
+    kitchen_implementation: str = DEFAULT_KITCHEN_IMPLEMENTATION,
     architecture: str = DEFAULT_ARCHITECTURE,
     cuda_tag: str = DEFAULT_CUDA_TAG,
     cuda_archs: str | None = None,
@@ -255,12 +298,12 @@ def install_from_source(
             f"CUDA architecture {cuda_archs!r} does not match "
             f"{architecture}/{cuda_tag}; expected {expected_cuda_archs!r}"
         )
-    with tempfile.TemporaryDirectory(prefix="spark-comfy-kitchen-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="spark-h3-kitchen-") as temporary:
         source = prepare_source(
             node_root,
-            Path(temporary) / "comfy-kitchen",
+            Path(temporary) / SPARK_IMPORT_PACKAGE,
             source_url=source_url,
-            kitchen_base=kitchen_base,
+            kitchen_implementation=kitchen_implementation,
             architecture=architecture,
             cuda_tag=cuda_tag,
         )
@@ -282,16 +325,16 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("SPARK_COMFY_KITCHEN_SOURCE", KITCHEN_SOURCE),
     )
     parser.add_argument(
-        "--kitchen-base",
-        choices=tuple(KITCHEN_TARGETS),
-        default=DEFAULT_KITCHEN_BASE,
-        help="upstream comfy-kitchen version required by the target ComfyUI release",
+        "--kitchen-implementation",
+        choices=tuple(KITCHEN_IMPLEMENTATION_TARGETS),
+        default=DEFAULT_KITCHEN_IMPLEMENTATION,
+        help="upstream comfy-kitchen source baseline for the isolated package",
     )
     parser.add_argument(
         "--architecture",
         choices=tuple(ARCHITECTURES),
         default=DEFAULT_ARCHITECTURE,
-        help="GPU architecture encoded into the comfy-kitchen Spark wheel",
+        help="GPU architecture encoded into the spark-h3-kitchen wheel",
     )
     parser.add_argument(
         "--cuda-tag",
@@ -300,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--cuda-archs",
-        help="advanced CMake CUDA architecture override (for example 120a on CUDA 12.8)",
+        help="advanced CMake CUDA architecture override",
     )
     parser.add_argument("--install", action="store_true", help="install instead of building a wheel")
     args = parser.parse_args(argv)
@@ -314,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
             node_root,
             python=args.python,
             source_url=args.source_url,
-            kitchen_base=args.kitchen_base,
+            kitchen_implementation=args.kitchen_implementation,
             architecture=args.architecture,
             cuda_tag=args.cuda_tag,
             cuda_archs=args.cuda_archs,
@@ -325,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
             args.output_dir.resolve(),
             python=args.python,
             source_url=args.source_url,
-            kitchen_base=args.kitchen_base,
+            kitchen_implementation=args.kitchen_implementation,
             architecture=args.architecture,
             cuda_tag=args.cuda_tag,
             cuda_archs=args.cuda_archs,

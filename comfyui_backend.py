@@ -1,4 +1,4 @@
-"""ComfyUI-only Spark backend built on the official comfy-kitchen Sol stack.
+"""ComfyUI-only Spark backend built on the isolated Spark-H3 kitchen stack.
 
 This module deliberately owns its configuration, runtime state, backend
 selection, and attention call.  It never enters the Diffusers/PyTorch Spark
@@ -229,7 +229,7 @@ def comfy_kitchen_spark_attention(
     layout: ComfyPackedLayout,
     layer: int,
 ) -> torch.Tensor:
-    """Execute ComfyUI Spark directly through comfy-kitchen, without fallback."""
+    """Execute ComfyUI Spark directly through spark-h3-kitchen, without fallback."""
 
     if q.dtype != torch.bfloat16 or q.shape[-1] != 128:
         raise RuntimeError("ComfyUI Spark requires contiguous BF16 BTHD tensors with head_dim=128")
@@ -242,9 +242,9 @@ def comfy_kitchen_spark_attention(
     )
 
     try:
-        from comfy_kitchen.backends.cuda import spark_attn
+        from spark_h3_kitchen.backends.cuda import spark_attn
     except (ImportError, OSError) as error:
-        raise RuntimeError("ComfyUI Spark requires the comfy-kitchen Spark extension") from error
+        raise RuntimeError("ComfyUI Spark requires the spark-h3-kitchen extension") from error
 
     blocks = math.ceil(q.shape[1] / BLOCK_SIZE)
     sink_first = layout.video_tokens // BLOCK_SIZE

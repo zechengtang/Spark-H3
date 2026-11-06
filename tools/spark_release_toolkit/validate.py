@@ -11,27 +11,27 @@ import subprocess
 import sys
 from pathlib import Path
 
-from config import KIT, PLATFORM, wheel_base
+from config import KIT, PLATFORM, wheel_implementation
 
 
-SUPPORTED = {"0.38": "0.2.36", "0.39": "0.2.37", "0.40": "0.2.37", "0.42": "0.2.39"}
+SUPPORTED_COMFYUI_SERIES = {"0.38", "0.39", "0.40", "0.42", "0.43", "0.44"}
+SUPPORTED_KITCHEN_IMPLEMENTATIONS = ("0.2.37", "0.2.39")
 
 
-def comfy_identity(root: Path) -> tuple[str, str]:
-    requirements = (root / "requirements.txt").read_text(encoding="utf-8")
-    base = re.search(r"comfy-kitchen==([0-9.]+)", requirements)
+def comfy_identity(root: Path) -> str:
     source = (root / "comfyui_version.py").read_text(encoding="utf-8")
     version = re.search(r"__version__\s*=\s*['\"]([0-9]+\.[0-9]+\.[0-9]+)['\"]", source)
-    if base is None or version is None:
-        raise RuntimeError("cannot identify ComfyUI or comfy-kitchen version")
+    if version is None:
+        raise RuntimeError("cannot identify ComfyUI version")
     series = ".".join(version.group(1).split(".")[:2])
-    if series not in SUPPORTED or SUPPORTED[series] != base.group(1):
-        raise RuntimeError(f"unsupported ComfyUI {version.group(1)} / comfy-kitchen {base.group(1)}")
-    return version.group(1), base.group(1)
+    if series not in SUPPORTED_COMFYUI_SERIES:
+        raise RuntimeError(f"unsupported ComfyUI {version.group(1)}")
+    return version.group(1)
 
 
 def validate(root: Path | None, python: Path, mode: str, results: Path,
-             port: int, steps: int, lora_name: str) -> Path:
+             port: int, steps: int, lora_name: str,
+             kitchen_implementation: str) -> Path:
     host = "windows-x86_64" if sys.platform == "win32" else "linux-x86_64" if sys.platform.startswith("linux") else None
     if host != PLATFORM:
         raise RuntimeError(f"{PLATFORM} kit must be validated on {PLATFORM}; current host is {sys.platform}")
@@ -49,10 +49,16 @@ def validate(root: Path | None, python: Path, mode: str, results: Path,
         return results
     if root is None:
         raise ValueError("--comfyui-root is required for full mode")
-    _, base = comfy_identity(root)
-    wheels = [wheel for wheel in (KIT / "wheelhouse").glob("comfy_kitchen-*.whl") if wheel_base(wheel.name) == base]
+    comfy_identity(root)
+    wheels = [
+        wheel for wheel in (KIT / "wheelhouse").glob("spark_h3_kitchen-*.whl")
+        if wheel_implementation(wheel.name) == kitchen_implementation
+    ]
     if len(wheels) != 1:
-        raise RuntimeError(f"expected one {PLATFORM} wheel for comfy-kitchen {base}; found {wheels}")
+        raise RuntimeError(
+            f"expected one {PLATFORM} spark-h3-kitchen wheel for implementation "
+            f"{kitchen_implementation}; found {wheels}"
+        )
     subprocess.run([str(python), "-c", "import requests, websocket"], check=True)
     for executable in ("ffprobe", "ffmpeg"):
         if shutil.which(executable) is None:
@@ -72,6 +78,11 @@ def main() -> None:
     parser.add_argument("--results", type=Path)
     parser.add_argument("--port", type=int, default=8628)
     parser.add_argument("--steps", type=int, default=8)
+    parser.add_argument(
+        "--kitchen-implementation",
+        choices=SUPPORTED_KITCHEN_IMPLEMENTATIONS,
+        default="0.2.37",
+    )
     parser.add_argument("--lora-name", default="minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors")
     args = parser.parse_args()
     if args.steps < 3:
@@ -80,7 +91,7 @@ def main() -> None:
         args.comfyui_root.resolve() if args.comfyui_root else None,
         args.python.absolute(), args.mode,
         (args.results or KIT / f"results-{args.mode}").resolve(),
-        args.port, args.steps, args.lora_name,
+        args.port, args.steps, args.lora_name, args.kitchen_implementation,
     )
     print(json.dumps({"valid": True, "platform": PLATFORM, "results": str(result)}))
 

@@ -34,12 +34,12 @@ if (not LORA_NAME or Path(LORA_NAME).name != LORA_NAME
     raise ValueError("SPARK_LORA_NAME must be a .safetensors filename under ComfyUI models/loras")
 
 
-def wheel_base(wheel_name: str) -> str | None:
-    """Return a supported kitchen base for a wheel matching this kit."""
+def wheel_implementation(wheel_name: str) -> str | None:
+    """Return the isolated implementation for a wheel matching this kit."""
     import re
 
     match = re.fullmatch(
-        rf"comfy_kitchen-(0\.2\.(?:36|37|39))\+{re.escape(LOCAL_VERSION)}-.*-"
+        rf"spark_h3_kitchen-(0\.2\.(?:37|39))\+{re.escape(LOCAL_VERSION)}-.*-"
         rf"(?P<platform>[^-]+)\.whl", wheel_name,
     )
     if match is None:

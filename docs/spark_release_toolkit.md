@@ -32,7 +32,7 @@ Windows 上解压后，使用 **同一个 ComfyUI Python** 执行：
 
 完整验证结束时，控制台会显示 `SPEEDUP_VS_DENSE fidelity=...x speed=...x`；`speedup_report.json` 单独记录 Dense/Fidelity/Speed 的正式采样器耗时、相对 Dense 的加速倍数和节省时间百分比。每个变体的 short warmup 耗时不计入这些数字。
 
-`build.ps1` 默认可为 comfy-kitchen 0.2.36、0.2.37 和 0.2.39 编译本机架构 wheel。`validate.ps1` 有 `audit`、`full` 两种模式：分别是原生 wheel 审计和 LightX2V 三变体完整测速。脚本支持 ComfyUI 0.38.x（comfy-kitchen 0.2.36）、0.39.x/0.40.x（0.2.37）及 0.42.x（0.2.39），并检查 `comfyui_version.py` 和 `requirements.txt`。它隔离加载对应 wheel，不覆盖 ComfyUI 已安装的 comfy-kitchen。`bundle.py` 将已编译的 wheel 与节点源码组成 ComfyUI 包，并产生 SHA256 报告。正式发布时需使用自己的 publisher ID 重新生成工具包。
+`build.ps1` 默认可为独立的 `spark-h3-kitchen 0.2.37` 和 `0.2.39` 实现编译本机架构 wheel。`validate.ps1` 有 `audit`、`full` 两种模式：分别是原生 wheel 审计和 LightX2V 三变体完整测速。脚本支持 ComfyUI 0.38.x–0.40.x 及 0.42.x–0.44.x，并检查 `comfyui_version.py` 和 `requirements.txt`。所有环境默认验证 0.2.37 Spark 实现；它不会覆盖 ComfyUI 已安装的官方 `comfy-kitchen`。`bundle.py` 将已编译的 wheel 与节点源码组成 ComfyUI 包，并产生 SHA256 报告。正式发布时需使用自己的 publisher ID 重新生成工具包。
 
 独立的短兼容测试已移除：`full` 在同一个 ComfyUI 进程中，为 Dense/Fidelity/Speed 各做一次 1/3/1 步 short warmup，再立即运行各自正式 8 步推理。无需单独运行预热。
 

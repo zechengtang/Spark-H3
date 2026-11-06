@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate architecture-specific comfy-kitchen wheels without installing."""
+"""Validate architecture-specific spark-h3-kitchen wheels without installing."""
 
 from __future__ import annotations
 
@@ -15,7 +15,10 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from config import ARCH, CAPABILITY, CUDA_TAG, ELF_ARCH, LOCAL_VERSION, PLATFORM, EXTENSION_SUFFIX, wheel_base
+from config import (
+    ARCH, CAPABILITY, CUDA_TAG, ELF_ARCH, LOCAL_VERSION, PLATFORM,
+    EXTENSION_SUFFIX, wheel_implementation,
+)
 
 
 def sha256(path: Path) -> str:
@@ -29,7 +32,7 @@ def sha256(path: Path) -> str:
 def extract_extension(wheel: Path, target: Path) -> Path:
     with zipfile.ZipFile(wheel) as archive:
         names = [name for name in archive.namelist()
-                 if name.startswith("comfy_kitchen/backends/cuda/_C") and name.endswith(EXTENSION_SUFFIX)]
+                 if name.startswith("spark_h3_kitchen/backends/cuda/_C") and name.endswith(EXTENSION_SUFFIX)]
         if len(names) != 1:
             raise RuntimeError(f"{wheel.name}: expected one {EXTENSION_SUFFIX}, found {names}")
         archive.extractall(target)
@@ -57,15 +60,15 @@ def child(wheel: Path) -> None:
         sys.path.insert(0, str(target))
 
         import torch
-        import comfy_kitchen
-        from comfy_kitchen.backends import cuda
-        from comfy_kitchen.backends.cuda import spark_attn
+        import spark_h3_kitchen as kitchen
+        from spark_h3_kitchen.backends import cuda
+        from spark_h3_kitchen.backends.cuda import spark_attn
 
         if Path(cuda._C.__file__).resolve() != extension.resolve():
             raise RuntimeError("wheel audit imported an installed extension instead of the extracted wheel")
         native_symbols = require_native_symbols(cuda._C)
         distributions = list(importlib.metadata.distributions(path=[str(target)]))
-        versions = [dist.version for dist in distributions if dist.metadata["Name"].lower() == "comfy-kitchen"]
+        versions = [dist.version for dist in distributions if dist.metadata["Name"].lower() == "spark-h3-kitchen"]
         if len(versions) != 1:
             raise RuntimeError(f"could not identify wheel version: {versions}")
         version = versions[0]
@@ -75,6 +78,17 @@ def child(wheel: Path) -> None:
             raise RuntimeError(
                 f"expected CUDA 13.0 / {ARCH}, found {torch.version.cuda} / {torch.cuda.get_device_capability()}"
             )
+        kitchen_functions = (
+            kitchen.int8_attention,
+            kitchen.prequantize_int8_attention,
+            kitchen.int8_attention_from_prequantized,
+        )
+        if (
+            not all(callable(function) for function in kitchen_functions)
+            or not callable(kitchen.int8_attention_is_available)
+            or not kitchen.int8_attention_is_available()
+        ):
+            raise RuntimeError("Kitchen INT8 attention is unavailable")
 
         torch.manual_seed(20261012)
         q = torch.randn((1, 256, 2, 128), device="cuda", dtype=torch.bfloat16)
@@ -89,13 +103,14 @@ def child(wheel: Path) -> None:
             raise RuntimeError("native output is non-finite or non-deterministic")
         print(json.dumps({
             "version": version,
-            "module": comfy_kitchen.__file__,
+            "module": kitchen.__file__,
             "extension": str(extension),
             "shape": list(first.shape),
             "dtype": str(first.dtype),
             "finite": True,
             "repeat_bitwise": True,
             "native_symbols": native_symbols,
+            "kitchen_int8_attention": True,
         }))
     finally:
         shutil.rmtree(directory, ignore_errors=True)
@@ -111,17 +126,20 @@ def main() -> None:
         child(args.child.resolve())
         return
 
-    wheels = sorted(args.wheelhouse.resolve().glob("comfy_kitchen-*.whl"))
-    expected_bases = {"0.2.36", "0.2.37", "0.2.39"}
-    if not 1 <= len(wheels) <= len(expected_bases):
-        raise RuntimeError(f"expected one to three wheels for {sorted(expected_bases)} in {args.wheelhouse}, found {wheels}")
+    wheels = sorted(args.wheelhouse.resolve().glob("spark_h3_kitchen-*.whl"))
+    expected_implementations = {"0.2.37", "0.2.39"}
+    if not 1 <= len(wheels) <= len(expected_implementations):
+        raise RuntimeError(
+            f"expected one or two wheels for {sorted(expected_implementations)} "
+            f"in {args.wheelhouse}, found {wheels}"
+        )
     results = []
-    found_bases = set()
+    found_implementations = set()
     for wheel in wheels:
-        base = wheel_base(wheel.name)
-        if base is None:
+        implementation = wheel_implementation(wheel.name)
+        if implementation is None:
             raise RuntimeError(f"wrong {PLATFORM} {ARCH}/{CUDA_TAG} wheel name: {wheel.name}")
-        found_bases.add(base)
+        found_implementations.add(implementation)
         with tempfile.TemporaryDirectory(prefix=f"spark-h3-{ARCH}-cuobjdump-") as directory:
             extension = extract_extension(wheel, Path(directory))
             dump = subprocess.check_output(
@@ -144,8 +162,14 @@ def main() -> None:
             "smoke": smoke,
         })
         print(f"PASS {wheel.name} sha256={results[-1]['sha256']}")
-    if len(found_bases) != len(wheels) or not found_bases <= expected_bases:
-        raise RuntimeError(f"duplicate or unsupported comfy-kitchen bases: {found_bases}")
+    if (
+        len(found_implementations) != len(wheels)
+        or not found_implementations <= expected_implementations
+    ):
+        raise RuntimeError(
+            "duplicate or unsupported spark-h3-kitchen implementations: "
+            f"{found_implementations}"
+        )
     report = {"valid": True, "architecture": ARCH, "cuda_tag": CUDA_TAG,
               "platform": PLATFORM, "wheels": results}
     args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -66,9 +66,13 @@ speed 预设。
 
 `dense_backend` 控制 dense 预热、固定 dense 层、短序列和非严格模式回退。
 默认 `inherit` 不强制覆盖，沿用模型或 ComfyUI 当前的注意力后端；也可以选择
-`kitchen`、`sage` 或 `sdpa`，只对这些 dense 调用强制使用对应的已注册后端。该切换发生在 Python
+`kitchen`、`sage` 或 `sdpa`，只对这些 dense 调用强制使用对应后端。该切换发生在 Python
 分发层，不需要重新编译各架构的 Spark wheel；`sage` 需要安装 SageAttention，
-`kitchen` 需要当前 comfy-kitchen 提供 INT8 attention。
+`kitchen` 使用独立 `spark-h3-kitchen` 包提供的 INT8 attention，不会覆盖
+ComfyUI 官方 `comfy-kitchen`。
+`inherit` 不注入新的 attention override：模型、上游节点或 ComfyUI 已经选择的
+后端会原样保留，包括官方 `comfy-kitchen` 提供的 Kitchen Attention；但 Spark-H3
+不会主动选择它。
 当保持 `inherit` 且该参数未连接外部输入时，节点会显示一个不参与序列化的提示按钮：
 “Dense warmup 加速：可使用 dense_backend=kitchen → 一键切换”。点击即可应用 kitchen，
 默认值仍保持 `inherit`。

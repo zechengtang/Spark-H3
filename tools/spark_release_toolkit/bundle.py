@@ -8,7 +8,7 @@ import json
 import zipfile
 from pathlib import Path
 
-from config import ARCH, CUDA_TAG, KIT, PLATFORM, wheel_base
+from config import ARCH, CUDA_TAG, KIT, PLATFORM, wheel_implementation
 
 
 def sha256(path: Path) -> str:
@@ -25,17 +25,17 @@ def bundle(output: Path, audit_report: Path) -> dict:
     plugin = KIT / "ComfyUI-Spark-H3"
     verify_packaged_source()
     require_direct_triton_imports(plugin)
-    wheels = sorted((KIT / "wheelhouse").glob("comfy_kitchen-*.whl"))
+    wheels = sorted((KIT / "wheelhouse").glob("spark_h3_kitchen-*.whl"))
     if not wheels:
         raise RuntimeError("wheelhouse is empty; build or copy a wheel first")
-    bases = set()
+    implementations = set()
     for wheel in wheels:
-        base = wheel_base(wheel.name)
-        if base is None:
+        implementation = wheel_implementation(wheel.name)
+        if implementation is None:
             raise RuntimeError(f"unexpected wheel for {ARCH}/{CUDA_TAG}: {wheel.name}")
-        bases.add(base)
-    if len(bases) != len(wheels):
-        raise RuntimeError("duplicate comfy-kitchen base versions")
+        implementations.add(implementation)
+    if len(implementations) != len(wheels):
+        raise RuntimeError("duplicate spark-h3-kitchen implementation versions")
     if not audit_report.is_file():
         raise RuntimeError(f"wheel audit is required before bundling: {audit_report}")
     audit = json.loads(audit_report.read_text(encoding="utf-8"))

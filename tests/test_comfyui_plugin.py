@@ -25,8 +25,82 @@ from comfyui_nodes import (
     _make_spark_layout,
     _make_kj_low_vram_attention_override,
     _make_kj_low_vram_spark_block_patch,
+    _spark_h3_kitchen_attention,
     _spark_mode_is_dense,
 )
+
+
+def _install_fake_comfy_attention(monkeypatch):
+    comfy = ModuleType("comfy")
+    ldm = ModuleType("comfy.ldm")
+    modules = ModuleType("comfy.ldm.modules")
+    attention = ModuleType("comfy.ldm.modules.attention")
+    modules.attention = attention
+    ldm.modules = modules
+    comfy.ldm = ldm
+    monkeypatch.setitem(sys.modules, "comfy", comfy)
+    monkeypatch.setitem(sys.modules, "comfy.ldm", ldm)
+    monkeypatch.setitem(sys.modules, "comfy.ldm.modules", modules)
+    monkeypatch.setitem(sys.modules, "comfy.ldm.modules.attention", attention)
+    return attention
+
+
+def test_isolated_kitchen_dense_backend_uses_private_namespace(monkeypatch):
+    calls = {}
+    kitchen = ModuleType("spark_h3_kitchen")
+    kitchen.int8_attention_is_available = lambda: True
+
+    def int8_attention(q, k, v, *, scale=None, attn_mask=None):
+        calls["direct"] = (q, k, v, scale, attn_mask)
+        return v
+
+    def prequantize(q, k, v, *, scale=None, attn_mask=None):
+        calls["prequantized"] = (q, k, v, scale, attn_mask)
+        return {"output": v}
+
+    kitchen.int8_attention = int8_attention
+    kitchen.prequantize_int8_attention = prequantize
+    kitchen.int8_attention_from_prequantized = lambda packed: packed["output"]
+    monkeypatch.setitem(sys.modules, "spark_h3_kitchen", kitchen)
+
+    def reshape(q, k, v, batch, heads, dim_head, enable_gqa, expand_kv):
+        assert (batch, heads, dim_head, enable_gqa, expand_kv) == (
+            1, 2, 4, False, False
+        )
+        return tuple(tensor.reshape(batch, -1, heads, dim_head) for tensor in (q, k, v))
+
+    comfy_attention = SimpleNamespace(
+        _reshape_qkv_to_heads=reshape,
+        attention_pytorch=lambda *_args, **_kwargs: pytest.fail("unexpected fallback"),
+    )
+    attention = _spark_h3_kitchen_attention(comfy_attention)
+    q = torch.arange(24, dtype=torch.float32).reshape(1, 3, 8)
+    k = q + 100
+    v = q + 200
+    mask = torch.ones(3, 3)
+
+    output = attention(q, k, v, 2, mask=mask, scale=0.25)
+    torch.testing.assert_close(output, v)
+    direct = calls["direct"]
+    assert direct[0].shape == direct[1].shape == direct[2].shape == (1, 2, 3, 4)
+    assert direct[3] == 0.25
+    assert direct[4].shape == (1, 1, 3, 3)
+
+    class Container:
+        def __init__(self, tensor):
+            self.tensor = tensor
+
+        def take(self):
+            tensor, self.tensor = self.tensor, None
+            return tensor
+
+    container_output = attention.container_function(
+        Container(q), Container(k), Container(v), 2, mask=mask, scale=0.5
+    )
+    torch.testing.assert_close(container_output, v)
+    prequantized = calls["prequantized"]
+    assert prequantized[3] == 0.5
+    assert prequantized[4].shape == (1, 1, 3, 3)
 
 
 def test_h3_av_latent_cache_roundtrip(tmp_path, monkeypatch):
@@ -465,8 +539,9 @@ def test_spark_public_modes_validate_and_only_dense_bypasses():
         _spark_mode_is_dense("invalid")
 
 
-def test_dense_backend_override_uses_comfy_registry_and_preserves_inherit(monkeypatch):
-    from comfy.ldm.modules import attention as comfy_attention
+def test_dense_backend_override_uses_isolated_kitchen_and_preserves_inherit(monkeypatch):
+    import comfyui_nodes
+    _install_fake_comfy_attention(monkeypatch)
 
     calls = []
 
@@ -478,16 +553,11 @@ def test_dense_backend_override_uses_comfy_registry_and_preserves_inherit(monkey
         return "containers"
 
     selected.container_function = selected_containers
-    requested = []
-
-    def get_attention_function(name, default):
-        requested.append((name, default))
-        return selected
-
-    monkeypatch.setattr(comfy_attention, "get_attention_function", get_attention_function)
+    monkeypatch.setattr(
+        comfyui_nodes, "_spark_h3_kitchen_attention", lambda _attention: selected
+    )
     assert _dense_attention_override("inherit") is None
     override = _dense_attention_override("kitchen")
-    assert requested == [("comfy_kitchen_int8", None)]
     assert override("previous", 1, flag=True) == "selected"
     assert calls == [((1,), {"flag": True})]
     assert override.container_function is selected_containers
@@ -495,15 +565,22 @@ def test_dense_backend_override_uses_comfy_registry_and_preserves_inherit(monkey
 
 
 def test_dense_backend_validation_and_unavailable_dependency(monkeypatch):
-    from comfy.ldm.modules import attention as comfy_attention
+    import comfyui_nodes
+    comfy_attention = _install_fake_comfy_attention(monkeypatch)
 
     with pytest.raises(ValueError, match="dense_backend"):
         _dense_attention_override("unknown")
     monkeypatch.setattr(
-        comfy_attention, "get_attention_function", lambda _name, _default: None
+        comfy_attention, "get_attention_function", lambda _name, _default: None,
+        raising=False,
     )
     with pytest.raises(RuntimeError, match="sageattention"):
         _dense_attention_override("sage")
+    monkeypatch.setattr(
+        comfyui_nodes,
+        "_spark_h3_kitchen_attention",
+        lambda _attention: (_ for _ in ()).throw(RuntimeError("INT8 attention unavailable")),
+    )
     with pytest.raises(RuntimeError, match="INT8 attention"):
         _dense_attention_override("kitchen")
 
@@ -831,9 +908,15 @@ def test_spark_only_target_video_queries_use_sparse_output(
         call.update(kwargs)
         return torch.full_like(query, 7)
 
-    cuda_module = ModuleType("comfy_kitchen.backends.cuda")
+    cuda_module = ModuleType("spark_h3_kitchen.backends.cuda")
     cuda_module.spark_attn = fake_spark
-    monkeypatch.setitem(sys.modules, "comfy_kitchen.backends.cuda", cuda_module)
+    kitchen_module = ModuleType("spark_h3_kitchen")
+    backends_module = ModuleType("spark_h3_kitchen.backends")
+    backends_module.cuda = cuda_module
+    kitchen_module.backends = backends_module
+    monkeypatch.setitem(sys.modules, "spark_h3_kitchen", kitchen_module)
+    monkeypatch.setitem(sys.modules, "spark_h3_kitchen.backends", backends_module)
+    monkeypatch.setitem(sys.modules, "spark_h3_kitchen.backends.cuda", cuda_module)
     layout = ComfyPackedLayout(
         permutation=torch.arange(total_tokens),
         inverse_permutation=torch.arange(total_tokens),
@@ -869,14 +952,20 @@ def test_target_scope_keeps_backend_direct_output_path(monkeypatch):
     )
 
     captured = {}
-    cuda_module = ModuleType("comfy_kitchen.backends.cuda")
+    cuda_module = ModuleType("spark_h3_kitchen.backends.cuda")
 
     def fake_spark(query, _key, _value, **kwargs):
         captured.update(kwargs)
         return query
 
     cuda_module.spark_attn = fake_spark
-    monkeypatch.setitem(sys.modules, "comfy_kitchen.backends.cuda", cuda_module)
+    kitchen_module = ModuleType("spark_h3_kitchen")
+    backends_module = ModuleType("spark_h3_kitchen.backends")
+    backends_module.cuda = cuda_module
+    kitchen_module.backends = backends_module
+    monkeypatch.setitem(sys.modules, "spark_h3_kitchen", kitchen_module)
+    monkeypatch.setitem(sys.modules, "spark_h3_kitchen.backends", backends_module)
+    monkeypatch.setitem(sys.modules, "spark_h3_kitchen.backends.cuda", cuda_module)
     tokens, video_tokens, video_start = 70, 64, 6
     q = torch.zeros(1, tokens, 1, 128, dtype=torch.bfloat16)
     layout = ComfyPackedLayout(

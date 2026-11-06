@@ -1,7 +1,7 @@
 # Spark-H3 编译与验证 Kit
 
 本工具分两步：仓库中的生成器制作独立 kit；目标机器使用 kit 编译
-`comfy-kitchen` wheel、验证 Spark-H3，并打包安装用发布 ZIP。**每份 kit
+`spark-h3-kitchen` wheel、验证 Spark-H3，并打包安装用发布 ZIP。**每份 kit
 只对应一个操作系统和一个 GPU 架构**。生成后，目标机器不需要本仓库的完整源码。
 
 ## 1. 在仓库中生成 kit
@@ -74,13 +74,14 @@ Visual Studio 2022 x64 开发者环境中的 `cl` 和 `triton-windows`。
 生成 `results-audit/wheel-validation.json`；`bundle.py` 要求该报告
 通过且 wheel 的 SHA-256 未变化。`full` 运行 Dense、Fidelity、Speed
 LightX2V 测试；`compatibility` 是较短的同形状兼容性检查。已有匹配
-wheel 时，可放入 `wheelhouse/`，跳过编译，仍需执行验证。仅需一个
-`comfy-kitchen` 基线时，Linux 编译可加 `--kitchen-base 0.2.37`，
-Windows 编译可加 `-KitchenBase 0.2.37`。
+wheel 时，可放入 `wheelhouse/`，跳过编译，仍需执行验证。仅需一个独立实现时，
+Linux 编译可加 `--kitchen-implementation 0.2.37`，Windows 编译可加
+`-KitchenImplementation 0.2.37`。
 
-当前验证范围是 ComfyUI 0.38.x 配 `comfy-kitchen` 0.2.36，以及
-ComfyUI 0.39.x／0.40.x 配 0.2.37。更换这些依赖、CUDA 或验证工作流
-时，应先更新仓库里的工具源码和模板，再重新生成 kit。
+当前验证范围是 ComfyUI 0.38.x–0.40.x 和 0.42.x–0.44.x；所有环境默认验证
+独立的 0.2.37 实现，也可显式选择 0.2.39。验证和 wheel 选择不读取宿主官方
+`comfy-kitchen` 版本。更换 ComfyUI、独立实现、CUDA 或验证工作流时，应先更新
+仓库里的工具源码和模板，再重新生成 kit。
 
 ## 4. 输出与边界
 

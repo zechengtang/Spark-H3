@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)] [string] $Python,
-    [ValidateSet("all", "both", "0.2.36", "0.2.37", "0.2.39")]
-    [string] $KitchenBase = "all"
+    [ValidateSet("all", "0.2.37", "0.2.39")]
+    [string] $KitchenImplementation = "all"
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,13 +26,13 @@ $env:CUDACXX = $buildToolkit.build_toolkit.compiler
 $env:CMAKE_CUDA_COMPILER = $buildToolkit.build_toolkit.compiler
 $env:CUDA_NVCC_EXECUTABLE = $buildToolkit.build_toolkit.compiler
 New-Item -ItemType Directory -Force -Path $wheelhouse | Out-Null
-$versions = if ($KitchenBase -eq "all") { @("0.2.36", "0.2.37", "0.2.39") } elseif ($KitchenBase -eq "both") { @("0.2.36", "0.2.37") } else { @($KitchenBase) }
+$versions = if ($KitchenImplementation -eq "all") { @("0.2.37", "0.2.39") } else { @($KitchenImplementation) }
 foreach ($version in $versions) {
     & $Python (Join-Path $kit "ComfyUI-Spark-H3\kernel_builder.py") `
-        --python $Python --output-dir $wheelhouse --kitchen-base $version `
+        --python $Python --output-dir $wheelhouse --kitchen-implementation $version `
         --architecture $identity.architecture --cuda-tag $identity.cuda_tag
-    if ($LASTEXITCODE -ne 0) { throw "wheel build failed for comfy-kitchen $version" }
-    $pattern = "comfy_kitchen-$version+spark.h3.$($identity.architecture).$($identity.cuda_tag).1-*-win_amd64.whl"
+    if ($LASTEXITCODE -ne 0) { throw "wheel build failed for spark-h3-kitchen $version" }
+    $pattern = "spark_h3_kitchen-$version+spark.h3.$($identity.architecture).$($identity.cuda_tag).1-*-win_amd64.whl"
     $matches = @(Get-ChildItem $wheelhouse -Filter $pattern)
     if ($matches.Count -ne 1) { throw "expected one Windows wheel for $version; found $($matches.Count)" }
     $hash = (Get-FileHash $matches[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -116,10 +116,18 @@ def test_generated_windows_kits_select_their_own_architecture(tmp_path):
             nodes[131]["widgets_values_named"]["prompt"].encode("utf-8")
         ).hexdigest() == "6adb0fb223bb81430c4c6261dc6cc5b787d7c8eb2955d44d2d9e9d70da950ea3"
         validate_source = (kit / "validate.ps1").read_text(encoding="utf-8")
-        assert "'0.40' = '0.2.37'" in validate_source
-        assert "'0.42' = '0.2.39'" in validate_source
-        assert '"0.2.39"' in (kit / "build.ps1").read_text(encoding="utf-8")
-        assert "0.38.x/0.39.x/0.40.x" in validate_source
+        assert '$KitchenImplementation = "0.2.37"' in validate_source
+        assert "$supportedComfySeries" in validate_source
+        assert "supportedBases" not in validate_source
+        assert "comfy-kitchen==" not in validate_source
+        build_source = (kit / "build.ps1").read_text(encoding="utf-8")
+        assert "$KitchenImplementation" in build_source
+        assert "--kitchen-implementation" in build_source
+        assert "--kitchen-base" not in build_source
+        assert '"0.2.37"' in build_source
+        assert '"0.2.39"' in build_source
+        assert '"0.2.40"' not in build_source
+        assert "0.38.x-0.40.x/0.42.x-0.44.x" in validate_source
         assert "ExperimentalCudaRuntime" not in validate_source
         assert "TestTorchCuda" not in validate_source
         check = subprocess.run(
@@ -143,7 +151,7 @@ def test_generated_windows_kits_select_their_own_architecture(tmp_path):
         accepted_inputs = {argument.arg for argument in patch.args.args} - {"self"}
         env = {**os.environ, "COMFYUI_ROOT": str(kit), "SPARK_WHEEL": str(
             kit / "wheelhouse" /
-            f"comfy_kitchen-0.2.37+spark.h3.{arch}.cu130.1-cp312-abi3-win_amd64.whl"
+            f"spark_h3_kitchen-0.2.37+spark.h3.{arch}.cu130.1-cp312-abi3-win_amd64.whl"
         )}
         prompts = subprocess.run(
             [sys.executable, "-c",
@@ -240,19 +248,21 @@ def test_generated_linux_kit_uses_linux_wheels_and_entrypoints(tmp_path):
             assert "--experimental-cuda-runtime" not in result.stdout
             assert "--test-torch-cuda" not in result.stdout
             assert "--mode {audit,full}" in result.stdout
+            assert "--kitchen-implementation {0.2.37,0.2.39}" in result.stdout
 
-    source = "from config import wheel_base, EXTENSION_SUFFIX; " \
-             "print(wheel_base('comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-manylinux_2_17_x86_64.whl')); " \
-             "print(wheel_base('comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-win_amd64.whl')); " \
+    source = "from config import wheel_implementation, EXTENSION_SUFFIX; " \
+             "print(wheel_implementation('spark_h3_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-manylinux_2_17_x86_64.whl')); " \
+             "print(wheel_implementation('spark_h3_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-win_amd64.whl')); " \
+             "print(wheel_implementation('spark_h3_kitchen-0.2.40+spark.h3.sm120.cu130.1-cp312-abi3-manylinux_2_17_x86_64.whl')); " \
              "print(EXTENSION_SUFFIX)"
     check = subprocess.run([sys.executable, "-c", source], cwd=kit,
                            capture_output=True, text=True)
     assert check.returncode == 0, check.stderr
-    assert check.stdout.splitlines() == ["0.2.37", "None", ".so"]
+    assert check.stdout.splitlines() == ["0.2.37", "None", "None", ".so"]
     extension_wheel = kit / "wheelhouse" / "synthetic.whl"
     with zipfile.ZipFile(extension_wheel, "w") as archive:
-        archive.writestr("comfy_kitchen/backends/cuda/_C.abi3.so", b"linux")
-        archive.writestr("comfy_kitchen/backends/cuda/_C.abi3.pyd", b"windows")
+        archive.writestr("spark_h3_kitchen/backends/cuda/_C.abi3.so", b"linux")
+        archive.writestr("spark_h3_kitchen/backends/cuda/_C.abi3.pyd", b"windows")
     extraction = subprocess.run(
         [sys.executable, "-c",
          "from pathlib import Path; import tempfile; from validate_wheels import extract_extension; "
@@ -262,7 +272,7 @@ def test_generated_linux_kit_uses_linux_wheels_and_entrypoints(tmp_path):
     assert extraction.returncode == 0, extraction.stderr
     assert extraction.stdout.strip() == "_C.abi3.so"
     release_wheel = kit / "wheelhouse" / (
-        "comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-linux_x86_64.whl"
+        "spark_h3_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-linux_x86_64.whl"
     )
     extension_wheel.rename(release_wheel)
     audit = kit / "results-audit" / "wheel-validation.json"
@@ -299,7 +309,7 @@ def test_wheel_audit_rejects_backend_without_chunked_core(tmp_path, monkeypatch)
         "ARCH": "sm120", "CAPABILITY": (12, 0), "CUDA_TAG": "cu130",
         "ELF_ARCH": "sm_120", "LOCAL_VERSION": "spark.h3.sm120.cu130.1",
         "PLATFORM": "linux-x86_64", "EXTENSION_SUFFIX": ".so",
-        "wheel_base": lambda _: "0.2.36",
+        "wheel_implementation": lambda _: "0.2.37",
     }.items():
         setattr(config, name, value)
     monkeypatch.setitem(sys.modules, "config", config)

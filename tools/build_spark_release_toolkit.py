@@ -67,7 +67,7 @@ def generate(
     wheelhouse = output / "wheelhouse"
     wheelhouse.mkdir()
     (wheelhouse / "PUT_PLATFORM_WHEELS_HERE.txt").write_text(
-        f"Copy architecture-matched comfy-kitchen {platform_tag} wheels here before validation.\n",
+        f"Copy architecture-matched spark-h3-kitchen {platform_tag} wheels here before validation.\n",
         encoding="utf-8",
     )
     for wheel in wheels:

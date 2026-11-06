@@ -193,7 +193,7 @@ def build_comfy_reblock_permutations(
             grid_shape=layout.grid,
             initial_order=cfg.landmark_tree_v2_initial_order,
             device=query.device,
-            # The fused comfy-kitchen path scatters exact output directly
+            # The fused spark-h3-kitchen path scatters exact output directly
             # through query_permutation, so no inverse permutation is needed.
             return_inverse=False,
             # Keep this exact route scheduling optimization ComfyUI-local;

@@ -85,10 +85,14 @@ Python-side runtime setting and does not require rebuilding the wheel.
 `dense_backend` controls dense warmup steps, permanently dense layers, short-sequence
 execution, and non-strict fallback calls. Keep the default `inherit` to follow
 the model's or ComfyUI's configured attention backend, or select `kitchen`, `sage`, or `sdpa`
-to force an available registered backend for those calls only. This is a
+to force an available backend for those calls only. This is a
 Python-level dispatch choice and does not require rebuilding the architecture-
 specific Spark wheel. `sage` requires SageAttention to be installed, while
-`kitchen` requires comfy-kitchen INT8 attention support.
+`kitchen` uses the isolated `spark-h3-kitchen` INT8 attention implementation
+and does not replace ComfyUI's official `comfy-kitchen` package.
+`inherit` injects no override: an attention backend already selected by the
+model, an upstream node, or ComfyUI—including an official comfy-kitchen
+Kitchen Attention override—continues unchanged, but Spark-H3 does not select it.
 While the unlinked setting remains `inherit`, the node shows a non-serialized
 button announcing that Kitchen INT8 is available for dense stages. Clicking it
 switches `dense_backend` to `kitchen`; the default remains `inherit`.

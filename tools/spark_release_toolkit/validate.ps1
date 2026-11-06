@@ -6,6 +6,8 @@ param(
     [string] $Results = "",
     [int] $Port = 8628,
     [ValidateRange(3, 1000)] [int] $Steps = 8,
+    [ValidateSet("0.2.37", "0.2.39")]
+    [string] $KitchenImplementation = "0.2.37",
     [string] $LoraName = "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
 )
 
@@ -31,28 +33,21 @@ if ($LASTEXITCODE -ne 0) { throw "Triton/GPU preflight failed; no benchmark was 
 if ($LASTEXITCODE -ne 0) { throw "wheel audit failed; no benchmark was run" }
 if ($Mode -eq "audit") { Write-Host "PASS $Results"; return }
 
-$requirements = Get-Content (Join-Path $ComfyUIRoot "requirements.txt") -Raw -Encoding UTF8
-$match = [regex]::Match($requirements, 'comfy-kitchen==([0-9.]+)')
-if (-not $match.Success) { throw "cannot determine comfy-kitchen version from ComfyUI requirements.txt" }
-$base = $match.Groups[1].Value
 $versionFile = Join-Path $ComfyUIRoot "comfyui_version.py"
 if (-not (Test-Path $versionFile)) { throw "missing ComfyUI version file: $versionFile" }
 $versionSource = Get-Content $versionFile -Raw -Encoding UTF8
 $versionMatch = [regex]::Match($versionSource, '__version__\s*=\s*["'']([0-9]+\.[0-9]+\.[0-9]+)["'']')
 if (-not $versionMatch.Success) { throw "cannot determine ComfyUI version from $versionFile" }
 $comfyVersion = $versionMatch.Groups[1].Value
-$supportedBases = @{ '0.38' = '0.2.36'; '0.39' = '0.2.37'; '0.40' = '0.2.37'; '0.42' = '0.2.39' }
+$supportedComfySeries = @('0.38', '0.39', '0.40', '0.42', '0.43', '0.44')
 $comfySeries = ($comfyVersion -split '\.')[0..1] -join '.'
-if (-not $supportedBases.ContainsKey($comfySeries)) {
-    throw "ComfyUI $comfyVersion is outside this kit's validated 0.38.x/0.39.x/0.40.x/0.42.x range; update the kit before benchmarking"
+if ($supportedComfySeries -notcontains $comfySeries) {
+    throw "ComfyUI $comfyVersion is outside this kit's validated 0.38.x-0.40.x/0.42.x-0.44.x set; update the kit before benchmarking"
 }
-if ($base -ne $supportedBases[$comfySeries]) {
-    throw "ComfyUI $comfyVersion requires comfy-kitchen $base, but this kit expects $($supportedBases[$comfySeries]) for $comfySeries.x"
-}
-Write-Host "ComfyUI $comfyVersion requires comfy-kitchen $base"
-$pattern = "comfy_kitchen-$base+spark.h3.$($identity.architecture).$($identity.cuda_tag).1-*-win_amd64.whl"
+Write-Host "ComfyUI $comfyVersion; isolated Kitchen implementation $KitchenImplementation"
+$pattern = "spark_h3_kitchen-$KitchenImplementation+spark.h3.$($identity.architecture).$($identity.cuda_tag).1-*-win_amd64.whl"
 $wheels = @(Get-ChildItem (Join-Path $kit "wheelhouse") -Filter $pattern)
-if ($wheels.Count -ne 1) { throw "expected one wheel for comfy-kitchen $base; found $($wheels.Count)" }
+if ($wheels.Count -ne 1) { throw "expected one spark-h3-kitchen wheel for implementation $KitchenImplementation; found $($wheels.Count)" }
 & $Python -c "import requests, websocket"
 if ($LASTEXITCODE -ne 0) { throw "Python requires requests and websocket-client" }
 if (-not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {

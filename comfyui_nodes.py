@@ -11,7 +11,6 @@ import logging
 import json
 import math
 import os
-from importlib import metadata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,7 +42,6 @@ if _PRODUCER_CHUNK <= 0 or _PRODUCER_CHUNK % 64:
 _DENSE_ATTENTION_FUNCTIONS = {
     "sdpa": "pytorch",
     "sage": "sage",
-    "kitchen": "comfy_kitchen_int8",
 }
 _SPARK_MODES = ("fidelity", "speed", "custom", "dense")
 _SPARSE_SCOPES = ("target-video", "joint-video")
@@ -69,29 +67,31 @@ def _dense_attention_override(backend: str):
     """Return a ComfyUI attention override for dense Spark calls.
 
     ``inherit`` deliberately leaves the existing override chain untouched. The
-    other modes use ComfyUI's public attention registry, so selecting an
-    already installed backend is a Python-only operation and does not require
-    rebuilding the Spark comfy-kitchen extension.
+    SDPA and Sage use ComfyUI's public attention registry. Kitchen is supplied
+    by the isolated Spark-H3 package, so the official comfy-kitchen remains
+    untouched.
     """
 
     if backend == "inherit":
         return None
-    try:
-        function_name = _DENSE_ATTENTION_FUNCTIONS[backend]
-    except KeyError as error:
-        choices = ", ".join(("inherit", *_DENSE_ATTENTION_FUNCTIONS))
+    choices = ("inherit", *_DENSE_ATTENTION_FUNCTIONS, "kitchen")
+    if backend not in choices:
         raise ValueError(
-            f"dense_backend must be one of {choices}; got {backend!r}"
-        ) from error
+            f"dense_backend must be one of {', '.join(choices)}; got {backend!r}"
+        )
 
     from comfy.ldm.modules import attention as comfy_attention
 
-    function = comfy_attention.get_attention_function(function_name, None)
+    if backend == "kitchen":
+        function = _spark_h3_kitchen_attention(comfy_attention)
+    else:
+        function_name = _DENSE_ATTENTION_FUNCTIONS[backend]
+        function = comfy_attention.get_attention_function(function_name, None)
     if function is None:
         dependency = (
             "the sageattention package"
             if backend == "sage"
-            else "a comfy-kitchen build with INT8 attention support"
+            else "the requested ComfyUI attention backend"
         )
         raise RuntimeError(
             f"dense_backend={backend!r} is unavailable; install {dependency} "
@@ -102,12 +102,88 @@ def _dense_attention_override(backend: str):
         return function(*args, **kwargs)
 
     # MiniMax-H3 passes single-owner AttentionTensorContainer objects.  Preserve
-    # comfy-kitchen's zero-copy consumer when that backend exposes one.
+    # the kitchen backend's zero-copy consumer when it exposes one.
     container_function = getattr(function, "container_function", None)
     if container_function is not None:
         override.container_function = container_function
     override.dense_backend = backend
     return override
+
+
+def _spark_h3_kitchen_attention(comfy_attention):
+    """Build a ComfyUI attention function backed by our isolated package."""
+
+    try:
+        import spark_h3_kitchen as kitchen
+    except (ImportError, OSError) as error:
+        raise RuntimeError(
+            "dense_backend='kitchen' requires the spark-h3-kitchen package"
+        ) from error
+    if not kitchen.int8_attention_is_available():
+        raise RuntimeError(
+            "dense_backend='kitchen' requires spark-h3-kitchen INT8 attention support"
+        )
+
+    def prepare(q, k, v, heads, mask, skip_reshape, enable_gqa):
+        dim_head = q.shape[-1] if skip_reshape else q.shape[-1] // heads
+        batch = q.shape[0]
+        if not skip_reshape:
+            q, k, v = comfy_attention._reshape_qkv_to_heads(
+                q, k, v, batch, heads, dim_head, enable_gqa, expand_kv=False
+            )
+            q, k, v = (tensor.transpose(1, 2) for tensor in (q, k, v))
+        if mask is not None:
+            if mask.ndim == 2:
+                mask = mask.unsqueeze(0)
+            if mask.ndim == 3:
+                mask = mask.unsqueeze(1)
+        return q, k, v, mask, batch, dim_head
+
+    def attention(
+        q, k, v, heads, mask=None, attn_precision=None,
+        skip_reshape=False, skip_output_reshape=False, **kwargs,
+    ):
+        if kwargs.get("low_precision_attention", True) is False and q.dtype == torch.float32:
+            return comfy_attention.attention_pytorch(
+                q, k, v, heads, mask=mask, attn_precision=attn_precision,
+                skip_reshape=skip_reshape,
+                skip_output_reshape=skip_output_reshape, **kwargs,
+            )
+        q, k, v, mask, batch, dim_head = prepare(
+            q, k, v, heads, mask, skip_reshape, kwargs.get("enable_gqa", False)
+        )
+        output = kitchen.int8_attention(
+            q, k, v, scale=kwargs.get("scale"), attn_mask=mask
+        )
+        if not skip_output_reshape:
+            output = output.transpose(1, 2).reshape(batch, -1, heads * dim_head)
+        return output
+
+    def container_attention(
+        q, k, v, heads, mask=None, attn_precision=None,
+        skip_reshape=False, skip_output_reshape=False, **kwargs,
+    ):
+        q, k, v = q.take(), k.take(), v.take()
+        if kwargs.get("low_precision_attention", True) is False and q.dtype == torch.float32:
+            return comfy_attention.attention_pytorch(
+                q, k, v, heads, mask=mask, attn_precision=attn_precision,
+                skip_reshape=skip_reshape,
+                skip_output_reshape=skip_output_reshape, **kwargs,
+            )
+        q, k, v, mask, batch, dim_head = prepare(
+            q, k, v, heads, mask, skip_reshape, kwargs.get("enable_gqa", False)
+        )
+        quantized = kitchen.prequantize_int8_attention(
+            q, k, v, scale=kwargs.get("scale"), attn_mask=mask
+        )
+        del q, k, v
+        output = kitchen.int8_attention_from_prequantized(quantized)
+        if not skip_output_reshape:
+            output = output.transpose(1, 2).reshape(batch, -1, heads * dim_head)
+        return output
+
+    attention.container_function = container_attention
+    return attention
 
 
 def _dense_block_args(args, attention_override):
@@ -128,56 +204,6 @@ def _spark_mode_is_dense(mode: str) -> bool:
             f"mode must be one of {', '.join(_SPARK_MODES)}; got {mode!r}"
         )
     return mode == "dense"
-
-
-def _enable_cu128_cuda_backend(target_capability: tuple[int, int]) -> bool:
-    """Undo ComfyUI's blanket CU128 comfy-kitchen disable for our pinned wheel.
-
-    ComfyUI 0.38/0.39/0.40 disables the complete comfy-kitchen CUDA registry on
-    PyTorch CUDA versions older than 13.  Spark calls its CUDA extension
-    directly, but the surrounding quantized H3 projections then silently use
-    the eager backend and dominate runtime.  A Spark wheel is compiled for the
-    exact runtime and architecture, so it is safe to restore CUDA dispatch once
-    its identity and required native entry point have both been verified.
-    """
-    cuda_text = torch.version.cuda
-    if cuda_text is None or tuple(int(x) for x in cuda_text.split(".")[:2]) != (12, 8):
-        return False
-    if target_capability != (12, 0):
-        raise RuntimeError("Spark-H3 CU128 acceleration is only supported on SM120")
-    capability = tuple(torch.cuda.get_device_capability())
-    if capability != target_capability:
-        raise RuntimeError(
-            f"Spark-H3 CU128 expected SM120, found SM{capability[0]}{capability[1]}"
-        )
-
-    try:
-        import comfy_kitchen as ck
-        from comfy_kitchen.backends import cuda as cuda_backend
-
-        installed = metadata.version("comfy-kitchen")
-    except (ImportError, metadata.PackageNotFoundError) as error:
-        raise RuntimeError(
-            "Spark-H3 CU128 requires its architecture-specific comfy-kitchen wheel"
-        ) from error
-    local = installed.partition("+")[2]
-    supported_identity = local == "spark.h3.sm120.cu128.1"
-    extension = getattr(cuda_backend, "_C", None)
-    if not supported_identity or extension is None or not hasattr(extension, "spark_attn"):
-        raise RuntimeError(
-            f"comfy-kitchen {installed} is not a Spark-H3 SM120/CU128 backend"
-        )
-    ck.enable_backend("cuda")
-    status = ck.list_backends().get("cuda", {})
-    if not status.get("available") or status.get("disabled"):
-        raise RuntimeError("failed to enable the verified comfy-kitchen CU128 CUDA backend")
-    if not getattr(_enable_cu128_cuda_backend, "_logged", False):
-        log.info(
-            "[Spark-H3] enabled verified comfy-kitchen CUDA dispatch on CU128; "
-            "quantized projections and Spark attention now remain on CUDA"
-        )
-        _enable_cu128_cuda_backend._logged = True
-    return True
 
 
 def _target_video_span(layout, sequence_length: int) -> tuple[int, int]:
@@ -451,7 +477,7 @@ class _RunState:
         else:
             raise ValueError(
                 f"unsupported ComfyUI Spark mode {ablation_mode!r}; only "
-                "comfy-kitchen global modes are available"
+                "native Spark global modes are available"
             )
         state = cls(
             steps, warmup_ratio, ComfySparkController(config),
@@ -599,7 +625,7 @@ def _native_spark_qkv(
     """ComfyUI-style chunked H3 producer yielding contiguous BTHD Q/K/V."""
     import comfy.model_management
     import comfy.model_prefetch
-    from comfy_kitchen.backends import cuda as ck
+    from spark_h3_kitchen.backends import cuda as ck
 
     tokens = x.shape[0]
     heads, head_dim = int(attn.heads), int(attn.head_dim)
@@ -617,13 +643,13 @@ def _native_spark_qkv(
     if bsa_materializer and bsa_original:
         raise RuntimeError("select only one experimental BSA producer")
     if bsa_materializer and not hasattr(ck._C, "bsa_materialize_qkv_chunk"):
-        raise RuntimeError("H3_SPARK_BSA_MATERIALIZER requires rebuilt comfy-kitchen CUDA extension")
+        raise RuntimeError("H3_SPARK_BSA_MATERIALIZER requires rebuilt spark-h3-kitchen extension")
     if bsa_materializer and not getattr(_native_spark_qkv, "_bsa_logged", False):
         print("H3_SPARK_BSA_MATERIALIZER active: BSA tile BF16 QKV materializer, Spark downstream", flush=True)
         _native_spark_qkv._bsa_logged = True
     if bsa_original:
         if not hasattr(ck._C, "sol_producer_chunk_materialize"):
-            raise RuntimeError("H3_SPARK_BSA_ORIGINAL_PRODUCER requires rebuilt comfy-kitchen CUDA extension")
+            raise RuntimeError("H3_SPARK_BSA_ORIGINAL_PRODUCER requires rebuilt spark-h3-kitchen extension")
         if not getattr(_native_spark_qkv, "_bsa_original_logged", False):
             print("H3_SPARK_BSA_ORIGINAL_PRODUCER active: original sol_producer_kernel plus BF16 QKV, Spark downstream", flush=True)
             _native_spark_qkv._bsa_original_logged = True
@@ -1177,8 +1203,6 @@ class MiniMaxH3SparkAttentionSM120:
         if diffusion_model.__class__.__name__ != "MiniMaxH3Model" or blocks is None:
             raise TypeError("Spark-H3 expects ComfyUI's native MiniMaxH3Model")
 
-        _enable_cu128_cuda_backend(self.TARGET_CAPABILITY)
-
         import comfy.patcher_extension
         from comfy_extras.nodes_sparse_attention import SparseAttnPatch
 
@@ -1394,12 +1418,12 @@ class MiniMaxH3SolAttentionSM120(MiniMaxH3SparkAttentionSM120):
 
 
 class MiniMaxH3SparkAttentionSM89(MiniMaxH3SparkAttentionSM120):
-    """Run the native comfy-kitchen Spark kernel compiled for Ada SM89."""
+    """Run the isolated Spark-H3 kitchen kernel compiled for Ada SM89."""
 
     TARGET_CAPABILITY = (8, 9)
 
     DESCRIPTION = (
-        "Patch ComfyUI's native MiniMax H3 DiT with the comfy-kitchen "
+        "Patch ComfyUI's native MiniMax H3 DiT with the spark-h3-kitchen "
         "Spark-H3 CUDA kernel compiled for GeForce RTX 40-series GPUs "
         "(SM89). Connect it after "
         "UNETLoader and set steps to the sampler's model-evaluation count."
@@ -1407,12 +1431,12 @@ class MiniMaxH3SparkAttentionSM89(MiniMaxH3SparkAttentionSM120):
 
 
 class MiniMaxH3SparkAttentionSM86(MiniMaxH3SparkAttentionSM120):
-    """Run the native comfy-kitchen Spark kernel compiled for Ampere SM86."""
+    """Run the isolated Spark-H3 kitchen kernel compiled for Ampere SM86."""
 
     TARGET_CAPABILITY = (8, 6)
 
     DESCRIPTION = (
-        "Patch ComfyUI's native MiniMax H3 DiT with the comfy-kitchen "
+        "Patch ComfyUI's native MiniMax H3 DiT with the spark-h3-kitchen "
         "Spark-H3 CUDA kernel compiled for GeForce RTX 30-series GPUs "
         "(SM86). Connect it after "
         "UNETLoader and set steps to the sampler's model-evaluation count."

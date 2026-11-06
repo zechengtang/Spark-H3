@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import stat
 import zipfile
@@ -15,13 +16,7 @@ DEFAULT_VERSION = "0.1.5"
 DEFAULT_BACKEND_RELEASE_TAG = "comfyui-v0.1.5"
 DEFAULT_PUBLISHER_ID = "zechengtang"
 RELEASE_CUDA_TAGS = ("cu130",)
-EXPERIMENTAL_CUDA_TAGS = ("cu128", "cu129")
-KNOWN_CUDA_TAGS = EXPERIMENTAL_CUDA_TAGS + RELEASE_CUDA_TAGS
-RELEASE_TARGETS = {
-    ("sm86", "cu130"),
-    ("sm89", "cu130"),
-    ("sm120", "cu130"),
-}
+MINIMUM_CUDA_TAG = 130
 PACKAGE_PLATFORMS = {
     "linux-x86_64": ("linux_x86_64", "manylinux"),
     "windows-x86_64": ("win_amd64",),
@@ -54,6 +49,7 @@ BACKEND_LOCAL_VERSION_PREFIXES = {
     "sm89": "spark.h3.sm89",
     "sm120": "spark.h3.sm120",
 }
+KERNEL_IMPLEMENTATIONS = {"0.2.37", "0.2.39"}
 
 ROOT_FILES = (
     "__init__.py",
@@ -351,12 +347,9 @@ def make_zip(
     version: str,
     architecture: str = "sm120",
     cuda_tag: str | None = None,
-    experimental: bool = False,
     platform_tag: str,
 ) -> Path:
-    validate_cuda_tag(
-        cuda_tag, experimental=experimental, architecture=architecture
-    )
+    validate_cuda_tag(cuda_tag)
     _validate_platform_tag(platform_tag)
     identity_path = package_dir / PACKAGE_BUILD_IDENTITY
     if not identity_path.is_file():
@@ -377,8 +370,7 @@ def make_zip(
             f"package CUDA tag {identity.get('cuda_tag')!r} does not match "
             f"archive CUDA tag {cuda_tag!r}"
         )
-    suffix = "-experimental" if experimental else ""
-    suffix += f"-{platform_tag}"
+    suffix = f"-{platform_tag}"
     suffix += f"-{architecture}"
     if cuda_tag is not None:
         suffix += f"-{cuda_tag}"
@@ -402,21 +394,15 @@ def make_zip(
 
 def validate_cuda_tag(
     cuda_tag: str | None,
-    *,
-    experimental: bool = False,
-    architecture: str | None = None,
 ) -> None:
-    """Keep experimental CUDA archives out of the default release path."""
+    """Accept only CUDA 13.0 and newer package identities."""
 
-    unsupported_target = (
-        architecture is not None
-        and cuda_tag is not None
-        and (architecture, cuda_tag) not in RELEASE_TARGETS
-    )
-    if (cuda_tag in EXPERIMENTAL_CUDA_TAGS or unsupported_target) and not experimental:
+    if cuda_tag is None:
+        return
+    match = re.fullmatch(r"cu(\d+)", cuda_tag)
+    if match is None or int(match.group(1)) < MINIMUM_CUDA_TAG:
         raise ValueError(
-            f"{cuda_tag} is an experimental build target, not a release target; "
-            "pass --experimental-cuda to build a local diagnostic archive"
+            f"unsupported CUDA tag {cuda_tag!r}; expected cu130 or newer"
         )
 
 
@@ -453,10 +439,15 @@ def _validate_kernel_wheel(
     except ValueError as error:
         raise ValueError(f"invalid kernel wheel filename: {wheel.name}") from error
     expected_local = f"{BACKEND_LOCAL_VERSION_PREFIXES[architecture]}.{cuda_tag}.1"
-    if distribution != "comfy-kitchen" or version.local != expected_local:
+    if (
+        distribution != "spark-h3-kitchen"
+        or version.base_version not in KERNEL_IMPLEMENTATIONS
+        or version.local != expected_local
+    ):
         raise ValueError(
             f"kernel wheel {wheel.name!r} does not match {architecture}/{cuda_tag}; "
-            f"expected local version +{expected_local}"
+            f"expected implementation {sorted(KERNEL_IMPLEMENTATIONS)} "
+            f"and local version +{expected_local}"
         )
     wheel_platforms = {tag.platform for tag in tags}
     if not any(
@@ -481,8 +472,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--cuda-tag",
-        choices=KNOWN_CUDA_TAGS,
-        help="append the CUDA toolchain tag to the release archive name",
+        help="CUDA toolchain identity (cu130 or newer) appended to the archive name",
     )
     parser.add_argument(
         "--platform",
@@ -499,11 +489,6 @@ def main(argv: list[str] | None = None) -> int:
         "--backend-release-tag",
         default=DEFAULT_BACKEND_RELEASE_TAG,
         help="GitHub Release containing the Kitchen wheels used by the Registry package",
-    )
-    parser.add_argument(
-        "--experimental-cuda",
-        action="store_true",
-        help="allow a diagnostic CUDA target excluded from the release plan",
     )
     parser.add_argument(
         "--publisher-id",
@@ -524,11 +509,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.registry and args.platform_tag is None:
         parser.error("--platform is required unless --registry is used")
     try:
-        validate_cuda_tag(
-            args.cuda_tag,
-            experimental=args.experimental_cuda,
-            architecture=args.architecture,
-        )
+        validate_cuda_tag(args.cuda_tag)
     except ValueError as error:
         parser.error(str(error))
     output = args.output_dir.resolve()
@@ -561,7 +542,6 @@ def main(argv: list[str] | None = None) -> int:
                 version=args.version,
                 architecture=args.architecture,
                 cuda_tag=args.cuda_tag,
-                experimental=args.experimental_cuda,
                 platform_tag=args.platform_tag,
             )
         )

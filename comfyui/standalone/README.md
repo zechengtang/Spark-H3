@@ -25,15 +25,17 @@ comfy-kitchen 0.2.37 backend and is also supported.
 
 ## Supported configuration
 
-- ComfyUI 0.38.x, 0.39.x, 0.40.x, or 0.42.x with native MiniMax-H3 support
+- ComfyUI 0.38.x-0.40.x or 0.42.x-0.44.x with native MiniMax-H3 support
 - NVIDIA SM86 (GeForce RTX 30 series), SM89 (GeForce RTX 40 series), or SM120 GPU (GeForce RTX 50 series and
   RTX PRO 5000/6000 Blackwell)
 - PyTorch CUDA 13.0 and CUDA BF16 execution
 - Linux x86_64 or Windows x86_64; the Windows CUDA 13.0 builds have been
   validated on their target platforms
 
-**Supported ComfyUI releases: 0.38.x, 0.39.x, 0.40.x, and 0.42.x.** The installer selects the
-Spark backend matching the `comfy-kitchen` dependency in the ComfyUI environment.
+**Supported ComfyUI releases: 0.38.x-0.40.x and 0.42.x-0.44.x.** The installer selects an
+isolated `spark-h3-kitchen` implementation independently of the official
+`comfy-kitchen` dependency in the ComfyUI environment. It does not replace or
+modify that dependency.
 Install or update dependencies with that ComfyUI release's `requirements.txt`.
 
 Model weights are not bundled. Use ComfyUI's native MiniMax-H3 model files.
@@ -44,9 +46,9 @@ Chinese instructions: [ComfyUI 中文安装指南](INSTALL.zh-CN.md).
 
 The Comfy Registry package contains the node and workflows, without bundled
 backend wheels. When installed through ComfyUI Manager, its `install.py` runs
-in the ComfyUI Python environment and selects the Spark-enabled comfy-kitchen
-wheel from the selected GitHub Release archive using the installed
-comfy-kitchen version, operating system, GPU architecture, and CUDA version.
+in the ComfyUI Python environment and selects the isolated spark-h3-kitchen
+wheel from the selected GitHub Release archive using the requested independent
+implementation, operating system, GPU architecture, and CUDA version.
 This requires access to GitHub Releases during installation. A matching local wheel can be
 supplied with `install.py --wheel` for offline installation.
 
@@ -61,19 +63,21 @@ This release provides the following architecture-specific archives:
 | SM120 (GeForce RTX 50 series; RTX PRO 5000/6000 Blackwell) | 13.0 | `ComfyUI-Spark-H3-<version>-windows-x86_64-sm120-cu130.zip` |
 | SM89 (GeForce RTX 40 series) | 13.0 | `ComfyUI-Spark-H3-<version>-windows-x86_64-sm89-cu130.zip` |
 
-Select by both GPU architecture and operating system. The installer selects
-the wheel matching the `comfy-kitchen` base already
-present in ComfyUI:
+Select by both GPU architecture and operating system. Release archives contain
+matching independent 0.2.37 and 0.2.39 implementation wheels for
+their operating system and GPU architecture. All supported ComfyUI versions
+default to the isolated 0.2.37 implementation, including ComfyUI 0.42.x and
+later. This does not replace or downgrade ComfyUI's official `comfy-kitchen`
+package. Advanced users can explicitly select the 0.2.39 implementation with
+`--kitchen-implementation 0.2.39`. The host package version does not constrain
+this choice.
 
-| Installed ComfyUI version | Corresponding comfy-kitchen backend version |
-| --- | --- |
-| ComfyUI 0.38.x | `comfy-kitchen 0.2.36+spark.h3.<architecture>.<CUDA>.1` |
-| ComfyUI 0.39.x or 0.40.x | `comfy-kitchen 0.2.37+spark.h3.<architecture>.<CUDA>.1` |
-| ComfyUI 0.42.x | `comfy-kitchen 0.2.39+spark.h3.<architecture>.<CUDA>.1` |
-
-The v0.1.5 archives contain matching 0.2.36, 0.2.37, and 0.2.39 wheels for
-their operating system and GPU architecture. The installer selects the wheel
-required by the installed ComfyUI version.
+When upgrading from Spark-H3 v0.1.5 or earlier, the installer detects a legacy
+`comfy-kitchen` replacement whose version contains `+spark.h3...`. It first
+force-reinstalls the clean official package at the same public version with no
+dependency changes, verifies that the legacy marker is gone, and only then
+installs the isolated `spark-h3-kitchen` backend. An already-clean official
+package is left untouched.
 
 SM86 wheels use the `+spark.h3.sm86.cu130.1` local version and compile for
 CUDA architecture `86`. SM89 wheels use the `+spark.h3.sm89.cu130.1` local version and contain code
@@ -118,34 +122,25 @@ when no compatible wheel is available or `--source` is supplied. Source
 compilation requires Git, CMake, Ninja, a C++ compiler, and a matching CUDA
 `nvcc`.
 
-CUDA 12.8 remains available only as an explicit local experimental path:
-
-```bash
-python ComfyUI-Spark-H3/install.py --experimental-cuda --wheel /path/to/cu128/comfy_kitchen-*.whl
-
-python ComfyUI-Spark-H3/install.py --experimental-cuda --source
-```
-
-The SM120 source path uses CUDA 12.8's `120a` target. This path is not a release
-asset and must not be represented as release-supported.
-
 The installer does not check the PyTorch version number; it requires a CUDA-enabled PyTorch build with `torch.version.cuda >= 13.0`.
 It automatically tries the packaged cu130 wheel on newer runtimes without an
 extra flag. It checks the wheel's platform, Python tag, GPU architecture and
-comfy-kitchen base, then probes the native entry point after installation.
+independent implementation, then probes both Spark CUDA and Kitchen INT8
+attention after installation.
 A successful install does not establish full workflow or performance
 compatibility on the newer runtime.
 
-Automatic selection is recommended. For troubleshooting, specify the expected
-`comfy-kitchen` base with `--kitchen-base`:
+All supported versions use the 0.2.37 Spark implementation by default. To use
+the alternative 0.2.39 implementation, pass:
 
 ```bash
-# ComfyUI 0.38.x
-/path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py --kitchen-base 0.2.36
-
-# ComfyUI 0.39.x or 0.40.x
-/path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py --kitchen-base 0.2.37
+/path/to/ComfyUI/.venv/bin/python ComfyUI-Spark-H3/install.py \
+  --kitchen-implementation 0.2.39
 ```
+
+This option names the upstream source baseline used by the isolated
+`spark-h3-kitchen` package. It neither requires nor changes the corresponding
+official `comfy-kitchen` version in the target environment.
 
 Restart ComfyUI after installation. ComfyUI Manager can also install the node
 after registry publication, but Manager is optional and is not bundled by this
@@ -165,7 +160,7 @@ setting.
 ## Repository independence and offline boundary
 
 Each release ZIP contains the architecture/CUDA wheel combination named in the
-table above, with wheels compatible with ComfyUI 0.38.x, 0.39.x, 0.40.x, and 0.42.x. On Linux
+table above, with wheels compatible with ComfyUI 0.38.x-0.40.x and 0.42.x-0.44.x. On Linux
 or Windows x86_64 with CPython 3.12+ it does not clone or import code from the MiniMax-H3, Spark-H3,
 Diffusers, `comfy-aimdo`, or `comfy-kitchen` repositories. It reuses the
 PyTorch, Triton, CUDA integration, and native MiniMax-H3 implementation already
@@ -180,7 +175,7 @@ core Spark-H3 node does not.
 To install a wheel supplied out of band:
 
 ```bash
-python install.py --wheel /path/to/comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-*.whl
+python install.py --wheel /path/to/spark_h3_kitchen-0.2.37+spark.h3.sm120.cu130.1-*.whl
 ```
 
 ## Nodes
@@ -258,12 +253,12 @@ python convert_larryvrh_lora_comfyui.py \
 From this custom-node directory:
 
 ```bash
-python kernel_builder.py --kitchen-base 0.2.36 --output-dir wheelhouse
-python kernel_builder.py --kitchen-base 0.2.37 --output-dir wheelhouse
+python kernel_builder.py --kitchen-implementation 0.2.37 --output-dir wheelhouse
+python kernel_builder.py --kitchen-implementation 0.2.39 --output-dir wheelhouse
 ```
 
 The builder pins the selected upstream revision, applies the bundled Spark
 patch, marks a default release wheel as either
-`0.2.36+spark.h3.sm120.cu130.1` or
-`0.2.37+spark.h3.sm120.cu130.1`, and compiles only the selected architecture. One custom-node ZIP
-can contain both wheels and the installer chooses the matching one.
+`0.2.37+spark.h3.sm120.cu130.1` or `0.2.39+...`, and
+compiles only the selected architecture. One custom-node ZIP can contain both
+wheels and the installer chooses the requested implementation family.

@@ -16,7 +16,7 @@ python tools/build_spark_release_toolkit.py --architecture sm120 --platform linu
 For Windows, use `--platform windows`. The generator can run on either
 host, but building and executing a kit requires its target platform. Each kit
 contains the custom node source, workflow, build tools, validators, and a
-`wheelhouse/` for architecture-matched comfy-kitchen wheels.
+`wheelhouse/` for architecture-matched spark-h3-kitchen wheels.
 
 ## Linux
 
@@ -30,8 +30,10 @@ full video validation and comparison). Then, from the generated kit:
 /path/to/comfyui/bin/python ./bundle.py
 ```
 
-Use `--kitchen-base 0.2.39` on `build.sh` for ComfyUI 0.42.x. You may instead
-place a correctly tagged wheel in `wheelhouse/` and skip the build step.
+Use `--kitchen-implementation 0.2.39` on `build.sh` only when you want that
+independent implementation baseline; it is unrelated to the official
+`comfy-kitchen` version in the target ComfyUI environment. You may instead place
+a correctly tagged wheel in `wheelhouse/` and skip the build step.
 
 ## Windows
 
@@ -78,7 +80,8 @@ The full workflow expects these model files under ComfyUI `models/`:
 
 Validation checks wheel identity, embedded GPU architecture, native
 `spark_attn` behavior, ComfyUI compatibility, Dense/Fidelity/Speed output, and
-unexpected dense fallback. It supports ComfyUI 0.38.x (comfy-kitchen 0.2.36)
-0.39.x/0.40.x (comfy-kitchen 0.2.37), and 0.42.x (comfy-kitchen 0.2.39).
+unexpected dense fallback. It uses the isolated Spark 0.2.37 implementation by
+default for every supported ComfyUI version from 0.38.x-0.40.x and
+0.42.x-0.44.x. The official comfy-kitchen stays installed.
 `bundle.py` requires a passing wheel
 audit and writes a platform-specific release archive with SHA-256 metadata.

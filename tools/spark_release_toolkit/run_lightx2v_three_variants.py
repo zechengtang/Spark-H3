@@ -43,9 +43,9 @@ SAMPLER_NODE = "125"
 SAVE_NODE = "92"
 if SOURCE_WHEEL is None:
     raise RuntimeError("SPARK_WHEEL is missing; start this runner through validate.py")
-_VERSION_MATCH = re.search(r"comfy_kitchen-(.+?)-cp\d+", SOURCE_WHEEL.name)
+_VERSION_MATCH = re.search(r"spark_h3_kitchen-(.+?)-cp\d+", SOURCE_WHEEL.name)
 if _VERSION_MATCH is None:
-    raise RuntimeError(f"cannot parse comfy-kitchen version from {SOURCE_WHEEL.name}")
+    raise RuntimeError(f"cannot parse spark-h3-kitchen version from {SOURCE_WHEEL.name}")
 EXPECTED_BACKEND = _VERSION_MATCH.group(1)
 FIDELITY_WARMUP_STEPS = min(STEPS - 1, math.ceil(STEPS * 0.2))
 TIERS = (
@@ -479,7 +479,7 @@ def inspect_comparison_video(path: Path) -> dict:
 
 
 def environment(system_stats: dict, backend_state: dict) -> dict:
-    wheel = next((ROOT / "wheelhouse").glob(f"comfy_kitchen-{EXPECTED_BACKEND}-*.whl"))
+    wheel = next((ROOT / "wheelhouse").glob(f"spark_h3_kitchen-{EXPECTED_BACKEND}-*.whl"))
     extension = find_native_extension()
     gpu_fields = command(
         "nvidia-smi", "--query-gpu=name,compute_cap,driver_version,memory.total",
@@ -503,9 +503,9 @@ def environment(system_stats: dict, backend_state: dict) -> dict:
             "version": (COMFY / "comfyui_version.py").read_text(encoding="utf-8").split('"')[1],
             "system_stats": system_stats,
         },
-        "comfy_kitchen": {
+        "spark_h3_kitchen": {
             "version": EXPECTED_BACKEND,
-            "module": command(str(PYTHON), "-c", "import comfy_kitchen; print(comfy_kitchen.__file__)"),
+            "module": command(str(PYTHON), "-c", "import spark_h3_kitchen; print(spark_h3_kitchen.__file__)"),
             "backend_state": backend_state,
             "native_spark_attn": True,
             "extension": str(extension),
@@ -530,9 +530,10 @@ def environment(system_stats: dict, backend_state: dict) -> dict:
 
 def backend_state() -> dict:
     source = (
-        "import json,importlib.metadata as m,comfy_kitchen as ck; "
-        "from comfy_kitchen.backends import cuda; "
-        "print(json.dumps({'version':m.version('comfy-kitchen'),"
+        "import json,importlib.metadata as m,spark_h3_kitchen as ck; "
+        "from spark_h3_kitchen.backends import cuda; "
+        "print(json.dumps({'version':m.version('spark-h3-kitchen'),"
+        "'official_comfy_kitchen':m.version('comfy-kitchen'),"
         "'has_spark_attn':hasattr(cuda._C,'spark_attn'),'backends':ck.list_backends()}))"
     )
     return json.loads(command(str(PYTHON), "-c", source))
@@ -540,7 +541,7 @@ def backend_state() -> dict:
 
 def validate_static(state: dict) -> None:
     if state["version"] != EXPECTED_BACKEND:
-        raise RuntimeError(f"wrong comfy-kitchen identity: {state['version']}")
+        raise RuntimeError(f"wrong spark-h3-kitchen identity: {state['version']}")
     if not state["has_spark_attn"]:
         raise RuntimeError("wheel lacks native _C.spark_attn")
     cuda = state["backends"].get("cuda", {})
@@ -556,7 +557,7 @@ def validate_static(state: dict) -> None:
 
 
 def find_native_extension() -> Path:
-    candidates = list((RUNTIME_SITE / "comfy_kitchen/backends/cuda").glob(f"_C*{EXTENSION_SUFFIX}"))
+    candidates = list((RUNTIME_SITE / "spark_h3_kitchen/backends/cuda").glob(f"_C*{EXTENSION_SUFFIX}"))
     if len(candidates) != 1:
         raise RuntimeError(f"expected one {PLATFORM} native extension, found {candidates}")
     return candidates[0]
@@ -833,6 +834,7 @@ def main() -> None:
                 "log_summary": [
                     line for line in formal_result["log_segment"].splitlines()
                     if "Spark-H3" in line or "comfy-kitchen" in line
+                    or "spark-h3-kitchen" in line
                 ],
             }
             write_json(ROOT / f"{name}.json", record)

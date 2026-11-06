@@ -91,7 +91,9 @@ def test_standalone_package_is_small_complete_and_importable(tmp_path):
     assert "Operating System :: OS Independent" in metadata["project"]["classifiers"]
     assert "Operating System :: POSIX :: Linux" not in metadata["project"]["classifiers"]
     assert metadata["tool"]["comfy"]["PublisherId"] == "test-publisher"
-    assert metadata["tool"]["comfy"]["requires-comfyui"] == ">=0.38.0,<0.43.0"
+    assert metadata["tool"]["comfy"]["requires-comfyui"] == (
+        ">=0.38.0,<0.45.0,!=0.41.*"
+    )
 
     assert {
         "spark_h3_vdn8_14p4s_t2va.json",
@@ -314,8 +316,8 @@ def test_standalone_zip_has_one_installable_root(tmp_path):
     builder = _load("build_comfyui_package_zip", ROOT / "tools/build_comfyui_package.py")
     wheels = tuple(
         tmp_path
-        / f"comfy_kitchen-{base}+spark.h3.sm120.cu130.1-cp312-abi3-linux_x86_64.whl"
-        for base in ("0.2.36", "0.2.37", "0.2.39")
+        / f"spark_h3_kitchen-{implementation}+spark.h3.sm120.cu130.1-cp312-abi3-linux_x86_64.whl"
+        for implementation in ("0.2.37", "0.2.39")
     )
     for wheel in wheels:
         wheel.touch()
@@ -411,8 +413,8 @@ def test_installer_routes_release_archive_to_matching_kitchen_wheel(tmp_path, mo
     from packaging.tags import sys_tags
 
     wheel_tag = next(sys_tags())
-    matching = f"comfy_kitchen-0.2.39+spark.h3.sm120.cu130.1-{wheel_tag}.whl"
-    other = f"comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-{wheel_tag}.whl"
+    matching = f"spark_h3_kitchen-0.2.39+spark.h3.sm120.cu130.1-{wheel_tag}.whl"
+    other = f"spark_h3_kitchen-0.2.37+spark.h3.sm120.cu130.1-{wheel_tag}.whl"
     archive_path = tmp_path / "ComfyUI-Spark-H3-0.1.5-linux-x86_64-sm120-cu130.zip"
     with zipfile.ZipFile(archive_path, "w") as archive:
         archive.writestr(f"ComfyUI-Spark-H3/wheelhouse/{matching}", b"matching-wheel")
@@ -430,8 +432,11 @@ def test_installer_routes_release_archive_to_matching_kitchen_wheel(tmp_path, mo
     assert installed == [(matching, b"matching-wheel")]
 
 
-def test_registry_installer_uses_pinned_backend_release(tmp_path, monkeypatch):
+def test_registry_installer_uses_pinned_backend_release(
+    tmp_path, monkeypatch, capsys
+):
     installer = _load("spark_comfyui_installer_registry_route", ROOT / "comfyui/install.py")
+    monkeypatch.setattr(installer, "_runtime_platform_tag", lambda: "linux-x86_64")
     (tmp_path / "spark_h3_build.json").write_text(json.dumps({
         "distribution": "registry",
         "architectures": ["sm120"],
@@ -446,58 +451,77 @@ def test_registry_installer_uses_pinned_backend_release(tmp_path, monkeypatch):
     monkeypatch.setattr(installer, "_backend_available", lambda *_args: False)
     monkeypatch.setattr(installer, "_validate_backend", lambda *_args: None)
     calls = []
+    monkeypatch.setattr(installer, "_runtime_platform_tag", lambda: "linux-x86_64")
     monkeypatch.setattr(installer, "_matching_release_wheel", lambda *args: calls.append(args) or "https://example.invalid/release.zip")
     monkeypatch.setattr(installer, "_install_release_asset", lambda *args: calls.append(args))
-    assert installer.main(["--skip-dependencies", "--kitchen-base", "0.2.39"]) == 0
+    assert installer.main(
+        ["--skip-dependencies", "--kitchen-base", "0.2.39"]
+    ) == 0
     assert calls == [
-        (installer.RELEASE_API_PREFIX + "comfyui-v0.1.5", "0.2.39", "sm120", "cu130"),
-        ("https://example.invalid/release.zip", "0.2.39", "sm120", "cu130"),
+        (installer.RELEASE_API_PREFIX + "comfyui-v0.1.5", "0.2.37", "sm120", "cu130"),
+        ("https://example.invalid/release.zip", "0.2.37", "sm120", "cu130"),
     ]
+    assert "--kitchen-base is deprecated and ignored" in capsys.readouterr().err
 
 
-def test_release_package_keeps_cu129_experimental():
+def test_release_package_accepts_only_cu130_or_newer():
     builder = _load(
         "build_comfyui_package_release_cuda", ROOT / "tools/build_comfyui_package.py"
     )
     assert builder.RELEASE_CUDA_TAGS == ("cu130",)
-    assert "cu129" in builder.EXPERIMENTAL_CUDA_TAGS
-    with pytest.raises(ValueError, match="experimental build target"):
-        builder.validate_cuda_tag("cu129")
-    builder.validate_cuda_tag("cu129", experimental=True)
+    with pytest.raises(ValueError, match="expected cu130 or newer"):
+        builder.validate_cuda_tag("cu120")
     builder.validate_cuda_tag("cu130")
+    builder.validate_cuda_tag("cu131")
 
 
 def test_release_package_rejects_wrong_cuda_or_architecture_wheel(tmp_path):
     builder = _load(
         "build_comfyui_package_wheel_identity", ROOT / "tools/build_comfyui_package.py"
     )
-    cu129 = (
+    cu131 = (
         tmp_path
-        / "comfy_kitchen-0.2.37+spark.h3.sm120.cu129.1-cp312-abi3-linux_x86_64.whl"
+        / "spark_h3_kitchen-0.2.37+spark.h3.sm120.cu131.1-cp312-abi3-linux_x86_64.whl"
     )
-    cu129.touch()
+    cu131.touch()
     with pytest.raises(ValueError, match="does not match sm120/cu130"):
         builder.assemble(
             tmp_path / "wrong-cuda",
             version="0.1.7",
             publisher_id="test",
-            kernel_wheels=(cu129,),
+            kernel_wheels=(cu131,),
             architecture="sm120",
             cuda_tag="cu130",
             platform_tag="linux-x86_64",
         )
 
-    cu129_package = builder.assemble(
-        tmp_path / "cu129-package",
+    redundant_040 = (
+        tmp_path
+        / "spark_h3_kitchen-0.2.40+spark.h3.sm120.cu130.1-cp312-abi3-linux_x86_64.whl"
+    )
+    redundant_040.touch()
+    with pytest.raises(ValueError, match="expected implementation"):
+        builder.assemble(
+            tmp_path / "redundant-040",
+            version="0.1.7",
+            publisher_id="test",
+            kernel_wheels=(redundant_040,),
+            architecture="sm120",
+            cuda_tag="cu130",
+            platform_tag="linux-x86_64",
+        )
+
+    cu131_package = builder.assemble(
+        tmp_path / "cu131-package",
         version="0.1.7",
         publisher_id="test",
         architecture="sm120",
-        cuda_tag="cu129",
+        cuda_tag="cu131",
         platform_tag="linux-x86_64",
     )
-    with pytest.raises(ValueError, match="package CUDA tag 'cu129'"):
+    with pytest.raises(ValueError, match="package CUDA tag 'cu131'"):
         builder.make_zip(
-            cu129_package,
+            cu131_package,
             tmp_path,
             version="0.1.7",
             architecture="sm120",
@@ -507,7 +531,7 @@ def test_release_package_rejects_wrong_cuda_or_architecture_wheel(tmp_path):
 
     sm89 = (
         tmp_path
-        / "comfy_kitchen-0.2.37+spark.h3.sm89.cu130.1-cp312-abi3-linux_x86_64.whl"
+        / "spark_h3_kitchen-0.2.37+spark.h3.sm89.cu130.1-cp312-abi3-linux_x86_64.whl"
     )
     sm89.touch()
     with pytest.raises(ValueError, match="does not match sm120/cu130"):
@@ -529,7 +553,7 @@ def test_release_package_isolates_linux_and_windows_wheels(tmp_path):
     )
     windows_wheel = (
         tmp_path
-        / "comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-win_amd64.whl"
+        / "spark_h3_kitchen-0.2.37+spark.h3.sm120.cu130.1-cp312-abi3-win_amd64.whl"
     )
     windows_wheel.touch()
     with pytest.raises(ValueError, match="does not match platform linux-x86_64"):
@@ -649,25 +673,24 @@ for workflow_path in (root / 'workflows').glob('*.json'):
         platform_tag="linux-x86_64",
     )
     assert tagged.name == "ComfyUI-Spark-H3-0.1.7-linux-x86_64-sm89-cu130.zip"
-    experimental_package = builder.assemble(
-        tmp_path / "experimental-sm89",
+    newer_cuda_package = builder.assemble(
+        tmp_path / "cu131-sm89",
         version="0.1.7",
         publisher_id="test",
         architecture="sm89",
-        cuda_tag="cu129",
+        cuda_tag="cu131",
         platform_tag="linux-x86_64",
     )
-    experimental = builder.make_zip(
-        experimental_package,
+    newer_cuda = builder.make_zip(
+        newer_cuda_package,
         tmp_path,
         version="0.1.7",
         architecture="sm89",
-        cuda_tag="cu129",
-        experimental=True,
+        cuda_tag="cu131",
         platform_tag="linux-x86_64",
     )
-    assert experimental.name == (
-        "ComfyUI-Spark-H3-0.1.7-experimental-linux-x86_64-sm89-cu129.zip"
+    assert newer_cuda.name == (
+        "ComfyUI-Spark-H3-0.1.7-linux-x86_64-sm89-cu131.zip"
     )
 
 
@@ -769,47 +792,53 @@ for workflow_path in (root / 'workflows').glob('*.json'):
 
 def test_kernel_builder_applies_distinct_local_versions(tmp_path):
     kernel_builder = _load("spark_kernel_builder", ROOT / "comfyui/kernel_builder.py")
-    for base in ("0.2.36", "0.2.37"):
-        source = tmp_path / base
+    assert tuple(kernel_builder.KITCHEN_IMPLEMENTATION_TARGETS) == (
+        "0.2.37", "0.2.39"
+    )
+    for implementation in ("0.2.37", "0.2.39"):
+        source = tmp_path / implementation
         source.mkdir()
         pyproject = source / "pyproject.toml"
         pyproject.write_text(
-            f'[project]\nversion = "{base}"\n', encoding="utf-8"
+            f'[project]\nversion = "{implementation}"\n', encoding="utf-8"
         )
-        kernel_builder._set_local_version(source, base)
-        assert f'version = "{base}+spark.h3.sm120.cu130.1"' in pyproject.read_text(
+        kernel_builder._set_local_version(source, implementation)
+        assert f'version = "{implementation}+spark.h3.sm120.cu130.1"' in pyproject.read_text(
             encoding="utf-8"
         )
-
-        sm89 = tmp_path / f"{base}-sm89"
+        sm89 = tmp_path / f"{implementation}-sm89"
         sm89.mkdir()
         sm89_pyproject = sm89 / "pyproject.toml"
         sm89_pyproject.write_text(
-            f'[project]\nversion = "{base}"\n', encoding="utf-8"
+            f'[project]\nversion = "{implementation}"\n', encoding="utf-8"
         )
-        kernel_builder._set_local_version(sm89, base, "sm89")
+        kernel_builder._set_local_version(sm89, implementation, "sm89")
         assert (
-            f'version = "{base}+spark.h3.sm89.cu130.1"'
+            f'version = "{implementation}+spark.h3.sm89.cu130.1"'
             in sm89_pyproject.read_text(encoding="utf-8")
         )
 
-        sm86 = tmp_path / f"{base}-sm86"
+        sm86 = tmp_path / f"{implementation}-sm86"
         sm86.mkdir()
         sm86_pyproject = sm86 / "pyproject.toml"
         sm86_pyproject.write_text(
-            f'[project]\nversion = "{base}"\n', encoding="utf-8"
+            f'[project]\nversion = "{implementation}"\n', encoding="utf-8"
         )
-        kernel_builder._set_local_version(sm86, base, "sm86")
+        kernel_builder._set_local_version(sm86, implementation, "sm86")
         assert (
-            f'version = "{base}+spark.h3.sm86.cu130.1"'
+            f'version = "{implementation}+spark.h3.sm86.cu130.1"'
             in sm86_pyproject.read_text(encoding="utf-8")
         )
+    with pytest.raises(ValueError, match="unsupported comfy-kitchen implementation"):
+        kernel_builder._spark_version("0.2.40")
 
     assert kernel_builder.ARCHITECTURES["sm86"]["cuda_archs"] == "86"
     assert kernel_builder.ARCHITECTURES["sm89"]["cuda_archs"] == "89"
     assert kernel_builder.ARCHITECTURES["sm120"]["cuda_archs"] == "120f"
-    assert kernel_builder._cuda_architecture("sm120", "cu129") == "120a"
+    with pytest.raises(ValueError, match="expected cu130 or newer"):
+        kernel_builder._cuda_architecture("sm120", "cu120")
     assert kernel_builder._cuda_architecture("sm120", "cu130") == "120f"
+    assert kernel_builder._cuda_architecture("sm120", "cu131") == "120f"
     assert kernel_builder._cuda_architecture("sm86", "cu130") == "86"
     assert kernel_builder._cuda_architecture("sm89", "cu130") == "89"
     assert kernel_builder.architecture_for_capability((8, 6)) == "sm86"
@@ -834,6 +863,7 @@ def test_kernel_builder_initializes_only_required_top_level_submodules(
 
     monkeypatch.setattr(kernel_builder, "_run", run)
     monkeypatch.setattr(kernel_builder, "_patch_path", lambda _root, _base: tmp_path / "patch")
+    monkeypatch.setattr(kernel_builder, "_isolate_distribution", lambda *_args: None)
     monkeypatch.setattr(kernel_builder, "_set_local_version", lambda *_args, **_kwargs: None)
     kernel_builder.prepare_source(
         tmp_path,
@@ -848,11 +878,53 @@ def test_kernel_builder_initializes_only_required_top_level_submodules(
     assert submodule[-2:] == ["third_party/cutlass", "third_party/flash-attention"]
 
 
+def test_kernel_builder_isolates_distribution_and_torch_ops(tmp_path):
+    kernel_builder = _load(
+        "spark_kernel_builder_isolation", ROOT / "comfyui/kernel_builder.py"
+    )
+    package = tmp_path / "comfy_kitchen"
+    package.mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "comfy-kitchen"\nversion = "0.2.37"\n'
+        '[project.urls]\nHomepage = "https://github.com/Comfy-Org/comfy-kitchen"\n'
+        '[tool.setuptools.packages.find]\ninclude = ["comfy_kitchen*"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "setup.py").write_text(
+        'package = "comfy_kitchen.backends.cuda"\n', encoding="utf-8"
+    )
+    (package / "__init__.py").write_text(
+        'import comfy_kitchen\n'
+        '@torch.library.custom_op("comfy_kitchen::int8_attention", mutates_args=())\n'
+        'def op(): pass\n'
+        'value = torch.ops.comfy_kitchen.int8_attention\n'
+        'flag = os.environ.get("COMFY_KITCHEN_DISABLE_CUDA")\n',
+        encoding="utf-8",
+    )
+
+    kernel_builder._isolate_distribution(tmp_path)
+
+    assert not package.exists()
+    isolated = tmp_path / "spark_h3_kitchen"
+    assert isolated.is_dir()
+    combined = (tmp_path / "pyproject.toml").read_text() + (
+        isolated / "__init__.py"
+    ).read_text()
+    assert 'name = "spark-h3-kitchen"' in combined
+    assert "https://github.com/zechengtang/Spark-H3" in combined
+    assert "https://github.com/Comfy-Org/spark-h3-kitchen" not in combined
+    assert "spark_h3_kitchen::int8_attention" in combined
+    assert "torch.ops.spark_h3_kitchen.int8_attention" in combined
+    assert "SPARK_H3_KITCHEN_DISABLE_CUDA" in combined
+    assert "COMFY_KITCHEN_DISABLE_CUDA" not in combined
+    assert "comfy_kitchen::" not in combined
+
+
 def test_kernel_builder_recognizes_an_existing_release_wheel(tmp_path, monkeypatch):
     kernel_builder = _load("spark_kernel_builder_repeat", ROOT / "comfyui/kernel_builder.py")
     expected = (
         tmp_path
-        / "comfy_kitchen-0.2.36+spark.h3.sm120.cu129.1-cp312-abi3-linux_x86_64.whl"
+        / "spark_h3_kitchen-0.2.37+spark.h3.sm120.cu131.1-cp312-abi3-linux_x86_64.whl"
     )
     expected.touch()
 
@@ -877,92 +949,149 @@ def test_kernel_builder_recognizes_an_existing_release_wheel(tmp_path, monkeypat
     assert kernel_builder.build_wheel(
         ROOT,
         tmp_path,
-        kitchen_base="0.2.36",
-        cuda_tag="cu129",
-        cuda_archs="120a",
+        kitchen_implementation="0.2.37",
+        cuda_tag="cu131",
+        cuda_archs="120f",
     ) == [expected]
-    assert run_calls[-1]["env"]["COMFY_CUDA_ARCHS"] == "120a"
+    assert run_calls[-1]["env"]["COMFY_CUDA_ARCHS"] == "120f"
     with pytest.raises(ValueError, match="does not match sm120/cu130"):
         kernel_builder.build_wheel(
             ROOT,
             tmp_path,
-            kitchen_base="0.2.36",
+            kitchen_implementation="0.2.37",
             cuda_tag="cu130",
             cuda_archs="120a",
         )
 
 
-def test_installer_selects_matching_base_from_local_wheels(tmp_path):
+def test_installer_selects_matching_implementation_from_local_wheels(tmp_path):
     installer = _load("spark_comfyui_installer", ROOT / "comfyui/install.py")
     from packaging.tags import sys_tags
     tag = next(iter(sys_tags()))
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
     wheels = {
-        base: wheelhouse
-        / f"comfy_kitchen-{base}+spark.h3.sm120.cu130.1-{tag}.whl"
-        for base in installer.SUPPORTED_KITCHEN_BASES
+        implementation: wheelhouse
+        / f"spark_h3_kitchen-{implementation}+spark.h3.sm120.cu130.1-{tag}.whl"
+        for implementation in installer.SUPPORTED_KITCHEN_IMPLEMENTATIONS
     }
     for wheel in wheels.values():
         wheel.touch()
-    assert installer._matching_local_wheel(tmp_path, "0.2.36") == wheels["0.2.36"]
     assert installer._matching_local_wheel(tmp_path, "0.2.37") == wheels["0.2.37"]
+    official = f"comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1-{tag}.whl"
+    assert not installer._wheel_matches(official, "0.2.37")
 
-    cu129 = (
+    cu131 = (
         wheelhouse
-        / f"comfy_kitchen-0.2.36+spark.h3.sm120.cu129.1-{tag}.whl"
+        / f"spark_h3_kitchen-0.2.37+spark.h3.sm120.cu131.1-{tag}.whl"
     )
-    cu129.touch()
+    cu131.touch()
     assert installer._matching_local_wheel(
-        tmp_path, "0.2.36", "sm120", "cu129"
-    ) == cu129
-    assert not installer._wheel_matches(cu129.name, "0.2.36", "sm120", "cu130")
+        tmp_path, "0.2.37", "sm120", "cu131"
+    ) == cu131
+    assert not installer._wheel_matches(cu131.name, "0.2.37", "sm120", "cu130")
     assert not installer._wheel_matches(
-        wheels["0.2.36"].name, "0.2.36", "sm120", "cu129"
+        wheels["0.2.37"].name, "0.2.37", "sm120", "cu131"
     )
 
     sm89 = (
         wheelhouse
-        / f"comfy_kitchen-0.2.36+spark.h3.sm89.cu130.1-{tag}.whl"
+        / f"spark_h3_kitchen-0.2.37+spark.h3.sm89.cu130.1-{tag}.whl"
     )
     sm89.touch()
-    assert installer._matching_local_wheel(tmp_path, "0.2.36", "sm89") == sm89
-    assert not installer._wheel_matches(sm89.name, "0.2.36", "sm120")
-    assert not installer._wheel_matches(wheels["0.2.36"].name, "0.2.36", "sm89")
+    assert installer._matching_local_wheel(tmp_path, "0.2.37", "sm89") == sm89
+    assert not installer._wheel_matches(sm89.name, "0.2.37", "sm120")
+    assert not installer._wheel_matches(wheels["0.2.37"].name, "0.2.37", "sm89")
 
     sm86 = (
         wheelhouse
-        / f"comfy_kitchen-0.2.36+spark.h3.sm86.cu130.1-{tag}.whl"
+        / f"spark_h3_kitchen-0.2.37+spark.h3.sm86.cu130.1-{tag}.whl"
     )
     sm86.touch()
-    assert installer._matching_local_wheel(tmp_path, "0.2.36", "sm86") == sm86
-    assert not installer._wheel_matches(sm86.name, "0.2.36", "sm89")
+    assert installer._matching_local_wheel(tmp_path, "0.2.37", "sm86") == sm86
+    assert not installer._wheel_matches(sm86.name, "0.2.37", "sm89")
 
 
-def test_installer_resolves_supported_installed_base(monkeypatch):
-    installer = _load("spark_comfyui_installer_base", ROOT / "comfyui/install.py")
-    monkeypatch.setattr(installer.metadata, "version", lambda _name: "0.2.37")
-    assert installer._resolve_kitchen_base() == "0.2.37"
+def test_installer_resolves_implementation_without_host_kitchen(monkeypatch):
+    installer = _load("spark_comfyui_installer_implementation", ROOT / "comfyui/install.py")
+    monkeypatch.setattr(
+        installer.metadata,
+        "version",
+        lambda _name: (_ for _ in ()).throw(installer.metadata.PackageNotFoundError()),
+    )
+    assert installer._resolve_kitchen_implementation() == "0.2.37"
+    assert installer._resolve_kitchen_implementation("0.2.37") == "0.2.37"
+    assert installer._resolve_kitchen_implementation("0.2.39") == "0.2.39"
+    with pytest.raises(RuntimeError, match="unsupported spark-h3-kitchen implementation"):
+        installer._resolve_kitchen_implementation("0.2.40")
 
-    monkeypatch.setattr(installer.metadata, "version", lambda _name: "0.2.35")
-    with pytest.raises(RuntimeError, match="ComfyUI 0.38.x") as error:
-        installer._resolve_kitchen_base()
-    assert "ComfyUI 0.39.x/0.40.x" in str(error.value)
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    (
+        (None, False),
+        ("0.2.37", False),
+        ("0.2.39+cu130", False),
+        ("0.2.35+spark.h3.sm120.cu130.1", True),
+        ("0.2.36+spark.h3.sm86.cu130.1", True),
+        ("0.2.37+spark.h3.sm89.cu131.1", True),
+        ("0.2.39+spark.h3.sm120.cu130.1", True),
+    ),
+)
+def test_installer_detects_legacy_replacement_wheels_by_local_identity(version, expected):
+    installer = _load("spark_comfyui_installer_legacy_identity", ROOT / "comfyui/install.py")
+    assert installer._is_legacy_spark_kitchen(version) is expected
 
 
-def test_installer_requires_opt_in_for_cu129_and_unknown_cuda(monkeypatch, capsys):
+def test_installer_restores_legacy_kitchen_before_isolated_install(monkeypatch, capsys):
+    installer = _load("spark_comfyui_installer_legacy_restore", ROOT / "comfyui/install.py")
+    versions = iter(("0.2.39+spark.h3.sm120.cu130.1", "0.2.39"))
+    monkeypatch.setattr(installer, "_installed_kitchen_version", lambda: next(versions))
+    installs = []
+    monkeypatch.setattr(
+        installer,
+        "_install",
+        lambda specification, **kwargs: installs.append((specification, kwargs)),
+    )
+
+    assert installer._restore_legacy_kitchen()
+    assert installs == [("comfy-kitchen==0.2.39", {"force": True})]
+    output = capsys.readouterr().out
+    assert "detected legacy comfy-kitchen replacement" in output
+    assert "continuing with spark-h3-kitchen installation" in output
+
+
+def test_installer_does_not_reinstall_official_kitchen(monkeypatch):
+    installer = _load("spark_comfyui_installer_official_noop", ROOT / "comfyui/install.py")
+    monkeypatch.setattr(installer, "_installed_kitchen_version", lambda: "0.2.40")
+    monkeypatch.setattr(
+        installer,
+        "_install",
+        lambda *_args, **_kwargs: pytest.fail("official comfy-kitchen must not be reinstalled"),
+    )
+    assert not installer._restore_legacy_kitchen()
+
+
+def test_installer_fails_if_legacy_kitchen_restore_does_not_clean_identity(monkeypatch):
+    installer = _load("spark_comfyui_installer_legacy_restore_failure", ROOT / "comfyui/install.py")
+    legacy = "0.2.37+spark.h3.sm89.cu130.1"
+    monkeypatch.setattr(installer, "_installed_kitchen_version", lambda: legacy)
+    monkeypatch.setattr(installer, "_install", lambda *_args, **_kwargs: None)
+    with pytest.raises(RuntimeError, match="failed to restore the official comfy-kitchen"):
+        installer._restore_legacy_kitchen()
+
+
+def test_installer_requires_cu130_or_newer(monkeypatch, capsys):
     installer = _load("spark_comfyui_installer_cuda", ROOT / "comfyui/install.py")
     torch_stub = ModuleType("torch")
-    torch_stub.__version__ = "2.12.0+cu129"
+    torch_stub.__version__ = "2.12.0+cu120"
     torch_stub.version = ModuleType("torch.version")
-    torch_stub.version.cuda = "12.9"
+    torch_stub.version.cuda = "12.0"
     monkeypatch.setitem(sys.modules, "torch", torch_stub)
     monkeypatch.setitem(sys.modules, "triton", ModuleType("triton"))
 
-    with pytest.raises(RuntimeError, match="not in the Spark-H3 release matrix"):
+    with pytest.raises(RuntimeError, match="requires PyTorch CUDA 13.0 or newer"):
         installer._validate_runtime()
-    assert installer._validate_runtime(experimental_cuda=True) == (12, 9)
-    assert "experimental CUDA mode" in capsys.readouterr().err
     torch_stub.version.cuda = "13.0"
     torch_stub.__version__ = "2.11.9+cu130"
     assert installer._validate_runtime() == (13, 0)
@@ -972,6 +1101,7 @@ def test_installer_requires_opt_in_for_cu129_and_unknown_cuda(monkeypatch, capsy
     assert installer._validate_runtime() == (13, 0)
     torch_stub.version.cuda = "13.2"
     assert installer._validate_runtime() == (13, 2)
+    assert "newer than the cu130 wheel target" in capsys.readouterr().err
 
 
 def test_installer_validates_runtime_and_package_platform(monkeypatch, tmp_path):
@@ -1039,12 +1169,7 @@ def test_installer_validates_runtime_and_package_platform(monkeypatch, tmp_path)
         ((13, 0), (12, 0), (), ("sm120", "cu130", None)),
         ((13, 0), (8, 6), (), ("sm86", "cu130", None)),
         ((13, 0), (8, 9), (), ("sm89", "cu130", None)),
-        (
-            (12, 9),
-            (12, 0),
-            ("--experimental-cuda",),
-            ("sm120", "cu129", "120a"),
-        ),
+        ((13, 2), (12, 0), (), ("sm120", "cu132", None)),
     ),
 )
 def test_installer_source_build_routes_isolated_identity(
@@ -1054,11 +1179,12 @@ def test_installer_source_build_routes_isolated_identity(
         f"spark_comfyui_installer_route_{capability}_{cuda_version}",
         ROOT / "comfyui/install.py",
     )
+    monkeypatch.setattr(installer, "_runtime_platform_tag", lambda: "linux-x86_64")
     calls = []
     monkeypatch.setattr(
         installer,
         "_validate_runtime",
-        lambda **_kwargs: cuda_version,
+        lambda: cuda_version,
     )
     monkeypatch.setattr(installer, "_cuda_capability", lambda: capability)
     monkeypatch.setattr(installer, "_backend_available", lambda *_args: False)
@@ -1076,7 +1202,7 @@ def test_installer_source_build_routes_isolated_identity(
         [
             "--source",
             "--skip-dependencies",
-            "--kitchen-base",
+            "--kitchen-implementation",
             "0.2.37",
             *extra_args,
         ]
@@ -1091,15 +1217,21 @@ def test_installer_source_build_routes_isolated_identity(
 
 @pytest.mark.parametrize("cuda_version", ((13, 2), (13, 3), (14, 0)))
 @pytest.mark.parametrize("explicit_wheel", (False, True))
+@pytest.mark.parametrize(
+    ("implementation", "wheel_implementation"),
+    ((None, "0.2.37"), ("0.2.39", "0.2.39")),
+)
 def test_installer_automatically_tries_cu130_wheel_on_newer_cuda(
-    tmp_path, monkeypatch, cuda_version, explicit_wheel
+    tmp_path, monkeypatch, cuda_version, explicit_wheel,
+    implementation, wheel_implementation
 ):
-    installer = _load("spark_comfyui_installer_cu130_experiment", ROOT / "comfyui/install.py")
+    installer = _load("spark_comfyui_installer_newer_cuda", ROOT / "comfyui/install.py")
+    monkeypatch.setattr(installer, "_runtime_platform_tag", lambda: "linux-x86_64")
     from packaging.tags import sys_tags
 
     wheel_tag = next(sys_tags())
     wheel = tmp_path / "wheelhouse" / (
-        f"comfy_kitchen-0.2.39+spark.h3.sm120.cu130.1-{wheel_tag}.whl"
+        f"spark_h3_kitchen-{wheel_implementation}+spark.h3.sm120.cu130.1-{wheel_tag}.whl"
     )
     wheel.parent.mkdir()
     wheel.touch()
@@ -1114,20 +1246,37 @@ def test_installer_automatically_tries_cu130_wheel_on_newer_cuda(
     monkeypatch.setattr(installer, "_backend_available", lambda *_args: False)
     monkeypatch.setattr(installer, "_matching_release_wheel", lambda *_args: (_ for _ in ()).throw(AssertionError("unexpected download")))
     installed = []
+    monkeypatch.setattr(
+        installer,
+        "_restore_legacy_kitchen",
+        lambda: installed.append("restore-official-kitchen") or False,
+    )
     monkeypatch.setattr(installer, "_install", lambda path, **_kwargs: installed.append(path))
     monkeypatch.setattr(installer, "_validate_backend", lambda *args: installed.append(args))
-    arguments = ["--skip-dependencies", "--kitchen-base", "0.2.39"]
+    arguments = ["--skip-dependencies"]
+    if implementation is not None:
+        arguments += ["--kitchen-implementation", implementation]
     if explicit_wheel:
         arguments += ["--wheel", str(wheel)]
     assert installer.main(arguments) == 0
-    assert installed == [str(wheel), ("0.2.39", "sm120", "cu130")]
+    assert installed == [
+        "restore-official-kitchen",
+        str(wheel),
+        (wheel_implementation, "sm120", "cu130"),
+    ]
 
 
 def test_installer_backend_probe_ignores_stale_parent_modules(tmp_path, monkeypatch):
     installer = _load("spark_comfyui_installer_probe", ROOT / "comfyui/install.py")
-    package = tmp_path / "comfy_kitchen" / "backends"
+    package = tmp_path / "spark_h3_kitchen" / "backends"
     package.mkdir(parents=True)
-    (package.parent / "__init__.py").write_text("", encoding="utf-8")
+    (package.parent / "__init__.py").write_text(
+        "def int8_attention(): return None\n"
+        "def prequantize_int8_attention(): return None\n"
+        "def int8_attention_from_prequantized(): return None\n"
+        "def int8_attention_is_available(): return True\n",
+        encoding="utf-8",
+    )
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "cuda.py").write_text(
         "class Native:\n"
@@ -1136,11 +1285,11 @@ def test_installer_backend_probe_ignores_stale_parent_modules(tmp_path, monkeypa
         "def spark_attn():\n    return None\n",
         encoding="utf-8",
     )
-    dist_info = tmp_path / "comfy_kitchen-0.2.37+spark.h3.sm120.cu130.1.dist-info"
+    dist_info = tmp_path / "spark_h3_kitchen-0.2.37+spark.h3.sm120.cu130.1.dist-info"
     dist_info.mkdir()
     (dist_info / "METADATA").write_text(
         "Metadata-Version: 2.1\n"
-        "Name: comfy-kitchen\n"
+        "Name: spark-h3-kitchen\n"
         "Version: 0.2.37+spark.h3.sm120.cu130.1\n",
         encoding="utf-8",
     )
@@ -1150,17 +1299,17 @@ def test_installer_backend_probe_ignores_stale_parent_modules(tmp_path, monkeypa
         pythonpath += installer.os.pathsep + existing_pythonpath
     monkeypatch.setenv("PYTHONPATH", pythonpath)
 
-    # Model the first installer check having loaded comfy-kitchen 0.2.35 in
+    # Model the first installer check having loaded spark-h3-kitchen in
     # this process.  The fresh subprocess must see the updated package on disk
     # instead of these stale module objects.
-    monkeypatch.setitem(sys.modules, "comfy_kitchen", ModuleType("comfy_kitchen"))
+    monkeypatch.setitem(sys.modules, "spark_h3_kitchen", ModuleType("spark_h3_kitchen"))
     monkeypatch.setitem(
-        sys.modules, "comfy_kitchen.backends", ModuleType("comfy_kitchen.backends")
+        sys.modules, "spark_h3_kitchen.backends", ModuleType("spark_h3_kitchen.backends")
     )
     monkeypatch.setitem(
         sys.modules,
-        "comfy_kitchen.backends.cuda",
-        ModuleType("comfy_kitchen.backends.cuda"),
+        "spark_h3_kitchen.backends.cuda",
+        ModuleType("spark_h3_kitchen.backends.cuda"),
     )
 
     assert installer._backend_available("0.2.37")
@@ -1172,8 +1321,8 @@ def test_installer_validation_does_not_reimport_cached_backend(monkeypatch, caps
     monkeypatch.setattr(
         installer, "_backend_available", lambda _base, _architecture, _cuda_tag: True
     )
-    stale = ModuleType("comfy_kitchen.backends.cuda")
-    monkeypatch.setitem(sys.modules, "comfy_kitchen.backends.cuda", stale)
+    stale = ModuleType("spark_h3_kitchen.backends.cuda")
+    monkeypatch.setitem(sys.modules, "spark_h3_kitchen.backends.cuda", stale)
 
     installer._validate_backend("0.2.37")
 
@@ -1337,13 +1486,17 @@ def test_kernel_builder_preserves_target_and_cuda_settings(
         "_run",
         lambda command, **kwargs: calls.append((command, kwargs)),
     )
-    kwargs = {"python": python, "kitchen_base": "0.2.36", "architecture": "sm89"}
+    kwargs = {
+        "python": python,
+        "kitchen_implementation": "0.2.37",
+        "architecture": "sm89",
+    }
     if operation == "build":
         output = tmp_path / "wheels"
         output.mkdir()
         wheel = (
             output
-            / "comfy_kitchen-0.2.36+spark.h3.sm89.cu130.1-cp312-abi3-linux_x86_64.whl"
+            / "spark_h3_kitchen-0.2.37+spark.h3.sm89.cu130.1-cp312-abi3-linux_x86_64.whl"
         )
         wheel.touch()
         assert kernel.build_wheel(ROOT, output, **kwargs) == [wheel]
