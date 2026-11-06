@@ -4,7 +4,7 @@
 
 v0.2.0 将 Spark-H3 与 ComfyUI 官方 `comfy-kitchen` 依赖解耦。Spark 原生后端现以独立的 `spark-h3-kitchen` 发行包安装，并使用 `spark_h3_kitchen` Python 命名空间。它可与 ComfyUI 官方 `comfy-kitchen` 并存，不再替换、降级或锁定官方包。
 
-此前我们过于乐观地希望在同一版本中同时完成 SelfLift-Avatar 分块显存优化、Kitchen attention 潜在性能劣化的调查，以及新版 ComfyUI 的适配，因此不应该地延迟了兼容更新，对此我们深表抱歉。v0.2.0 优先完成底层解耦，让后续功能开发和性能调查不再阻塞基础兼容性更新。
+此前我们过于乐观地希望在同一版本中同时完成 SelfLift-Avatar 项目的分块显存优化功能适配、Kitchen attention 潜在性能劣化的调查，以及新版 ComfyUI 的适配，因此不应该地延迟了兼容更新，对此我们深表抱歉。v0.2.0 优先完成底层解耦，让后续功能开发和性能调查不再阻塞基础兼容性更新。
 
 本版本支持 ComfyUI **0.38.x–0.40.x** 和 **0.42.x–0.44.x**。每个平台包内置两个独立后端 wheel：`spark-h3-kitchen 0.2.37` 和 `0.2.39`。所有受支持的 ComfyUI 版本默认使用独立的 0.2.37 实现，用户可通过 `--kitchen-implementation 0.2.39` 显式选择 0.2.39。
 
@@ -27,7 +27,7 @@ wheel 使用 CUDA 13.0 编译。请同时根据操作系统和 GPU 架构选择 
 
 v0.2.0 decouples Spark-H3 from ComfyUI's official `comfy-kitchen` dependency. The native Spark backend is now installed as the separate `spark-h3-kitchen` distribution under the `spark_h3_kitchen` Python namespace. It can coexist with ComfyUI's official `comfy-kitchen` package and no longer replaces, downgrades, or pins that package.
 
-We had previously been too optimistic about completing SelfLift-Avatar chunked-memory work, investigating a potential Kitchen attention performance regression, and adapting newer ComfyUI releases in one combined update. That delayed the compatibility release longer than it should have, and we apologize. v0.2.0 prioritizes the underlying decoupling so future feature work and performance investigations no longer block baseline compatibility updates.
+We had previously been too optimistic about adapting chunked memory-saving support for the SelfLift-Avatar project, investigating a potential Kitchen attention performance regression, and adapting newer ComfyUI releases in one combined update. That delayed the compatibility release longer than it should have, and we apologize. v0.2.0 prioritizes the underlying decoupling so future feature work and performance investigations no longer block baseline compatibility updates.
 
 This release supports ComfyUI **0.38.x–0.40.x** and **0.42.x–0.44.x**. Each platform archive bundles isolated `spark-h3-kitchen` 0.2.37 and 0.2.39 wheels. All supported ComfyUI versions default to the isolated 0.2.37 implementation. Users may explicitly select 0.2.39 with `--kitchen-implementation 0.2.39`.
 
