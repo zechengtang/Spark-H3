@@ -4,7 +4,7 @@
 
 v0.2.0 将 Spark-H3 与 ComfyUI 官方 `comfy-kitchen` 依赖解耦。Spark 原生后端现以独立的 `spark-h3-kitchen` 发行包安装，并使用 `spark_h3_kitchen` Python 命名空间。它可与 ComfyUI 官方 `comfy-kitchen` 并存，不再替换、降级或锁定官方包。
 
-本版本支持 ComfyUI **0.38.x–0.40.x** 和 **0.42.x–0.44.x**；ComfyUI 0.41.x 不在支持范围内。每个平台包内置两个独立后端 wheel：`spark-h3-kitchen 0.2.37` 和 `0.2.39`。所有受支持的 ComfyUI 版本默认使用独立的 0.2.37 实现，高级用户可通过 `--kitchen-implementation 0.2.39` 显式选择 0.2.39。
+本版本支持 ComfyUI **0.38.x–0.40.x** 和 **0.42.x–0.44.x**。每个平台包内置两个独立后端 wheel：`spark-h3-kitchen 0.2.37` 和 `0.2.39`。所有受支持的 ComfyUI 版本默认使用独立的 0.2.37 实现，用户可通过 `--kitchen-implementation 0.2.39` 显式选择 0.2.39。
 
 从 v0.1.5 或更早版本升级时，安装器会识别曾以 `+spark.h3...` 本地版本标记覆盖安装的旧 `comfy-kitchen`，先恢复相同基础版本的官方包，再安装独立的 `spark-h3-kitchen`。已经是官方版本的 `comfy-kitchen` 不会被修改。
 
@@ -25,7 +25,7 @@ wheel 使用 CUDA 13.0 编译。请同时根据操作系统和 GPU 架构选择 
 
 v0.2.0 decouples Spark-H3 from ComfyUI's official `comfy-kitchen` dependency. The native Spark backend is now installed as the separate `spark-h3-kitchen` distribution under the `spark_h3_kitchen` Python namespace. It can coexist with ComfyUI's official `comfy-kitchen` package and no longer replaces, downgrades, or pins that package.
 
-This release supports ComfyUI **0.38.x–0.40.x** and **0.42.x–0.44.x**; ComfyUI 0.41.x is not supported. Each platform archive bundles isolated `spark-h3-kitchen` 0.2.37 and 0.2.39 wheels. All supported ComfyUI versions default to the isolated 0.2.37 implementation. Advanced users may explicitly select 0.2.39 with `--kitchen-implementation 0.2.39`.
+This release supports ComfyUI **0.38.x–0.40.x** and **0.42.x–0.44.x**. Each platform archive bundles isolated `spark-h3-kitchen` 0.2.37 and 0.2.39 wheels. All supported ComfyUI versions default to the isolated 0.2.37 implementation. Users may explicitly select 0.2.39 with `--kitchen-implementation 0.2.39`.
 
 When upgrading from v0.1.5 or earlier, the installer detects a legacy `comfy-kitchen` replacement carrying a `+spark.h3...` local version. It restores the clean official package at the same base version before installing the isolated `spark-h3-kitchen` backend. An already-clean official `comfy-kitchen` installation is left unchanged.
 
