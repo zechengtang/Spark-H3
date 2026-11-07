@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spark-H3 ComfyUI v0.2.0 小白安装指南</title>
+  <style>
+    @page { size: A4; margin: 0; }
+    * { box-sizing: border-box; }
+    :root {
+      --ink: #111827;
+      --muted: #5d6878;
+      --line: #dbe2ea;
+      --soft: #f4f7fa;
+      --orange: #f36b21;
+      --orange-soft: #fff3eb;
+      --blue: #1769aa;
+      --blue-soft: #edf6fd;
+      --green: #167c5a;
+      --green-soft: #edf9f4;
+      --red: #b84343;
+      --red-soft: #fff1f1;
+    }
+    html, body { margin: 0; padding: 0; background: white; color: var(--ink); }
+    body { font: 9.25pt/1.52 "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 3mm; font-size: 25pt; line-height: 1.15; letter-spacing: -.02em; }
+    h2 { margin-bottom: 2.5mm; font-size: 14pt; line-height: 1.25; }
+    h3 { margin-bottom: 1.5mm; font-size: 10.5pt; line-height: 1.35; }
+    p { margin-bottom: 2.4mm; }
+    ul, ol { margin: 0; padding-left: 5.2mm; }
+    li { margin-bottom: 1.2mm; }
+    strong { font-weight: 700; }
+    code, pre { font-family: "Noto Sans Mono CJK SC", Consolas, monospace; }
+    code { color: #0c568f; font-size: .94em; }
+    pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    a { color: inherit; text-decoration: none; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th { padding: 1.8mm 2mm; background: #edf2f7; color: #374151; text-align: left; font-size: 8pt; }
+    td { padding: 1.8mm 2mm; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 8pt; }
+    .page { position: relative; width: 210mm; height: 297mm; padding: 14mm 15mm 16mm; overflow: hidden; break-after: page; }
+    .page:last-child { break-after: auto; }
+    .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8mm; }
+    .brand img { width: 39mm; height: auto; }
+    .brand .version { padding: 1.1mm 3mm; border: 1px solid #f3bb99; border-radius: 20mm; color: #a74717; background: #fff8f3; font-size: 8pt; font-weight: 700; letter-spacing: .08em; }
+    .eyebrow { margin-bottom: 2mm; color: var(--orange); font-size: 8pt; font-weight: 800; letter-spacing: .16em; }
+    .lead { color: #3f4a5a; font-size: 12pt; line-height: 1.55; }
+    .muted { color: var(--muted); }
+    .tiny { color: var(--muted); font-size: 7.2pt; }
+    .accent { color: var(--orange); }
+    .hero { margin: 6mm 0 5mm; padding: 5mm; border-radius: 3mm; background: linear-gradient(135deg, #111827, #253247); color: white; }
+    .hero h2 { color: white; }
+    .hero p:last-child { margin-bottom: 0; }
+    .hero .chips { margin-top: 3mm; }
+    .chip { display: inline-block; margin: 0 1.2mm 1mm 0; padding: 1mm 2.5mm; border-radius: 20mm; background: rgba(255,255,255,.12); color: white; font-size: 7.5pt; font-weight: 700; }
+    .section { margin-bottom: 4.5mm; break-inside: avoid; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 3.5mm; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3mm; }
+    .card { padding: 3.4mm; border: 1px solid var(--line); border-radius: 2.5mm; background: white; break-inside: avoid; }
+    .card p:last-child, .card ul:last-child, .card ol:last-child { margin-bottom: 0; }
+    .card.orange { border-color: #f2c4aa; background: var(--orange-soft); }
+    .card.blue { border-color: #bdd8eb; background: var(--blue-soft); }
+    .card.green { border-color: #b9dece; background: var(--green-soft); }
+    .number { display: inline-flex; width: 6.4mm; height: 6.4mm; margin-right: 2mm; align-items: center; justify-content: center; border-radius: 50%; background: var(--orange); color: white; font-size: 8pt; vertical-align: 1px; }
+    .callout { margin-top: 2.5mm; padding: 2.8mm 3.2mm; border-left: 1.1mm solid var(--blue); border-radius: 1.5mm; background: var(--blue-soft); }
+    .callout.good { border-color: var(--green); background: var(--green-soft); }
+    .callout.warn { border-color: #d18a21; background: #fff8e8; }
+    .callout.bad { border-color: var(--red); background: var(--red-soft); }
+    .codebox { margin-top: 2mm; padding: 2.8mm 3mm; border: 1px solid #d7e1ea; border-radius: 2mm; background: #f7f9fb; color: #243447; font-size: 7.35pt; line-height: 1.55; }
+    .route { padding: 3.4mm; border-radius: 2.5mm; background: #111827; color: white; text-align: center; font-size: 9pt; font-weight: 700; letter-spacing: .01em; }
+    .route .arrow { color: #ff9b63; padding: 0 1mm; }
+    .mode { position: relative; padding-left: 10mm; min-height: 11mm; }
+    .mode .badge { position: absolute; left: 0; top: .2mm; display: inline-flex; width: 7.5mm; height: 7.5mm; align-items: center; justify-content: center; border-radius: 2mm; background: #192438; color: white; font-size: 7pt; font-weight: 800; }
+    .mode h3 { margin-bottom: .5mm; }
+    .mode p { margin: 0; color: var(--muted); font-size: 8.1pt; }
+    .perf td:not(:first-child), .perf th:not(:first-child) { text-align: center; }
+    .perf strong { color: var(--orange); font-size: 9pt; }
+    .checklist { list-style: none; padding: 0; }
+    .checklist li { position: relative; padding-left: 6mm; margin-bottom: 1.8mm; }
+    .checklist li::before { content: "✓"; position: absolute; left: 0; top: -.1mm; color: var(--green); font-weight: 800; }
+    .page.tight .brand { margin-bottom: 5mm; }
+    .page.tight h1 { margin-bottom: 2mm; font-size: 23pt; }
+    .page.tight .section { margin-bottom: 3mm; }
+    .page.tight .card { padding: 3mm; }
+    .page.tight .card.mode { padding-left: 10mm; }
+    .page.tighter { padding-top: 12mm; }
+    .page.tighter .brand { margin-bottom: 4mm; }
+    .page.tighter h1 { margin-bottom: 2mm; font-size: 22pt; }
+    .page.tighter h2 { margin-bottom: 1.8mm; }
+    .page.tighter .section { margin-bottom: 2.7mm; }
+    .page.tighter .card { padding: 2.7mm 3mm; }
+    .page.tighter p { margin-bottom: 1.7mm; }
+    .page.tighter li { margin-bottom: .8mm; }
+    .page.compact { padding-top: 11mm; font-size: 8.7pt; line-height: 1.42; }
+    .page.compact .brand { margin-bottom: 3mm; }
+    .page.compact h1 { margin-bottom: 1.5mm; font-size: 20.5pt; }
+    .page.compact h2 { margin-bottom: 1.4mm; font-size: 13pt; }
+    .page.compact h3 { margin-bottom: 1mm; }
+    .page.compact .section { margin-bottom: 2mm; }
+    .page.compact .card { padding: 2.3mm 2.7mm; }
+    .page.compact .card.mode { padding-left: 10mm; }
+    .page.compact .grid-2, .page.compact .grid-3 { gap: 2.5mm; }
+    .page.compact p { margin-bottom: 1.3mm; }
+    .page.compact li { margin-bottom: .55mm; }
+    .page.compact .callout { margin-top: 1.8mm; padding: 2.2mm 2.8mm; }
+    .page.compact .codebox { margin-top: 1.4mm; padding: 2.2mm 2.6mm; }
+    .footer { position: absolute; left: 15mm; right: 15mm; bottom: 8mm; display: flex; justify-content: space-between; padding-top: 2mm; border-top: 1px solid var(--line); color: #7a8492; font-size: 7pt; }
+  </style>
+</head>
+<body>
+  <section class="page tighter">
+    <div class="brand">
+      <img src="../assets/spark-h3-wordmark.png" alt="Spark-H3">
+      <span class="version">COMFYUI · v0.2.0</span>
+    </div>
+    <div class="eyebrow">零基础也能看懂的安装与使用说明</div>
+    <h1>Spark-H3 v0.2.0<br><span class="accent">小白安装指南</span></h1>
+    <p class="lead">它是 MiniMax-H3 的 ComfyUI 加速节点：用块稀疏注意力减少采样阶段的计算量，让支持的 NVIDIA 显卡更快完成视频生成。</p>
+
+    <div class="hero">
+      <h2>这一版最重要的 4 件事</h2>
+      <div class="grid-2">
+        <p><strong>① 不再替换官方 Kitchen</strong><br>Spark 后端改为独立的 <code>spark-h3-kitchen</code>，可与 ComfyUI 官方 <code>comfy-kitchen</code> 共存。</p>
+        <p><strong>② 默认推荐 0.2.37</strong><br>发布测试中，它的速度和稳定性优于 0.2.39；小白保持默认即可。</p>
+        <p><strong>③ 支持更多 ComfyUI 版本</strong><br>覆盖 0.38.x–0.40.x 和 0.42.x–0.44.x；不支持 0.41.x。</p>
+        <p><strong>④ Linux / Windows 六种包</strong><br>RTX 30 / 40 / 50 系均有对应安装包，按系统和 GPU 架构选择。</p>
+      </div>
+      <div class="chips"><span class="chip">独立 spark-h3-kitchen</span><span class="chip">推荐 0.2.37</span><span class="chip">RTX 30 / 40 / 50 系</span><span class="chip">ComfyUI 0.38–0.40 / 0.42–0.44</span></div>
+    </div>
+
+    <div class="section">
+      <h2>开始前，先确认你符合这些条件</h2>
+      <div class="grid-3">
+        <div class="card"><h3>显卡</h3><p>RTX 30 系（SM86）<br>RTX 40 系（SM89）<br>RTX 50 系 / RTX PRO Blackwell（SM120）</p></div>
+        <div class="card"><h3>软件</h3><p>ComfyUI 0.38.x–0.40.x<br>或 0.42.x–0.44.x<br>Linux / Windows x86_64<br>Python 3.12+、PyTorch CUDA 13.0+</p></div>
+        <div class="card"><h3>你还需要</h3><p>已能正常启动的 ComfyUI<br>MiniMax-H3 模型权重<br>工作流所需 LoRA / 第三方节点</p></div>
+      </div>
+      <div class="callout warn"><strong>注意：</strong>ZIP 不包含 ComfyUI、模型权重、LoRA 或 KJNodes。CUDA 12.8 不属于 v0.2.0 正式发布范围。</div>
+    </div>
+
+    <div class="section">
+      <h2>我该下载哪一个？</h2>
+      <table>
+        <thead><tr><th style="width:20%">你的显卡</th><th style="width:13%">架构</th><th>文件名里必须同时出现</th></tr></thead>
+        <tbody>
+          <tr><td>RTX 30 系</td><td>SM86</td><td><code>0.2.0</code> + <code>linux</code> 或 <code>windows</code> + <code>sm86</code> + <code>cu130</code></td></tr>
+          <tr><td>RTX 40 系</td><td>SM89</td><td><code>0.2.0</code> + <code>linux</code> 或 <code>windows</code> + <code>sm89</code> + <code>cu130</code></td></tr>
+          <tr><td>RTX 50 / PRO Blackwell</td><td>SM120</td><td><code>0.2.0</code> + <code>linux</code> 或 <code>windows</code> + <code>sm120</code> + <code>cu130</code></td></tr>
+        </tbody>
+      </table>
+      <p class="tiny">完整示例：<code>ComfyUI-Spark-H3-0.2.0-windows-x86_64-sm86-cu130.zip</code>。请从发布页下载对应 ZIP 与 <code>SHA256SUMS.txt</code>。</p>
+      <div class="callout warn"><strong>Windows RTX 40 系特别说明：</strong>SM89 Windows 包目前只内置推荐的 0.2.37；其他平台包同时提供 0.2.37 与可选的 0.2.39。</div>
+    </div>
+
+    <div class="footer"><span>Spark-H3 ComfyUI v0.2.0 · 小白安装指南</span><span>1 / 4</span></div>
+  </section>
+
+  <section class="page compact">
+    <div class="brand"><img src="../assets/spark-h3-wordmark.png" alt="Spark-H3"><span class="version">安装 · 约 5 分钟</span></div>
+    <div class="eyebrow">PART 1 · 安装</div>
+    <h1>把 ZIP 放对位置，<br>再用“同一个 Python”安装</h1>
+
+    <div class="section">
+      <h2><span class="number">1</span>关闭 ComfyUI，并解压到 custom_nodes</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>普通 / 虚拟环境安装</h3>
+          <p>找到同时包含 <code>main.py</code> 与 <code>custom_nodes</code> 的 ComfyUI 根目录。</p>
+          <pre class="codebox">ComfyUI/
+├── main.py
+├── .venv/
+└── custom_nodes/
+    └── ComfyUI-Spark-H3/
+        └── install.py</pre>
+        </div>
+        <div class="card">
+          <h3>Windows 便携版</h3>
+          <p>插件放在内层 <code>ComfyUI\custom_nodes</code>，不是最外层。</p>
+          <pre class="codebox">ComfyUI_windows_portable\
+├── python_embeded\python.exe
+└── ComfyUI\
+    └── custom_nodes\
+        └── ComfyUI-Spark-H3\
+            └── install.py</pre>
+        </div>
+      </div>
+      <div class="callout good"><strong>解压正确的判断方法：</strong>打开 <code>ComfyUI-Spark-H3</code> 文件夹后，应直接看到 <code>install.py</code>，不能再套一层同名文件夹。</div>
+    </div>
+
+    <div class="section">
+      <h2><span class="number">2</span>使用启动 ComfyUI 的 Python 运行安装器</h2>
+      <div class="card orange" style="margin-bottom:3mm">
+        <h3>Windows 便携版（最常见）</h3>
+        <p>在 <code>ComfyUI_windows_portable</code> 文件夹空白处打开 PowerShell：</p>
+        <pre class="codebox">.\python_embeded\python.exe .\ComfyUI\custom_nodes\ComfyUI-Spark-H3\install.py</pre>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Windows · .venv</h3>
+          <pre class="codebox">.\.venv\Scripts\python.exe .\custom_nodes\ComfyUI-Spark-H3\install.py</pre>
+        </div>
+        <div class="card">
+          <h3>Linux · .venv</h3>
+          <pre class="codebox">./.venv/bin/python ./custom_nodes/ComfyUI-Spark-H3/install.py</pre>
+        </div>
+      </div>
+      <div class="callout bad"><strong>不要直接双击 install.py，也不要随手输入系统 python。</strong>否则依赖可能装到另一个环境，终端显示成功，ComfyUI 却仍然找不到节点。</div>
+      <div class="callout good"><strong>cu130 指 wheel 的编译版本。</strong>PyTorch CUDA 13.0 或更新版本可尝试安装；安装器会检查原生入口，更高版本仍需自行验证完整工作流。</div>
+    </div>
+
+    <div class="section">
+      <h2><span class="number">3</span>看到安装完成后，重启 ComfyUI</h2>
+      <ol>
+        <li>安装器默认安装独立的 <code>spark-h3-kitchen 0.2.37</code>；它不会替换、降级或锁定 ComfyUI 官方 <code>comfy-kitchen</code>。</li>
+        <li>从 v0.1.5 或更早版本升级时，安装器会先恢复曾被旧版覆盖的官方 Kitchen，再安装独立后端。</li>
+        <li>关闭终端并重新启动 ComfyUI；不要只刷新网页。然后把安装包内 <code>workflows</code> 中的 JSON 拖到画布。</li>
+      </ol>
+      <div class="callout good"><strong>为什么推荐默认 0.2.37？</strong>本次发布测试中，它的速度和稳定性都优于 0.2.39。除非你明确要做对比测试，否则不要添加 <code>--kitchen-implementation 0.2.39</code>。</div>
+      <div class="callout good"><strong>如果实在不会安装：</strong>把下载好的 ZIP 安装包交给 WorkBuddy，让它按照本页步骤帮你安装；同时告诉它你的 ComfyUI 根目录、操作系统和显卡型号。</div>
+    </div>
+
+    <div class="footer"><span>关键原则：插件与依赖必须进入 ComfyUI 自己的 Python 环境</span><span>2 / 4</span></div>
+  </section>
+
+  <section class="page compact">
+    <div class="brand"><img src="../assets/spark-h3-wordmark.png" alt="Spark-H3"><span class="version">第一次使用</span></div>
+    <div class="eyebrow">PART 2 · 工作流与模式</div>
+    <h1>先用默认设置跑通，<br>再决定要画质还是速度</h1>
+
+    <div class="section">
+      <h2><span class="number">1</span>选择与你显卡对应的节点</h2>
+      <div class="grid-3">
+        <div class="card blue"><h3>RTX 30 系</h3><p><strong>MiniMax H3 Spark Attention (SM86)</strong></p></div>
+        <div class="card blue"><h3>RTX 40 系</h3><p><strong>MiniMax H3 Spark Attention (SM89)</strong></p></div>
+        <div class="card blue"><h3>RTX 50 / PRO</h3><p><strong>MiniMax H3 Spark Attention (SM120)</strong></p></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2><span class="number">2</span>把节点接在模型加载器与采样器之间</h2>
+      <div class="route">模型加载器 <span class="arrow">→</span> Spark Attention <span class="arrow">→</span> BasicGuider / 采样器</div>
+      <p class="tiny" style="margin-top:2mm">最省心的方法是直接打开安装包自带工作流；旧版工作流也可以加载，参数会迁移到等价设置。</p>
+    </div>
+
+    <div class="section">
+      <h2><span class="number">3</span>只需要先认识这 4 个 mode</h2>
+      <div class="grid-2">
+        <div class="card mode orange"><span class="badge">推荐</span><h3>fidelity · 默认</h3><p>前 20% 的采样调用保持 dense，之后使用 Spark。第一次使用、在意稳定与保真时先选它。</p></div>
+        <div class="card mode"><span class="badge">快</span><h3>speed</h3><p>关闭 dense warmup，从第一次调用就使用 Spark。更快，但建议先与 fidelity 对比结果。</p></div>
+        <div class="card mode"><span class="badge">手动</span><h3>custom</h3><p>保留你手动填写的 warmup 设置。修改正在生效的预热参数后会自动切到此模式。</p></div>
+        <div class="card mode"><span class="badge">对照</span><h3>dense</h3><p>完全绕过 Spark，等价于不连接 Spark 节点。适合排错或比较加速前后的耗时。</p></div>
+      </div>
+      <div class="callout good"><strong>小白推荐：</strong>先保持 <code>fidelity</code> 与默认 <code>topk_ratio=0.2</code>；成功出片后，再复制一份工作流试 <code>speed</code>。</div>
+    </div>
+
+    <div class="section">
+      <h2>Ref2VA：sparse_scope 怎么选？</h2>
+      <table>
+        <thead><tr><th style="width:24%">选项</th><th>作用</th><th style="width:28%">建议</th></tr></thead>
+        <tbody>
+          <tr><td><code>target-video</code></td><td>只稀疏目标视频；参考视频保持 dense/exact</td><td>默认值，行为与 v0.1.3 一致</td></tr>
+          <tr><td><code>joint-video</code></td><td>把多时间位置的参考视频与目标视频放入同一个 Spark 稀疏域</td><td>带视频条件的 Ref2VA 推荐</td></tr>
+        </tbody>
+      </table>
+      <p class="tiny">静态参考图、文本、参考音频和目标音频在两种模式下都保持 exact。普通 T2V / I2V 工作流继续使用默认值即可。</p>
+    </div>
+
+    <div class="section">
+      <h2>dense_backend：dense 阶段用哪个后端？</h2>
+      <div class="grid-2">
+        <div class="card green"><h3><code>kitchen</code> · 包内自带</h3><p>直接使用 <code>spark-h3-kitchen</code> 提供的 Kitchen INT8 Attention；<strong>不需要外接“模型注意力后端”节点</strong>。</p></div>
+        <div class="card"><h3><code>inherit</code> · 保持上游设置</h3><p>不主动覆盖模型或其他节点已经选择的 attention 后端，适合兼容既有工作流。</p></div>
+      </div>
+      <div class="callout good"><strong>最省心的用法：</strong>需要加速 fidelity 的 dense 预热或 dense 对照时，直接在 Spark 节点把 <code>dense_backend</code> 选为 <code>kitchen</code>；不需要再添加一个后端节点。</div>
+    </div>
+
+    <div class="footer"><span>先跑通默认 fidelity，再尝试 speed；dense 是最实用的排错基线</span><span>3 / 4</span></div>
+  </section>
+
+  <section class="page compact">
+    <div class="brand"><img src="../assets/spark-h3-wordmark.png" alt="Spark-H3"><span class="version">低显存 · 性能 · 排错</span></div>
+    <div class="eyebrow">PART 3 · 用得更稳</div>
+    <h1>显存不够怎么办？<br>出问题先查什么？</h1>
+
+    <div class="section">
+      <h2>配合 KJNodes 低显存节点</h2>
+      <p>先单独安装 ComfyUI-KJNodes，再按下面的顺序连接 MODEL。顺序很重要：Low VRAM Attention 必须放在 Spark 前面。</p>
+      <div class="route" style="font-size:8.2pt">模型加载器 <span class="arrow">→</span> Low VRAM Attention <span class="arrow">→</span> Chunk FeedForward <span class="arrow">→</span> Spark Attention <span class="arrow">→</span> 采样器</div>
+      <div class="grid-2" style="margin-top:3mm">
+        <div class="card green"><h3>先调 Spark</h3><p>先逐步调低 <code>producer_chunk</code>；它只改变 Q/K/V producer 分块，不需要重新编译 wheel。</p></div>
+        <div class="card orange"><h3>还不够再加 KJNodes</h3><p>把 KJNodes 分块调小通常更省显存，但分块越小，执行开销可能越大。</p></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>历史 Linux 性能参考</h2>
+      <table class="perf">
+        <thead><tr><th>GPU</th><th>Fidelity 相对 Dense</th><th>Speed 相对 Dense</th></tr></thead>
+        <tbody>
+          <tr><td>RTX 3090（SM86）</td><td><strong>2.42×</strong></td><td><strong>4.62×</strong></td></tr>
+          <tr><td>RTX 4090（SM89）</td><td><strong>2.37×</strong></td><td><strong>4.35×</strong></td></tr>
+          <tr><td>RTX PRO 6000 Blackwell（SM120）</td><td><strong>2.05×</strong></td><td><strong>3.15×</strong></td></tr>
+        </tbody>
+      </table>
+      <p class="tiny">测试条件：Linux、ComfyUI 0.38.2、LightX2V 768p 8-step LoRA、1344×768、345 帧、24 FPS、topk_ratio=20%、warmup_steps=2；只比较采样耗时，不含模型加载、VAE 解码与视频编码。你的实际结果会因工作流、步数、权重和显存配置而变化。</p>
+    </div>
+
+    <div class="section">
+      <h2>遇到问题，按顺序检查</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>节点没有出现</h3>
+          <ul class="checklist">
+            <li>是否完整重启了 ComfyUI</li>
+            <li><code>install.py</code> 是否在正确目录</li>
+            <li>是否用了 ComfyUI 自己的 Python</li>
+            <li>启动终端里是否有红色报错</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>提示没有匹配的 wheel</h3>
+          <ul class="checklist">
+            <li>Linux / Windows 包是否选对</li>
+            <li>sm86 / sm89 / sm120 是否选对</li>
+            <li>文件名是否包含 <code>cu130</code></li>
+            <li>ComfyUI 是否为 0.38–0.40 或 0.42–0.44 系</li>
+            <li>Python 3.12+、PyTorch 2.12+、PyTorch CUDA 13.0+</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>运行时报错或结果异常</h3>
+          <ul class="checklist">
+            <li>先切到 <code>dense</code> 做基线</li>
+            <li>再用默认 <code>fidelity</code> 测试</li>
+            <li>后端先恢复为 <code>inherit</code></li>
+            <li>仅 fidelity OOM 时，尝试启动参数 <code>--disable-cuda-malloc</code></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>速度没有想象中快</h3>
+          <ul class="checklist">
+            <li>只比较同一工作流的采样耗时</li>
+            <li>确认没有回退到 dense</li>
+            <li>尝试 <code>speed</code> 并对比质量</li>
+            <li>Ref2VA 视频条件是否用了 <code>joint-video</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="card blue">
+        <h3>最后的成功检查</h3>
+        <p>能看到与显卡对应的 Spark 节点；默认 <code>fidelity</code> 能完成一次生成；切到 <code>dense</code> 也能完成；需要内置 Kitchen 时直接选择 <code>dense_backend=kitchen</code>，无需外接后端节点；两次测试使用同一工作流与输入时，才适合比较耗时。</p>
+        <p class="tiny">官方发布页：github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.2.0<br>下载 ZIP 时一并获取 <code>SHA256SUMS.txt</code>；更详细的故障排查见安装包内 <code>INSTALL.zh-CN.md</code>。</p>
+      </div>
+    </div>
+
+    <div class="footer"><span>依据 comfyui-v0.2.0 发布说明整理 · 2026-11-07</span><span>4 / 4</span></div>
+  </section>
+</body>
+</html>
