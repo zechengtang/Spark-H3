@@ -31,10 +31,12 @@
 </div>
 
 > [!IMPORTANT]
-> **ComfyUI v0.2.0 release candidate:** Spark-H3 now uses the isolated
+> **ComfyUI v0.2.0 release:** Spark-H3 now uses the isolated
 > `spark-h3-kitchen` distribution and `spark_h3_kitchen` import namespace.
 > It no longer replaces or pins ComfyUI's official `comfy-kitchen` package.
 > The release supports ComfyUI 0.38.x–0.40.x and 0.42.x–0.44.x.
+> **For production use, we recommend the default `spark-h3-kitchen` 0.2.37,
+> which delivered better speed and stability in release testing.**
 > **[Read the v0.2.0 release notes](docs/release_comfyui_v020.md)**
 
 > **VPack v0.1.0:** A separate ComfyUI plugin that compresses reference
@@ -172,9 +174,9 @@ with ComfyUI packaging or compatibility work.
 | v0.1.3 | 2026-10-13 | ✅ Released | Added validated SM86 packages; integrated with KJNodes low-VRAM patches; added `fidelity`, `speed`, `custom`, and `dense` presets plus selectable dense backends | [Release notes](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.3) |
 | v0.1.4 | 2026-10-15 | ✅ Released | Added ComfyUI 0.40.x support, Ref2VA-aware `sparse_scope`, configurable `producer_chunk`, and in-node Ref2VA guidance | [Release notes](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.4) |
 | v0.1.5 | 2026-10-19 | ✅ Released | Added ComfyUI 0.42.x support through comfy-kitchen 0.2.39; released Linux and Windows SM86/SM89/SM120 packages, each also bundling wheels for ComfyUI 0.38.x–0.40.x | [Release notes](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.5) |
-| v0.2.0 | 2026-11-06 | 🧪 Release candidate | Decouples Spark-H3 from ComfyUI's official `comfy-kitchen` dependency by using an isolated backend; supports ComfyUI 0.38.x–0.40.x and 0.42.x–0.44.x | [Release notes](docs/release_comfyui_v020.md) |
+| v0.2.0 | 2026-11-06 | ✅ Released | Decouples Spark-H3 from ComfyUI's official `comfy-kitchen` dependency by using an isolated backend; supports ComfyUI 0.38.x–0.40.x and 0.42.x–0.44.x; recommends the default 0.2.37 backend for better tested speed and stability | [Release notes](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.2.0) |
 
-The v0.2.0 release candidate supports ComfyUI 0.38.x–0.40.x and 0.42.x–0.44.x with
+The v0.2.0 release supports ComfyUI 0.38.x–0.40.x and 0.42.x–0.44.x with
 Linux and Windows x86_64 packages for SM86, SM89, and SM120.
 See the [ComfyUI guide](comfyui/README.md)
 for workflows and the [installation guide](comfyui/standalone/README.md) for

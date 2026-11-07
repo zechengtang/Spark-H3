@@ -31,10 +31,12 @@
 </div>
 
 > [!IMPORTANT]
-> **ComfyUI v0.2.0 发布候选版：** Spark-H3 现使用独立的
+> **ComfyUI v0.2.0 正式版：** Spark-H3 现使用独立的
 > `spark-h3-kitchen` 发行包和 `spark_h3_kitchen` 导入命名空间，不再替换或锁定
 > ComfyUI 官方的 `comfy-kitchen`。支持 ComfyUI 0.38.x–0.40.x 和
 > 0.42.x–0.44.x。
+> **正式使用明确推荐默认的 `spark-h3-kitchen` 0.2.37；该版本在发布测试中的
+> 速度和稳定性均优于 0.2.39。**
 > **[查看 v0.2.0 发布说明](docs/release_comfyui_v020.md)**
 
 > **VPack v0.1.0：** 独立的 ComfyUI 插件，用于压缩 Ref2VA 任务中的参考视频；
@@ -42,8 +44,6 @@
 > **[VPack GitHub 仓库](https://github.com/zechengtang/VPack)**
 
 > 👉 [Ref2VA 任务加速解决方案](docs/sparse_scope.md#ref2va-任务加速解决方案)
-
-> 源码开发版：[Spark chunked 路径与构建说明](docs/spark_chunked.md)。节点默认 `chunk_path=none`，选择 `drop_k` 开启分块；`keep_k` 仅保留为底层实验路径。
 
 ---
 
@@ -142,9 +142,9 @@ Diffusers 与 ComfyUI 是两条独立的实现路线。下面分开记录两者�
 | v0.1.3 | 2026-10-13 | ✅ 已发布 | 新增经过验证的 SM86 安装包；适配 KJNodes 低显存节点；新增 `fidelity`、`speed`、`custom`、`dense` 预设及 dense 后端选择 | [发布说明](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.3) |
 | v0.1.4 | 2026-10-15 | ✅ 已发布 | 新增 ComfyUI 0.40.x 支持、面向 Ref2VA 的 `sparse_scope`、可配置 `producer_chunk` 及 Ref2VA 节点内提示 | [发布说明](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.4) |
 | v0.1.5 | 2026-10-19 | ✅ 已发布 | 通过 comfy-kitchen 0.2.39 新增 ComfyUI 0.42.x 支持；发布 Linux 和 Windows 的 SM86/SM89/SM120 安装包，每包也内置适配 ComfyUI 0.38.x–0.40.x 的 wheel | [发布说明](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.1.5) |
-| v0.2.0 | 2026-11-06 | 🧪 发布候选 | 通过独立后端解耦 Spark-H3 与 ComfyUI 官方 `comfy-kitchen` 依赖；支持 ComfyUI 0.38.x–0.40.x 和 0.42.x–0.44.x | [发布说明](docs/release_comfyui_v020.md) |
+| v0.2.0 | 2026-11-06 | ✅ 已发布 | 通过独立后端解耦 Spark-H3 与 ComfyUI 官方 `comfy-kitchen` 依赖；支持 ComfyUI 0.38.x–0.40.x 和 0.42.x–0.44.x；推荐使用速度和稳定性经过更充分测试的默认 0.2.37 后端 | [发布说明](https://github.com/zechengtang/Spark-H3/releases/tag/comfyui-v0.2.0) |
 
-v0.2.0 发布候选版的 Linux 和 Windows x86_64 SM86/SM89/SM120 安装包支持 ComfyUI 0.38.x–0.40.x 和 0.42.x–0.44.x。
+v0.2.0 正式版的 Linux 和 Windows x86_64 SM86/SM89/SM120 安装包支持 ComfyUI 0.38.x–0.40.x 和 0.42.x–0.44.x。
 工作流请参阅 [ComfyUI 指南](comfyui/README.md)，
 安装包详情请参阅[安装指南](comfyui/standalone/README.md)。参考视频压缩由独立的
 [VPack](https://github.com/zechengtang/VPack) 提供。

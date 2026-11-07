@@ -1,5 +1,9 @@
 # ComfyUI Spark-H3 v0.2.0
 
+> [!IMPORTANT]
+> **推荐使用默认的 `spark-h3-kitchen` 0.2.37：它在本版本发布测试中的速度和稳定性均优于 0.2.39。**
+> **We recommend the default `spark-h3-kitchen` 0.2.37 for production use because it delivered better speed and stability in this release's testing.**
+
 ## 中文
 
 v0.2.0 将 Spark-H3 与 ComfyUI 官方 `comfy-kitchen` 依赖解耦。Spark 原生后端现以独立的 `spark-h3-kitchen` 发行包安装，并使用 `spark_h3_kitchen` Python 命名空间。它可与 ComfyUI 官方 `comfy-kitchen` 并存，不再替换、降级或锁定官方包。
