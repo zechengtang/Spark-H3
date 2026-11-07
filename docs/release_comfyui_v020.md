@@ -6,7 +6,7 @@ v0.2.0 将 Spark-H3 与 ComfyUI 官方 `comfy-kitchen` 依赖解耦。Spark 原�
 
 此前我们过于乐观地希望在同一版本中同时完成 SelfLift-Avatar 项目的分块显存优化功能适配、Kitchen attention 潜在性能劣化的调查，以及新版 ComfyUI 的适配，因此不应该地延迟了兼容更新，对此我们深表抱歉。v0.2.0 优先完成底层解耦，让后续功能开发和性能调查不再阻塞基础兼容性更新。
 
-本版本支持 ComfyUI **0.38.x–0.40.x** 和 **0.42.x–0.44.x**。每个平台包内置两个独立后端 wheel：`spark-h3-kitchen 0.2.37` 和 `0.2.39`。所有受支持的 ComfyUI 版本默认使用独立的 0.2.37 实现，用户可通过 `--kitchen-implementation 0.2.39` 显式选择 0.2.39。
+本版本支持 ComfyUI **0.38.x–0.40.x** 和 **0.42.x–0.44.x**。除 Windows SM89（RTX 40 系）安装包当前仅内置 `spark-h3-kitchen 0.2.37` 外，其余平台包均内置 `0.2.37` 和 `0.2.39` 两个独立后端 wheel。所有受支持的 ComfyUI 版本默认使用独立的 0.2.37 实现；包含 0.2.39 wheel 的平台可通过 `--kitchen-implementation 0.2.39` 显式选择 0.2.39。
 
 从 v0.1.5 或更早版本升级时，安装器会识别曾以 `+spark.h3...` 本地版本标记覆盖安装的旧 `comfy-kitchen`，先恢复相同基础版本的官方包，再安装独立的 `spark-h3-kitchen`。已经是官方版本的 `comfy-kitchen` 不会被修改。
 
@@ -29,7 +29,7 @@ v0.2.0 decouples Spark-H3 from ComfyUI's official `comfy-kitchen` dependency. Th
 
 We had previously been too optimistic about adapting chunked memory-saving support for the SelfLift-Avatar project, investigating a potential Kitchen attention performance regression, and adapting newer ComfyUI releases in one combined update. That delayed the compatibility release longer than it should have, and we apologize. v0.2.0 prioritizes the underlying decoupling so future feature work and performance investigations no longer block baseline compatibility updates.
 
-This release supports ComfyUI **0.38.x–0.40.x** and **0.42.x–0.44.x**. Each platform archive bundles isolated `spark-h3-kitchen` 0.2.37 and 0.2.39 wheels. All supported ComfyUI versions default to the isolated 0.2.37 implementation. Users may explicitly select 0.2.39 with `--kitchen-implementation 0.2.39`.
+This release supports ComfyUI **0.38.x–0.40.x** and **0.42.x–0.44.x**. The Windows SM89 (RTX 40 series) archive currently bundles only `spark-h3-kitchen` 0.2.37; every other platform archive bundles isolated 0.2.37 and 0.2.39 wheels. All supported ComfyUI versions default to the isolated 0.2.37 implementation. Platforms that include the 0.2.39 wheel may explicitly select it with `--kitchen-implementation 0.2.39`.
 
 When upgrading from v0.1.5 or earlier, the installer detects a legacy `comfy-kitchen` replacement carrying a `+spark.h3...` local version. It restores the clean official package at the same base version before installing the isolated `spark-h3-kitchen` backend. An already-clean official `comfy-kitchen` installation is left unchanged.
 
