@@ -7,7 +7,7 @@
 
 <p>
   <a href="https://zechengtang.github.io/Spark-H3/"><img src="https://img.shields.io/badge/Blog-Spark--H3-f97316?style=flat-square" alt="Spark-H3 技术博客"></a>
-  <a href="https://arxiv.org/abs/2611.24256"><img src="https://img.shields.io/badge/arXiv-Spark--H3-b31b1b?style=flat-square" alt="Spark-H3 arXiv"></a>
+  <a href="https://arxiv.org/abs/2611.24256"><img src="https://img.shields.io/badge/arXiv-2611.24256-b31b1b?style=flat-square" alt="arXiv:2611.24256"></a>
   <a href="https://huggingface.co/Aazeus/Spark-H3"><img src="https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-Spark--H3-ffc107?style=flat-square" alt="Spark-H3 Hugging Face 页面"></a>
   <a href="comfyui/README.md"><img src="https://img.shields.io/badge/ComfyUI-Spark_Node-f97316?style=flat-square" alt="Spark-H3 ComfyUI 节点"></a>
   <a href="#special-thanks"><img src="https://img.shields.io/badge/Special_Thanks-Community_Contributors-e11d48?style=flat-square" alt="特别感谢社区贡献者"></a>
@@ -29,6 +29,11 @@
 </p>
 
 </div>
+
+> [!NOTE]
+> **Spark-H3 技术报告（2026 年 11 月 18 日）**
+>
+> 我们已发布 Spark-H3 技术报告。[在 arXiv 上阅读](https://arxiv.org/abs/2611.24256)。
 
 > [!IMPORTANT]
 > **ComfyUI v0.2.0 正式版：** Spark-H3 现使用独立的
@@ -131,7 +136,7 @@ Diffusers 与 ComfyUI 是两条独立的实现路线。下面分开记录两者�
 | ✅ 已实现 | MiniMax-H3 的 Spark attention 集成，以及支持 SM80、SM86、SM89 和 SM120 的融合算子 | [使用与算子文档](h3_sparse_attention/README.md) · [性能对照表](docs/kernel_performance_matrix.md) |
 | ✅ 已实现 | Ref2VA pipeline 支持及已发布的推理示例 | [Spark-Ref2VA 预览](https://zechengtang.github.io/Spark-H3/#spark-ref2va-preview) |
 | 🗓️ 计划中 | 支持 SM90 和 SM100 的融合 Spark 算子 | 待硬件资源到位 |
-| 🗓️ 计划中 | 发布技术报告 | — |
+| ✅ 已发布 | Spark-H3 技术报告 | [arXiv:2611.24256](https://arxiv.org/abs/2611.24256) |
 
 ### ComfyUI
 
